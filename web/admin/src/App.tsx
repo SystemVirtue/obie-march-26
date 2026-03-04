@@ -926,7 +926,7 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
   };
 
   const handleSavePlayback = () => local ? saveFields({ shuffle: local.shuffle, loop: local.loop, volume: local.volume, karaoke_mode: local.karaoke_mode, player_mode: local.player_mode }) : Promise.resolve();
-  const handleSaveKiosk    = () => local ? saveFields({ freeplay: local.freeplay, coin_per_song: local.coin_per_song, search_enabled: local.search_enabled, max_queue_size: local.max_queue_size, priority_queue_limit: local.priority_queue_limit, local_media_path: local.local_media_path ?? null }) : Promise.resolve();
+  const handleSaveKiosk    = () => local ? saveFields({ freeplay: local.freeplay, coin_per_song: local.coin_per_song, search_enabled: local.search_enabled, max_queue_size: local.max_queue_size, priority_queue_limit: local.priority_queue_limit, local_media_path: (local as any).local_media_path ?? null } as Partial<PlayerSettings>) : Promise.resolve();
   const handleSaveBranding = () => local ? saveFields({ branding: local.branding }) : Promise.resolve();
 
   const handleToggle = async (field: keyof PlayerSettings) => {
@@ -1037,15 +1037,15 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
             <input type="number" min={1} value={(local as any)[key] ?? 1} onChange={e => set(key as keyof PlayerSettings, Number(e.target.value))}
               style={{ width: 72, textAlign: 'center', padding: '7px 10px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none' }} />
           </SettingsRow>))}
-          {'local_media_enabled' in local && (
+          {(local as any).local_media_enabled !== undefined && (
             <SettingsRow label="Include Local Media from this device" desc="Play video files from a local folder alongside YouTube content">
-              <Toggle checked={!!local.local_media_enabled} onChange={() => handleToggle('local_media_enabled' as keyof PlayerSettings)} />
+              <Toggle checked={!!(local as any).local_media_enabled} onChange={() => handleToggle('local_media_enabled' as keyof PlayerSettings)} />
             </SettingsRow>
           )}
           <div style={{ marginTop: 20 }}><SaveBtn onSave={handleSaveKiosk} loading={saving} /></div>
 
           {/* Local Media folder */}
-          {'local_media_enabled' in local && local.local_media_enabled && (
+          {(local as any).local_media_enabled && (
             <div style={{ marginTop: 16, padding: 18, borderRadius: 14, background: 'rgba(255,255,255,0.025)', border: '1px solid var(--border)' }}>
               <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, color: '#fff', marginBottom: 10 }}>Local Media Folder</div>
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)', marginBottom: 12 }}>
@@ -1055,7 +1055,7 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
                 <input
                   type="text"
                   placeholder="/path/to/local/videos"
-                  value={local.local_media_path ?? ''}
+                  value={(local as any).local_media_path ?? ''}
                   onChange={e => set('local_media_path' as keyof PlayerSettings, e.target.value)}
                   style={{ flex: 1, padding: '9px 12px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.12)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 12, outline: 'none' }}
                 />
