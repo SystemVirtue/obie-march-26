@@ -20,6 +20,7 @@ import { Coins } from 'lucide-react';
 import { SearchInterface } from './components/SearchInterface';
 import { SearchResult } from '../../shared/types';
 import { BackgroundPlaylist, DEFAULT_BACKGROUND_ASSETS } from './components/BackgroundPlaylist';
+import { cleanDisplayText } from '../../shared/media-utils';
 
 const PLAYER_ID = '00000000-0000-0000-0000-000000000001'; // Default player
 
@@ -429,11 +430,11 @@ function App() {
               <div className="flex flex-col">
                 <p className="text-white text-sm font-bold mb-1">NOW PLAYING</p>
                 <p className="text-yellow-300 text-sm font-semibold truncate">
-                  {playerStatus?.current_media?.title || 'No song playing'}
+                  {cleanDisplayText(playerStatus?.current_media?.title) || 'No song playing'}
                 </p>
                 {playerStatus?.current_media?.artist && (
                   <p className="text-gray-300 text-xs truncate">
-                    {playerStatus.current_media.artist.replace(/\s*-\s*Topic$/i, '')}
+                    {cleanDisplayText(playerStatus.current_media.artist)}
                   </p>
                 )}
               </div>
@@ -527,7 +528,7 @@ function App() {
                       {queue.map((q, index) => (
                         <div key={`${q.id}-1`} className="px-6 flex items-center gap-2">
                           {q.type === 'priority' && <span className="text-red-400 drop-shadow-lg">★</span>}
-                          <span>{(q.media_item as any)?.title || 'Untitled'} - <span className="text-gray-300 drop-shadow-lg">{(q.media_item as any)?.artist?.replace(/\s*-\s*Topic$/i, '') || 'Unknown'}</span></span>
+                          <span>{cleanDisplayText((q.media_item as any)?.title) || 'Untitled'} - <span className="text-gray-300 drop-shadow-lg">{cleanDisplayText((q.media_item as any)?.artist) || 'Unknown'}</span></span>
                           {q.type === 'priority' && index === queue.filter(item => item.type === 'priority').length - 1 && queue.some(item => item.type === 'normal') && <span className="text-gray-400 mx-4 drop-shadow-lg">•</span>}
                         </div>
                       ))}
@@ -535,7 +536,7 @@ function App() {
                       {queue.map((q, index) => (
                         <div key={`${q.id}-2`} className="px-6 flex items-center gap-2">
                           {q.type === 'priority' && <span className="text-red-400 drop-shadow-lg">★</span>}
-                          <span>{(q.media_item as any)?.title || 'Untitled'} - <span className="text-gray-300 drop-shadow-lg">{(q.media_item as any)?.artist?.replace(/\s*-\s*Topic$/i, '') || 'Unknown'}</span></span>
+                          <span>{cleanDisplayText((q.media_item as any)?.title) || 'Untitled'} - <span className="text-gray-300 drop-shadow-lg">{cleanDisplayText((q.media_item as any)?.artist) || 'Unknown'}</span></span>
                           {q.type === 'priority' && index === queue.filter(item => item.type === 'priority').length - 1 && queue.some(item => item.type === 'normal') && <span className="text-gray-400 mx-4 drop-shadow-lg">•</span>}
                         </div>
                       ))}
@@ -557,8 +558,8 @@ function App() {
                   <div className="flex gap-4 items-center">
                     <img src={selectedResult.thumbnail} className="w-20 h-20 object-cover rounded" />
                     <div>
-                      <div className="font-semibold">{selectedResult.title}</div>
-                      <div className="text-sm text-gray-700">{selectedResult.artist?.replace(/\s*-\s*Topic$/i, '')}</div>
+                      <div className="font-semibold">{cleanDisplayText(selectedResult.title)}</div>
+                      <div className="text-sm text-gray-700">{cleanDisplayText(selectedResult.artist)}</div>
                       <div className="text-sm text-gray-700 mt-2">{settings?.freeplay ? 'Cost: FREE' : 'Cost: 1 Credit'}</div>
                     </div>
                   </div>

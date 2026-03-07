@@ -2,6 +2,7 @@
 // Uses YouTube IFrame Player API for reliable event handling
 
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { cleanDisplayText } from '../../shared/media-utils';
 import { io } from 'socket.io-client';
 import {
   supabase,
@@ -1382,8 +1383,8 @@ function App() {
         </div>
         {currentMedia && (
           <>
-            <div className="mb-1 text-gray-300 truncate">{currentMedia.title}</div>
-            <div className="text-gray-500 text-xs truncate">{currentMedia.artist}</div>
+            <div className="mb-1 text-gray-300 truncate">{cleanDisplayText(currentMedia.title)}</div>
+            <div className="text-gray-500 text-xs truncate">{cleanDisplayText(currentMedia.artist)}</div>
           </>
         )}
         <div className="mt-2 text-xs text-gray-500">

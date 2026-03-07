@@ -121,10 +121,33 @@ function getContentType(key: string): string {
 function extractTitleFromFilename(filename: string): { title: string; artist: string | null } {
   // Remove extension
   let name = filename.replace(/\.[^.]+$/, '');
-  // Replace underscores and dashes with spaces
-  name = name.replace(/[_]/g, ' ');
+  // Replace underscores with spaces
+  name = name.replace(/_/g, ' ');
 
-  // Try to extract "Artist - Title" pattern
+  // Strip common noise patterns from filenames
+  const noisePatterns = [
+    // Parenthesized junk: (Karaoke), (Official Video), (Lyric Video), etc.
+    /\s*\((?:karaoke|official\s*(?:video|music\s*video|audio|lyric\s*video)?|lyric\s*video|lyrics?|hd|4k|1080p|720p|480p|360p|hq|uhd|remastered|live|acoustic|remix|extended|short|full\s*version|with\s*lyrics?|video\s*clip|music\s*video|visuali[sz]er|animated|ft\.?[^)]*|feat\.?[^)]*)\)\s*/gi,
+    // Bracketed junk: [Official Video], [HD], [Karaoke], etc.
+    /\s*\[(?:karaoke|official\s*(?:video|music\s*video|audio|lyric\s*video)?|lyric\s*video|lyrics?|hd|4k|1080p|720p|480p|360p|hq|uhd|remastered|live|acoustic|remix|extended|short|full\s*version|with\s*lyrics?|video\s*clip|music\s*video|visuali[sz]er|animated|ft\.?[^[\]]*|feat\.?[^[\]]*)\]\s*/gi,
+    // YouTube video ID patterns (11 chars at end after space/dash/underscore)
+    /\s*[-_]?\s*[A-Za-z0-9_-]{11}$/,
+    // Trailing resolution tags
+    /\s+(?:hd|hq|4k|1080p|720p|480p|360p|uhd)\s*$/gi,
+    // "- Topic" suffix
+    /\s*-\s*Topic\s*$/i,
+  ];
+
+  for (const pattern of noisePatterns) {
+    pattern.lastIndex = 0;
+    name = name.replace(pattern, '');
+  }
+
+  // Clean up residual whitespace and trailing punctuation
+  name = name.replace(/\s{2,}/g, ' ').trim();
+  name = name.replace(/\s*[-–—]\s*$/, '').trim();
+
+  // Try to extract "Artist - Title" pattern (first dash separator only)
   const dashMatch = name.match(/^(.+?)\s*-\s*(.+)$/);
   if (dashMatch) {
     return { artist: dashMatch[1].trim(), title: dashMatch[2].trim() };

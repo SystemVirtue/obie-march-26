@@ -1,5 +1,6 @@
 import React from "react";
 import { SearchResult } from "../../../shared/types";
+import { cleanDisplayText } from "../../../shared/media-utils";
 
 interface VideoResultCardProps {
   video: SearchResult;
@@ -30,9 +31,9 @@ export const VideoResultCard: React.FC<VideoResultCardProps> = ({
           />
           <div className="flex-1 min-w-0">
             <h4 className="text-white text-sm font-medium line-clamp-2 mb-1">
-              {video.title}
+              {cleanDisplayText(video.title)}
             </h4>
-            <p className="text-slate-400 text-xs">{video.channelTitle}</p>
+            <p className="text-slate-400 text-xs">{cleanDisplayText(video.channelTitle)}</p>
             {video.duration && (
               <p className="text-slate-300 text-xs mt-1">{video.duration}</p>
             )}
@@ -61,9 +62,9 @@ export const VideoResultCard: React.FC<VideoResultCardProps> = ({
       />
       <div className="p-3 text-center">
         <h3 className="font-semibold text-white text-sm mb-1 line-clamp-2">
-          {video.title}
+          {cleanDisplayText(video.title)}
         </h3>
-        <p className="text-slate-400 text-xs">{video.artist || video.channelTitle}</p>
+        <p className="text-slate-400 text-xs">{cleanDisplayText(video.artist || video.channelTitle)}</p>
       </div>
     </div>
   );

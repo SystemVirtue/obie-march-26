@@ -3,6 +3,7 @@
 // No mock data. No simulated anything.
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { cleanDisplayText } from '../../shared/media-utils';
 import {
   supabase,
   subscribeToQueue,
@@ -291,8 +292,8 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const cm = (status as any)?.current_media as any;
   const thumb  = cm?.thumbnail || '';
-  const title  = cm?.title     || 'Nothing playing';
-  const artist = cm?.artist    || '—';
+  const title  = cleanDisplayText(cm?.title) || 'Nothing playing';
+  const artist = cleanDisplayText(cm?.artist) || '—';
   const isPlaying = status?.state === 'playing';
   const isPaused  = status?.state === 'paused';
   const progress  = Math.min(100, (status?.progress ?? 0) * 100);
@@ -388,8 +389,8 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.22)', width: 12 }}>{i + 1}</span>
                   {m?.thumbnail && <img src={m.thumbnail} alt="" style={{ width: 28, height: 28, borderRadius: 5, objectFit: 'cover', flexShrink: 0 }} />}
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontFamily: 'var(--font-display)', fontSize: 11, fontWeight: 500, color: 'rgba(255,255,255,0.85)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m?.title || 'Unknown'}</div>
-                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)' }}>{m?.artist || ''}</div>
+                    <div style={{ fontFamily: 'var(--font-display)', fontSize: 11, fontWeight: 500, color: 'rgba(255,255,255,0.85)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cleanDisplayText(m?.title) || 'Unknown'}</div>
+                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)' }}>{cleanDisplayText(m?.artist) || ''}</div>
                   </div>
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.28)', flexShrink: 0 }}>{fmtDuration(m?.duration)}</span>
                   <button onClick={() => onRemove(item.id)} style={{ width: 20, height: 20, borderRadius: 5, background: 'rgba(239,68,68,0.12)', border: 'none', cursor: 'pointer', color: '#f87171', fontSize: 10, flexShrink: 0 }}>✕</button>
@@ -854,9 +855,9 @@ function PlaylistsPanel({ view }: { view: ViewId }) {
                           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.2)', width: 28 }}>{i + 1}</span>
                           <div style={{ fontFamily: 'var(--font-display)', fontSize: 12, color: 'rgba(255,255,255,0.7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                             {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                            {(item.media_item as any)?.title || 'Unknown'}
+                            {cleanDisplayText((item.media_item as any)?.title) || 'Unknown'}
                             {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                            {(item.media_item as any)?.artist ? ` · ${(item.media_item as any).artist}` : ''}
+                            {(item.media_item as any)?.artist ? ` · ${cleanDisplayText((item.media_item as any).artist)}` : ''}
                           </div>
                         </div>
                       ))
