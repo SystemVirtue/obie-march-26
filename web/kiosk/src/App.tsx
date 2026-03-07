@@ -556,7 +556,11 @@ function App() {
                   <div className="text-lg font-bold mb-2">Add song to Playlist?</div>
                   <div className="text-sm text-gray-700 mb-4">Confirm adding this song to your playlist for playback.</div>
                   <div className="flex gap-4 items-center">
-                    <img src={selectedResult.thumbnail} className="w-20 h-20 object-cover rounded" />
+                    {selectedResult.thumbnail ? (
+                      <img src={selectedResult.thumbnail} className="w-20 h-20 object-cover rounded" />
+                    ) : (
+                      <div className="w-20 h-20 rounded bg-black flex-shrink-0" />
+                    )}
                     <div>
                       <div className="font-semibold">{cleanDisplayText(selectedResult.title)}</div>
                       <div className="text-sm text-gray-700">{cleanDisplayText(selectedResult.artist)}</div>

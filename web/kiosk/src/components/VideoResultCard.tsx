@@ -13,6 +13,9 @@ export const VideoResultCard: React.FC<VideoResultCardProps> = ({
   onClick,
   variant = "grid",
 }) => {
+  const hasThumbnail = !!(video.thumbnailUrl || video.thumbnail);
+  const thumbSrc = video.thumbnailUrl || video.thumbnail || '';
+
   if (variant === "list") {
     // Compact list view for iframe interface
     return (
@@ -24,11 +27,15 @@ export const VideoResultCard: React.FC<VideoResultCardProps> = ({
         className="bg-slate-700/60 rounded-lg p-3 cursor-pointer hover:bg-slate-600/60 transition-colors border border-slate-600 hover:border-amber-500"
       >
         <div className="flex gap-3">
-          <img
-            src={video.thumbnailUrl}
-            alt={video.title}
-            className="w-16 h-12 object-cover rounded"
-          />
+          {hasThumbnail ? (
+            <img
+              src={thumbSrc}
+              alt={video.title}
+              className="w-16 h-12 object-cover rounded"
+            />
+          ) : (
+            <div className="w-16 h-12 rounded bg-black flex-shrink-0" />
+          )}
           <div className="flex-1 min-w-0">
             <h4 className="text-white text-sm font-medium line-clamp-2 mb-1">
               {cleanDisplayText(video.title)}
@@ -55,11 +62,15 @@ export const VideoResultCard: React.FC<VideoResultCardProps> = ({
         filter: "drop-shadow(-5px -5px 10px rgba(0,0,0,0.6))",
       }}
     >
-      <img
-        src={video.thumbnailUrl}
-        alt={video.title}
-        className="w-full h-32 object-cover"
-      />
+      {hasThumbnail ? (
+        <img
+          src={thumbSrc}
+          alt={video.title}
+          className="w-full h-32 object-cover"
+        />
+      ) : (
+        <div className="w-full h-32 bg-black" />
+      )}
       <div className="p-3 text-center">
         <h3 className="font-semibold text-white text-sm mb-1 line-clamp-2">
           {cleanDisplayText(video.title)}

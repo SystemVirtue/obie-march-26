@@ -79,7 +79,7 @@ interface R2Object {
   size: number;
 }
 
-// Parse ListObjectsV2 XML response
+// Parse ListObjectsV2 XML response — collects ALL objects (videos + images)
 function parseListObjectsV2(xml: string): { objects: R2Object[]; isTruncated: boolean; nextToken?: string } {
   const objects: R2Object[] = [];
   const contentRegex = /<Contents>([\s\S]*?)<\/Contents>/g;
@@ -92,9 +92,7 @@ function parseListObjectsV2(xml: string): { objects: R2Object[]; isTruncated: bo
     const etag = content.match(/<ETag>"?(.*?)"?<\/ETag>/)?.[1] || '';
     const size = parseInt(content.match(/<Size>(.*?)<\/Size>/)?.[1] || '0', 10);
 
-    // Only include video files
-    if (key && (key.endsWith('.mp4') || key.endsWith('.webm') || key.endsWith('.ogg') ||
-        key.endsWith('.mkv') || key.endsWith('.mov') || key.endsWith('.avi'))) {
+    if (key) {
       objects.push({ key, lastModified, etag, size });
     }
   }
@@ -103,6 +101,26 @@ function parseListObjectsV2(xml: string): { objects: R2Object[]; isTruncated: bo
   const nextToken = xml.match(/<NextContinuationToken>(.*?)<\/NextContinuationToken>/)?.[1];
 
   return { objects, isTruncated, nextToken };
+}
+
+const VIDEO_EXTENSIONS = new Set(['mp4', 'webm', 'ogg', 'mkv', 'mov', 'avi']);
+const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp']);
+
+function getExtension(key: string): string {
+  return (key.split('.').pop() || '').toLowerCase();
+}
+
+function isVideoFile(key: string): boolean {
+  return VIDEO_EXTENSIONS.has(getExtension(key));
+}
+
+function isImageFile(key: string): boolean {
+  return IMAGE_EXTENSIONS.has(getExtension(key));
+}
+
+/** Returns the object key without its file extension */
+function baseName(key: string): string {
+  return key.replace(/\.[^.]+$/, '');
 }
 
 function getContentType(key: string): string {
@@ -226,16 +244,29 @@ Deno.serve(async (req) => {
         continuationToken = parsed.isTruncated ? parsed.nextToken : undefined;
       } while (continuationToken);
 
-      console.log(`Found ${allObjects.length} video files in R2 bucket '${bucketName}'`);
+      // Separate videos and images from all bucket objects
+      const videoObjects = allObjects.filter(o => isVideoFile(o.key));
+      const imageObjects = allObjects.filter(o => isImageFile(o.key));
 
-      // Upsert into r2_files
+      console.log(`Found ${videoObjects.length} video files and ${imageObjects.length} image files in R2 bucket '${bucketName}'`);
+
+      // Build a thumbnail lookup map: base name (without extension) → public URL
+      // Matches thumbnails to videos by identical base name (e.g. "Artist - Song.mp4" ↔ "Artist - Song.jpg")
+      const thumbnailMap = new Map<string, string>();
+      for (const img of imageObjects) {
+        const base = baseName(img.key);
+        thumbnailMap.set(base, `${publicUrl}/${img.key}`);
+      }
+
+      // Upsert video files into r2_files
       let addedCount = 0;
       let updatedCount = 0;
 
-      for (const obj of allObjects) {
+      for (const obj of videoObjects) {
         const fileName = obj.key.split('/').pop() || obj.key;
         const { title, artist } = extractTitleFromFilename(fileName);
         const filePublicUrl = `${publicUrl}/${obj.key}`;
+        const thumbnailUrl = thumbnailMap.get(baseName(obj.key)) || null;
 
         const { data: existing } = await supabase
           .from('r2_files')
@@ -251,9 +282,15 @@ Deno.serve(async (req) => {
               size_bytes: obj.size,
               last_modified: obj.lastModified,
               public_url: filePublicUrl,
+              thumbnail: thumbnailUrl,
               synced_at: new Date().toISOString(),
             }).eq('id', existing.id);
             updatedCount++;
+          } else {
+            // Even if video unchanged, update thumbnail if it was added/changed
+            await supabase.from('r2_files').update({
+              thumbnail: thumbnailUrl,
+            }).eq('id', existing.id);
           }
         } else {
           await supabase.from('r2_files').insert({
@@ -267,13 +304,14 @@ Deno.serve(async (req) => {
             public_url: filePublicUrl,
             title,
             artist,
+            thumbnail: thumbnailUrl,
           });
           addedCount++;
         }
       }
 
       // Delete r2_files rows that no longer exist in the bucket
-      const bucketKeys = allObjects.map(o => o.key);
+      const bucketKeys = videoObjects.map(o => o.key);
       const { data: existingFiles } = await supabase
         .from('r2_files')
         .select('id, object_key')
@@ -291,7 +329,8 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({
         success: true,
         bucket: bucketName,
-        total_files: allObjects.length,
+        total_videos: videoObjects.length,
+        total_thumbnails: thumbnailMap.size,
         added: addedCount,
         updated: updatedCount,
         deleted: deletedCount,
