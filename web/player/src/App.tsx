@@ -65,6 +65,7 @@ function App() {
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   // Tracks the YouTube ID of the currently-loaded video (legacy reference, kept for potential future use)
   const currentYouTubeIdRef = useRef<string | null>(null);
+  const localVideoLastReportRef = useRef<number>(0); // Throttle local video progress reports
   // Karaoke / lyrics refs
   const lyricsDataRef = useRef<Array<{ startTimeMs?: number; endTimeMs?: number; words: string }> | null>(null);
   const lyricsRafRef = useRef<number | null>(null);
@@ -954,6 +955,17 @@ function App() {
   useEffect(() => {
     if (!currentMedia) return;
 
+    // Cloudflare / local source: handled by the <video> element, not the YouTube iframe.
+    // Just update the ref so the status subscription doesn't re-trigger media changes.
+    if (localPlaybackUrl) {
+      if (currentMediaIdRef.current !== currentMedia.id) {
+        console.log('[Player] Cloudflare/local media — handled by <video>, skipping YouTube load');
+        currentMediaIdRef.current = currentMedia.id;
+        videoHasPlayedRef.current = false;
+      }
+      return;
+    }
+
     // YTM Desktop mode: dispatch changeVideo instead of creating an iframe
     if (playerModeRef.current === 'ytm_desktop') {
       if (currentMediaIdRef.current === currentMedia.id) {
@@ -1079,7 +1091,7 @@ function App() {
         onError: onPlayerError,
       },
     });
-  }, [currentMedia, ytApiReady, onPlayerReady, onPlayerStateChange, onPlayerError, reportStatus]);
+  }, [currentMedia, localPlaybackUrl, ytApiReady, onPlayerReady, onPlayerStateChange, onPlayerError, reportStatus]);
 
   // Auto-skip videos that stay in 'loading' status for 4+ seconds, or that enter
   // 'paused' before the video has ever actually played (unexpected pause = error).
@@ -1126,6 +1138,13 @@ function App() {
         console.error('[Player] Failed to advance after auto-skip:', error);
       }
     };
+
+    // Skip loading/pause timeouts when a local/Cloudflare video is active —
+    // the <video> element handles its own lifecycle and will report 'playing'.
+    if (status.source === 'cloudflare' || status.source === 'local') {
+      console.log(`[Player] Source is ${status.source} — skipping YouTube loading/pause timeouts`);
+      return;
+    }
 
     if (status.state === 'loading') {
       // ── 4-second loading timeout ──────────────────────────────────────────
@@ -1210,6 +1229,18 @@ function App() {
           onPlay={() => {
             const v = localVideoRef.current;
             console.log(`[Player][local-video] ▶ PLAY  src=${localPlaybackUrl}  duration=${v ? v.duration.toFixed(1) + 's' : '?'}`);
+            videoHasPlayedRef.current = true;
+            reportStatus('playing');
+          }}
+          onTimeUpdate={() => {
+            const now = Date.now();
+            if (now - localVideoLastReportRef.current < 5000) return; // Throttle to every 5s
+            localVideoLastReportRef.current = now;
+            const v = localVideoRef.current;
+            if (v && v.duration && isFinite(v.duration) && v.duration > 0) {
+              const progress = v.currentTime / v.duration;
+              reportStatus('playing', progress);
+            }
           }}
           onEnded={() => {
             console.log('[Player][local-video] ■ ENDED — triggering queue_next');
