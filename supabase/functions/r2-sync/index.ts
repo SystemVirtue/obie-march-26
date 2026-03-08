@@ -129,6 +129,109 @@ function baseName(key: string): string {
   return key.replace(/\.[^.]+$/, '');
 }
 
+/** Extract YouTube video ID (11-char alphanumeric with _ and -) from a filename */
+function extractYouTubeIdFromKey(key: string): string | null {
+  const fileName = key.split('/').pop() || key;
+  const nameNoExt = fileName.replace(/\.[^.]+$/, '');
+  // Match patterns like: "Title [ID]", "Title (ID)", "Title - ID", "Title_ID", or just "ID"
+  const patterns = [
+    /\[([A-Za-z0-9_-]{11})\]\s*$/,          // [dQw4w9WgXcQ]
+    /\(([A-Za-z0-9_-]{11})\)\s*$/,          // (dQw4w9WgXcQ)
+    /[-_\s]([A-Za-z0-9_-]{11})\s*$/,        // - dQw4w9WgXcQ or _dQw4w9WgXcQ
+    /^([A-Za-z0-9_-]{11})$/,                // dQw4w9WgXcQ (filename IS the ID)
+  ];
+  for (const pattern of patterns) {
+    const match = nameNoExt.match(pattern);
+    if (match) return match[1];
+  }
+  return null;
+}
+
+/**
+ * Build a comprehensive thumbnail lookup for video keys.
+ *
+ * Matching strategies (in priority order):
+ * 1. Exact base name — "Artist - Song.mp4" ↔ "Artist - Song.jpg"
+ * 2. Thumbs subfolder — "Music/Song.mp4" ↔ "Music/Thumbs/Song.jpg" (case-insensitive "Thumbs")
+ * 3. YouTube video ID — "Song [dQw4w9WgXcQ].mp4" ↔ "dQw4w9WgXcQ.jpg" (anywhere in bucket)
+ */
+function buildThumbnailLookup(
+  videoObjects: R2Object[],
+  imageObjects: R2Object[],
+  publicUrl: string,
+): Map<string, string> {
+  const result = new Map<string, string>();
+
+  // Strategy 1: Exact base name map (images keyed by full base path)
+  const exactMap = new Map<string, string>();
+  for (const img of imageObjects) {
+    exactMap.set(baseName(img.key), `${publicUrl}/${img.key}`);
+  }
+
+  // Strategy 2: Thumbs subfolder map
+  // Build: parentDir (lowercase) → Map<fileBaseName (lowercase), url>
+  const thumbsFolderMap = new Map<string, Map<string, string>>();
+  for (const img of imageObjects) {
+    const parts = img.key.split('/');
+    if (parts.length >= 2) {
+      const folderName = parts[parts.length - 2];
+      if (folderName.toLowerCase() === 'thumbs' || folderName.toLowerCase() === 'thumb') {
+        // Parent of the Thumbs folder
+        const parentDir = parts.slice(0, -2).join('/').toLowerCase();
+        const imgBaseName = (parts[parts.length - 1].replace(/\.[^.]+$/, '')).toLowerCase();
+        if (!thumbsFolderMap.has(parentDir)) {
+          thumbsFolderMap.set(parentDir, new Map());
+        }
+        thumbsFolderMap.get(parentDir)!.set(imgBaseName, `${publicUrl}/${img.key}`);
+      }
+    }
+  }
+
+  // Strategy 3: YouTube ID map (images keyed by extracted YT ID)
+  const ytIdImageMap = new Map<string, string>();
+  for (const img of imageObjects) {
+    const ytId = extractYouTubeIdFromKey(img.key);
+    if (ytId) {
+      ytIdImageMap.set(ytId, `${publicUrl}/${img.key}`);
+    }
+  }
+
+  // Now resolve each video
+  for (const video of videoObjects) {
+    // Priority 1: Exact base name match
+    const exactMatch = exactMap.get(baseName(video.key));
+    if (exactMatch) {
+      result.set(video.key, exactMatch);
+      continue;
+    }
+
+    // Priority 2: Thumbs subfolder match
+    const videoParts = video.key.split('/');
+    const videoDir = videoParts.slice(0, -1).join('/').toLowerCase();
+    const videoBaseName = (videoParts[videoParts.length - 1].replace(/\.[^.]+$/, '')).toLowerCase();
+    const thumbsFolder = thumbsFolderMap.get(videoDir);
+    if (thumbsFolder) {
+      const thumbMatch = thumbsFolder.get(videoBaseName);
+      if (thumbMatch) {
+        result.set(video.key, thumbMatch);
+        continue;
+      }
+    }
+
+    // Priority 3: YouTube ID match
+    const videoYtId = extractYouTubeIdFromKey(video.key);
+    if (videoYtId) {
+      const ytMatch = ytIdImageMap.get(videoYtId);
+      if (ytMatch) {
+        result.set(video.key, ytMatch);
+        continue;
+      }
+    }
+  }
+
+  return result;
+}
+
 function getContentType(key: string): string {
   const ext = key.split('.').pop()?.toLowerCase();
   const mimeTypes: Record<string, string> = {
@@ -256,13 +359,11 @@ Deno.serve(async (req) => {
 
       console.log(`Found ${videoObjects.length} video files and ${imageObjects.length} image files in R2 bucket '${bucketName}'`);
 
-      // Build a thumbnail lookup map: base name (without extension) → public URL
-      // Matches thumbnails to videos by identical base name (e.g. "Artist - Song.mp4" ↔ "Artist - Song.jpg")
-      const thumbnailMap = new Map<string, string>();
-      for (const img of imageObjects) {
-        const base = baseName(img.key);
-        thumbnailMap.set(base, `${publicUrl}/${img.key}`);
-      }
+      // Build comprehensive thumbnail lookup using multiple matching strategies:
+      // 1. Exact base name match (Artist - Song.mp4 ↔ Artist - Song.jpg)
+      // 2. Thumbs subfolder match (Music/Song.mp4 ↔ Music/Thumbs/Song.jpg)
+      // 3. YouTube video ID match (Song [dQw4w9WgXcQ].mp4 ↔ dQw4w9WgXcQ.jpg)
+      const thumbnailMap = buildThumbnailLookup(videoObjects, imageObjects, publicUrl);
 
       // Fetch all existing records for this bucket in one query
       const { data: existingFiles } = await supabase
@@ -283,7 +384,7 @@ Deno.serve(async (req) => {
         const fileName = obj.key.split('/').pop() || obj.key;
         const { title, artist } = extractTitleFromFilename(fileName);
         const filePublicUrl = `${publicUrl}/${obj.key}`;
-        const thumbnailUrl = thumbnailMap.get(baseName(obj.key)) || null;
+        const thumbnailUrl = thumbnailMap.get(obj.key) || null;
         const existing = existingMap.get(obj.key);
 
         if (existing) {
@@ -343,7 +444,9 @@ Deno.serve(async (req) => {
         success: true,
         bucket: bucketName,
         total_videos: videoObjects.length,
-        total_thumbnails: thumbnailMap.size,
+        total_images: imageObjects.length,
+        matched_thumbnails: thumbnailMap.size,
+        unmatched_videos: videoObjects.length - thumbnailMap.size,
         added: addedCount,
         updated: updatedCount,
         deleted: deletedCount,
