@@ -1,26 +1,3 @@
-// Helper: Sync queue to playlist order if playlist is active
-async function syncQueueIfActive(supabase, player_id, playlist_id) {
-  // Check if this playlist is the active one for the player
-  const { data: player } = await supabase.from('players').select('active_playlist_id').eq('id', player_id).maybeSingle();
-  if (!player || player.active_playlist_id !== playlist_id) return;
-  // Get playlist items in order
-  const { data: items } = await supabase.from('playlist_items').select('media_item_id').eq('playlist_id', playlist_id).order('position', {
-    ascending: true
-  });
-  if (!items || items.length === 0) return;
-  // Find all queue items for this player/type that match the playlist order
-  const { data: queueItems } = await supabase.from('queue').select('id,media_item_id').eq('player_id', player_id).eq('type', 'normal').is('played_at', null);
-  if (!queueItems) return;
-  // Build ordered list of queue IDs matching playlist order
-  const queueIdOrder = items.map((pl)=>queueItems.find((q)=>q.media_item_id === pl.media_item_id)).filter(Boolean).map((q)=>q.id);
-  if (queueIdOrder.length === 0) return;
-  // Call queue_reorder to update the queue order
-  await supabase.rpc('queue_reorder_wrapper', {
-    p_player_id: player_id,
-    p_queue_ids: queueIdOrder,
-    p_type: 'normal'
-  });
-}
 // Playlist Manager Edge Function
 // Handles playlist CRUD operations and media scraping
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -182,8 +159,6 @@ Deno.serve(async (req)=>{
           }
         });
       }
-      // Sync queue if this is the active playlist
-      if (player_id) await syncQueueIfActive(supabase, player_id, playlist_id);
       return new Response(JSON.stringify({
         item
       }), {
@@ -220,8 +195,6 @@ Deno.serve(async (req)=>{
           }).eq('id', items[i].id);
         }
       }
-      // Sync queue if this is the active playlist
-      if (player_id) await syncQueueIfActive(supabase, player_id, playlist_id);
       return new Response(JSON.stringify({
         success: true
       }), {
@@ -251,8 +224,6 @@ Deno.serve(async (req)=>{
           position: i
         }).eq('id', item_ids[i]).eq('playlist_id', playlist_id);
       }
-      // Sync queue if this is the active playlist
-      if (player_id) await syncQueueIfActive(supabase, player_id, playlist_id);
       return new Response(JSON.stringify({
         success: true
       }), {
@@ -303,29 +274,22 @@ Deno.serve(async (req)=>{
           }
         });
       }
-      // Insert media items (with deduplication by source_id)
+      // Insert media items — canonical deduplication via create_or_get_media_item RPC
       const mediaItems = [];
       for (const video of videos){
-        const mediaData = {
-          source_id: video.id,
-          source_type: 'youtube',
-          title: video.title,
-          artist: video.artist,
-          url: video.url,
-          duration: video.duration,
-          thumbnail: video.thumbnail,
-          metadata: {}
-        };
-        // Check if media item already exists
-        const { data: existing } = await supabase.from('media_items').select('id').eq('source_id', video.id).eq('source_type', 'youtube').maybeSingle();
-        if (existing) {
-          // Update existing record
-          const { data: updated } = await supabase.from('media_items').update(mediaData).eq('id', existing.id).select().maybeSingle();
-          if (updated) mediaItems.push(updated);
-        } else {
-          // Insert new record
-          const { data: inserted } = await supabase.from('media_items').insert(mediaData).select().maybeSingle();
-          if (inserted) mediaItems.push(inserted);
+        const { data: mediaId } = await supabase.rpc('create_or_get_media_item', {
+          p_source_id:   video.id,
+          p_source_type: 'youtube',
+          p_title:       video.title,
+          p_artist:      video.artist || null,
+          p_url:         video.url,
+          p_duration:    video.duration || null,
+          p_thumbnail:   video.thumbnail || null,
+          p_metadata:    {},
+        });
+        if (mediaId) {
+          const { data: fullItem } = await supabase.from('media_items').select('*').eq('id', mediaId).maybeSingle();
+          if (fullItem) mediaItems.push(fullItem);
         }
       }
       // If playlist_id provided, add items to playlist
@@ -342,8 +306,6 @@ Deno.serve(async (req)=>{
             position: position++
           }));
         await supabase.from('playlist_items').insert(playlistItems);
-        // Sync queue if this is the active playlist
-        if (player_id) await syncQueueIfActive(supabase, player_id, playlist_id);
       }
       return new Response(JSON.stringify({
         media_items: mediaItems,
@@ -392,8 +354,6 @@ Deno.serve(async (req)=>{
         }).eq('player_id', player_id);
         if (statusError) throw statusError;
       }
-      // Sync queue if this is the active playlist (it always is after set_active)
-      await syncQueueIfActive(supabase, player_id, playlist_id);
       return new Response(JSON.stringify({
         success: true
       }), {
@@ -405,6 +365,9 @@ Deno.serve(async (req)=>{
       });
     }
     // Handle clearing the queue
+    // NOTE: always pass p_type='normal' so priority (kiosk) items are never destroyed.
+    // The old 3-step flow (set_active→clear_queue→import_queue) called this with no type,
+    // which cleared ALL items including priority queue entries.
     if (action === 'clear_queue') {
       if (!player_id) {
         return new Response(JSON.stringify({
@@ -418,7 +381,8 @@ Deno.serve(async (req)=>{
         });
       }
       const { error: clearError } = await supabase.rpc('queue_clear', {
-        p_player_id: player_id
+        p_player_id: player_id,
+        p_type: 'normal'
       });
       if (clearError) throw clearError;
       return new Response(JSON.stringify({
@@ -474,6 +438,61 @@ Deno.serve(async (req)=>{
           ...corsHeaders,
           'Content-Type': 'application/json'
         }
+      });
+    }
+    // Handle atomic playlist load (replaces the 3-call set_active+clear_queue+import_queue sequence)
+    // Uses the load_playlist RPC which handles locking, shuffle, queue clear, and status update atomically.
+    if (action === 'load_playlist') {
+      if (!player_id || !playlist_id) {
+        return new Response(JSON.stringify({
+          error: 'player_id and playlist_id are required'
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+      const { data: loaded, error: loadError } = await supabase.rpc('load_playlist', {
+        p_player_id:   player_id,
+        p_playlist_id: playlist_id,
+        p_start_index: 0
+      });
+      if (loadError) throw loadError;
+      return new Response(JSON.stringify({
+        success: true,
+        loaded_count: loaded?.[0]?.loaded_count || 0
+      }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+    // Handle removing a media item from all playlists for a player.
+    // Used when a video becomes unavailable — player calls this so the
+    // deletion goes through a server function rather than direct DB access.
+    if (action === 'remove_media_globally') {
+      if (!player_id || !media_item_id) {
+        return new Response(JSON.stringify({
+          error: 'player_id and media_item_id are required'
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+      // Delete from all playlist_items regardless of which playlist they belong to
+      const { error: deleteError } = await supabase
+        .from('playlist_items')
+        .delete()
+        .eq('media_item_id', media_item_id);
+      if (deleteError) throw deleteError;
+      // Log the removal for operator visibility
+      await supabase.from('system_logs').insert({
+        player_id,
+        level:   'warn',
+        event:   'media_removed_unavailable',
+        details: { media_item_id }
+      });
+      return new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
     return new Response(JSON.stringify({

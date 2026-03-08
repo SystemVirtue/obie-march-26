@@ -10,7 +10,6 @@ import {
   subscribeToTable,
   callKioskHandler,
   getTotalCredits,
-  updateAllCredits,
   supabase,
   type KioskSession,
   type PlayerSettings,
@@ -21,6 +20,7 @@ import { Coins } from 'lucide-react';
 import { SearchInterface } from './components/SearchInterface';
 import { SearchResult } from '../../shared/types';
 import { BackgroundPlaylist, DEFAULT_BACKGROUND_ASSETS } from './components/BackgroundPlaylist';
+import { cleanDisplayText } from '../../shared/media-utils';
 
 const PLAYER_ID = '00000000-0000-0000-0000-000000000001'; // Default player
 
@@ -29,25 +29,33 @@ function App() {
   const [settings, setSettings] = useState<PlayerSettings | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [queue, setQueue] = useState<QueueItem[]>([]);
+
+  // Log queue state changes
+  useEffect(() => {
+    console.log('[Queue State] Queue state updated to:', queue.length, 'items');
+    if (queue.length > 5) {
+      console.warn('[Queue State] ⚠️ WARNING: Queue has more than 5 items!', queue.length);
+    }
+  }, [queue]);
   const [playerStatus, setPlayerStatus] = useState<PlayerStatus | null>(null);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [selectedResult, setSelectedResult] = useState<SearchResult | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
-  const [showSearchModal, setShowSearchModal] = useState(false);
+  const [showSearchModal, setShowSearchModal] = useState(true);
   const [showKeyboard, setShowKeyboard] = useState(true);
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [includeKaraoke, setIncludeKaraoke] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
+  const [searchSource, setSearchSource] = useState<'youtube' | 'cloudflare'>('youtube');
 
-  // Coin acceptor connection state
-  // const [coinAcceptorConnected, setCoinAcceptorConnected] = useState(false);
-  // const [coinAcceptorDeviceId, setCoinAcceptorDeviceId] = useState<string | null>(null);
-  
   // Serial connection refs
   const serialPortRef = useRef<any>(null);
   const serialReaderRef = useRef<any>(null);
-  const connectionCheckIntervalRef = useRef<number | null>(null);
+  // These refs avoid stale closures in the async serial reader loop
+  const sessionRef = useRef<KioskSession | null>(null);
+  const settingsRef = useRef<PlayerSettings | null>(null);
+  const playerStatusRef = useRef<PlayerStatus | null>(null);
 
     // Initialize session
     useEffect(() => {
@@ -58,6 +66,7 @@ function App() {
             action: 'init',
           });
           setSession(newSession);
+          setShowSearchModal(true); // Open search modal after session init
         } catch (error) {
           console.error('Failed to initialize session:', error);
         }
@@ -65,6 +74,11 @@ function App() {
 
       initSession();
     }, []);
+
+    // Keep refs in sync so the async serial reader always has current session + settings
+    useEffect(() => { sessionRef.current = session; }, [session]);
+    useEffect(() => { settingsRef.current = settings; }, [settings]);
+    useEffect(() => { playerStatusRef.current = playerStatus; }, [playerStatus]);
 
     // Subscribe to session updates (for credits) and to any kiosk_sessions changes for this player
     // Replace polling with realtime subscription: when any kiosk_sessions row for the player
@@ -97,16 +111,39 @@ function App() {
       return () => sub.unsubscribe();
     }, []);
 
-    // Coin acceptor connection management
+    // Coin acceptor: auto-connect when enabled, disconnect when disabled
     useEffect(() => {
       if (!settings?.kiosk_coin_acceptor_enabled) {
-        // Disconnect if currently connected
         disconnectCoinAcceptor();
         return;
       }
+      autoConnectCoinAcceptor();
+    }, [settings?.kiosk_coin_acceptor_enabled]);
 
-      // Attempt to connect to coin acceptor
-      connectToCoinAcceptor();
+    // Listen for Web Serial hot-plug events (device plugged in / removed)
+    useEffect(() => {
+      if (!('serial' in navigator)) return;
+      const serial = (navigator as any).serial;
+
+      const onConnect = (e: any) => {
+        if (settings?.kiosk_coin_acceptor_enabled) {
+          console.log('Serial device plugged in, connecting...');
+          openCoinAcceptorPort(e.target);
+        }
+      };
+      const onDisconnect = (e: any) => {
+        if (serialPortRef.current === e.target) {
+          console.log('Serial device unplugged');
+          serialPortRef.current = null;
+        }
+      };
+
+      serial.addEventListener('connect', onConnect);
+      serial.addEventListener('disconnect', onDisconnect);
+      return () => {
+        serial.removeEventListener('connect', onConnect);
+        serial.removeEventListener('disconnect', onDisconnect);
+      };
     }, [settings?.kiosk_coin_acceptor_enabled]);
 
     // Subscribe to player status (now playing)
@@ -118,24 +155,47 @@ function App() {
     // Subscribe to queue for marquee / upcoming list
     useEffect(() => {
       const sub = subscribeToQueue(PLAYER_ID, (items) => {
-        // Filter out currently playing item
-        const currentMediaId = playerStatus?.current_media_id || playerStatus?.current_media?.id || null;
-        const upcomingItems = items.filter(item => item.media_item_id !== currentMediaId);
-        
+        console.log('[Queue Callback] ===== START QUEUE PROCESSING =====');
+        console.log('[Queue Callback] Received items from subscription:', items.length);
+
+        // Use ref to get latest playerStatus (avoids stale closure)
+        const currentPlayerStatus = playerStatusRef.current;
+        const currentMediaId = currentPlayerStatus?.current_media_id || currentPlayerStatus?.current_media?.id || null;
+        console.log('[Queue Callback] Current media ID:', currentMediaId);
+        console.log('[Queue Callback] PlayerStatus exists:', !!currentPlayerStatus);
+
+        // Filter to only upcoming items (not currently playing)
+        let upcomingItems = items;
+        if (currentMediaId) {
+          upcomingItems = items.filter(item => {
+            const matches = item.media_item_id === currentMediaId;
+            if (matches) console.log('[Queue Callback] Filtering out current item:', item.id);
+            return !matches;
+          });
+        }
+        console.log('[Queue Callback] After filtering current item:', upcomingItems.length);
+
         // Separate priority and normal items
         const priorityItems = upcomingItems.filter(item => item.type === 'priority');
         const normalItems = upcomingItems.filter(item => item.type === 'normal');
-        
-        // Limit normal items to max 4 for marquee display
-        const limitedNormalItems = normalItems.slice(0, 4);
-        
-        // Combine for display: all priority + up to 4 normal
-        const displayItems = [...priorityItems, ...limitedNormalItems];
-        
+        console.log('[Queue Callback] Priority items:', priorityItems.length, 'Normal items:', normalItems.length);
+
+        // Limit to max 5 total items: all priority items + remaining slots filled with normal items
+        const maxMarqueeItems = 5;
+        const prioritySliced = priorityItems.slice(0, maxMarqueeItems);
+        const remainingSlots = Math.max(0, maxMarqueeItems - prioritySliced.length);
+        const normalSliced = normalItems.slice(0, remainingSlots);
+        const displayItems = [...prioritySliced, ...normalSliced];
+
+        console.log('[Queue Callback] Priority sliced:', prioritySliced.length, 'Normal sliced:', normalSliced.length);
+        console.log('[Queue Callback] After limiting to 5 items:', displayItems.length);
+        console.log('[Queue Callback] Display item IDs:', displayItems.map(item => item.id));
+        console.log('[Queue Callback] ===== END QUEUE PROCESSING =====');
+
         setQueue(displayItems);
       });
       return () => sub.unsubscribe();
-    }, [playerStatus?.current_media_id, playerStatus?.current_media?.id]);
+    }, []);
 
     // Debounced search
     useEffect(() => {
@@ -149,31 +209,28 @@ function App() {
       return () => clearTimeout(timer);
     }, [searchQuery]);
 
-    // Perform search using youtube-scraper Edge Function
+    // Perform search — routes through kiosk-handler for consistent single entry point
     const performSearch = async (query: string) => {
       try {
         setIsSearching(true);
         setSearchResults([]);
 
-        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-        const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-        const resp = await fetch(`${supabaseUrl}/functions/v1/youtube-scraper`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${supabaseAnonKey}`,
-          },
-          body: JSON.stringify({ query, type: 'search' }),
-        });
-
-        if (!resp.ok) {
-          const errText = await resp.text();
-          throw new Error(errText || `Search failed: ${resp.status}`);
+        if (searchSource === 'cloudflare') {
+          // Search R2 files via kiosk-handler
+          const result = await callKioskHandler({ action: 'search_r2', query }) as { videos?: any[] };
+          const videos = result?.videos || [];
+          setSearchResults(videos);
+        } else {
+          // YouTube search
+          let searchQuery = query;
+          if (includeKaraoke) {
+            searchQuery = query + ' Lyric Video Karaoke';
+          }
+          const result = await callKioskHandler({ action: 'search', query: searchQuery }) as { videos?: any[] };
+          const videos = result?.videos || [];
+          setSearchResults(videos);
         }
 
-        const { videos } = await resp.json();
-        setSearchResults(videos || []);
         setShowSearchResults(true);
         setShowKeyboard(false);
       } catch (error) {
@@ -195,26 +252,35 @@ function App() {
 
       setIsConfirming(true);
       try {
-        // Call kiosk-handler request with URL, letting the handler scrape & enqueue atomically
-        try {
-          const res = await callKioskHandler({ session_id: session.session_id, action: 'request', url: selectedResult.url, player_id: PLAYER_ID });
-          if (res?.error) {
-            console.error('Server failed to enqueue request:', res.error);
-          }
-        } catch (err) {
-          console.error('Failed to enqueue request via kiosk handler:', err);
+        let res: any;
+        if (selectedResult.source === 'cloudflare') {
+          // R2 video — use request_r2 action with the r2_file_id
+          res = await callKioskHandler({
+            session_id: session.session_id,
+            action: 'request_r2',
+            r2_file_id: selectedResult.id,
+            player_id: PLAYER_ID,
+          });
+        } else {
+          // YouTube video — use existing request action
+          res = await callKioskHandler({ session_id: session.session_id, action: 'request', url: selectedResult.url, player_id: PLAYER_ID });
         }
-
+        if (res?.error) {
+          alert('Failed to add to priority queue: ' + (res.error.message || res.error));
+          console.error('Server failed to enqueue request:', res.error);
+          setShowConfirm(false);
+          return;
+        }
+      } catch (err) {
+        alert('Failed to enqueue request via kiosk handler: ' + ((err as any)?.message || err));
+        console.error('Failed to enqueue request via kiosk handler:', err);
+      } finally {
         // Close modal and reset
         setShowConfirm(false);
         setShowSearchResults(false);
         setShowKeyboard(true);
         setShowSearchModal(false);
         setSearchQuery('');
-      } catch (error) {
-        console.error('Failed to add request:', error);
-        setShowConfirm(false);
-      } finally {
         setIsConfirming(false);
       }
     };
@@ -235,45 +301,47 @@ function App() {
       }
     };
     
-    // Coin acceptor connection functions
-    const connectToCoinAcceptor = async () => {
+    // --- Coin acceptor serial functions ---
+
+    // Auto-connect using previously-granted ports (no user gesture required).
+    // Called automatically when kiosk_coin_acceptor_enabled is true.
+    const autoConnectCoinAcceptor = async () => {
+      if (!('serial' in navigator)) {
+        console.warn('Web Serial API not supported in this browser');
+        return;
+      }
       try {
-        // Check if Web Serial API is supported
-        if (!('serial' in navigator)) {
-          console.error('Web Serial API not supported');
-          return;
+        const ports = await (navigator as any).serial.getPorts();
+        if (ports.length > 0) {
+          console.log(`Found ${ports.length} previously-granted serial port(s), connecting...`);
+          await openCoinAcceptorPort(ports[0]);
+        } else {
+          console.log('No previously-granted serial ports. Connect via admin or grant permission first.');
         }
+      } catch (err) {
+        console.error('Auto-connect failed:', err);
+      }
+    };
 
-        // Request a port
-        const port = await (navigator as any).serial.requestPort();
+    // Open a specific port and start the reader loop.
+    const openCoinAcceptorPort = async (port: any) => {
+      if (serialPortRef.current === port && port.readable) return; // already open
+      try {
         serialPortRef.current = port;
-
-        // Open the port
-        await port.open({ baudRate: 9600 });
-
-      console.log('Coin acceptor connected');
-      // setCoinAcceptorConnected(true);
-      // setCoinAcceptorDeviceId('usbserial-1420'); // Set the expected device ID      // Update database with connection status
-      await (supabase as any)
-        .from('player_settings')
-        .update({
-          kiosk_coin_acceptor_connected: true,
-          kiosk_coin_acceptor_device_id: 'usbserial-1420'
-        })
-        .eq('id', 1);        // Start reading from the port
-        const reader = port.readable?.getReader();
-        if (reader) {
-          serialReaderRef.current = reader;
-          readCoinAcceptorData(reader);
+        if (!port.readable) {
+          await port.open({ baudRate: 9600 });
         }
-
-        // Start connection monitoring
-        startConnectionMonitoring();
-
-      } catch (error) {
-      console.error('Failed to connect to coin acceptor:', error);
-      // setCoinAcceptorConnected(false);
-      // setCoinAcceptorDeviceId(null);
+        console.log('Coin acceptor connected');
+        await (supabase as any)
+          .from('player_settings')
+          .update({ kiosk_coin_acceptor_connected: true, kiosk_coin_acceptor_device_id: 'usbserial-1420' })
+          .eq('player_id', PLAYER_ID);
+        const reader = port.readable.getReader();
+        serialReaderRef.current = reader;
+        readCoinAcceptorData(reader);
+      } catch (err) {
+        console.error('Failed to open coin acceptor port:', err);
+        serialPortRef.current = null;
       }
     };
 
@@ -281,84 +349,67 @@ function App() {
       try {
         if (serialReaderRef.current) {
           await serialReaderRef.current.cancel();
-          serialReaderRef.current.releaseLock();
           serialReaderRef.current = null;
         }
-
         if (serialPortRef.current) {
           await serialPortRef.current.close();
           serialPortRef.current = null;
         }
-
-      console.log('Coin acceptor disconnected');
-      // setCoinAcceptorConnected(false);
-      // setCoinAcceptorDeviceId(null);      // Update database with disconnection status
-      await (supabase as any)
-        .from('player_settings')
-        .update({
-          kiosk_coin_acceptor_connected: false,
-          kiosk_coin_acceptor_device_id: null
-        })
-        .eq('id', 1);        // Stop connection monitoring
-        stopConnectionMonitoring();
-
+        console.log('Coin acceptor disconnected');
       } catch (error) {
         console.error('Failed to disconnect coin acceptor:', error);
       }
     };
 
+    // Read serial data and map coin signals to credits:
+    //   'a' = $2 coin = 3 credits
+    //   'b' = $1 coin = 1 credit
     const readCoinAcceptorData = async (reader: any) => {
+      const decoder = new TextDecoder();
       try {
         while (true) {
           const { value, done } = await reader.read();
           if (done) break;
 
-          // Process coin detection data
-          // Assuming the coin acceptor sends data when coins are inserted
-          const data = new TextDecoder().decode(value);
-          console.log('Coin acceptor data:', data);
+          const data = decoder.decode(value, { stream: true });
+          for (const char of data) {
+            let amount = 0;
+            if (char === 'a') amount = 3;       // $2 coin
+            else if (char === 'b') amount = 1;  // $1 coin
 
-          // For now, assume any data means a coin was inserted
-          // In a real implementation, you'd parse the specific protocol
-          if (data.trim()) {
-            // Add credit when coin is detected
-            await updateAllCredits(PLAYER_ID, 'add', 1);
-            console.log('Credit added for coin insertion');
-          }
-        }
-      } catch (error) {
-        console.error('Error reading coin acceptor data:', error);
-      }
-    };
-
-    const startConnectionMonitoring = () => {
-      // Check connection every 60 seconds
-      connectionCheckIntervalRef.current = window.setInterval(async () => {
-        try {
-          if (serialPortRef.current) {
-            // Try to read from the port to check if it's still connected
-            const reader = serialPortRef.current.readable?.getReader();
-            if (reader) {
-              try {
-                await reader.read();
-                reader.releaseLock();
-              } catch (error) {
-                // Connection lost
-                console.log('Coin acceptor connection lost');
-                await disconnectCoinAcceptor();
+            if (amount > 0) {
+              // In freeplay mode, drain the serial data but don't add credits
+              if (settingsRef.current?.freeplay) {
+                console.log(`Coin accepted: '${char}' (freeplay — credit ignored)`);
+                continue;
+              }
+              const currentSession = sessionRef.current;
+              if (!currentSession) continue;
+              console.log(`Coin accepted: '${char}' → +${amount} credit(s)`);
+              const result = await callKioskHandler({
+                session_id: currentSession.session_id,
+                action: 'credit',
+                amount,
+              }) as { credits?: number };
+              if (result?.credits !== undefined) {
+                setSession(prev => prev ? { ...prev, credits: result.credits! } : prev);
               }
             }
           }
-        } catch (error) {
-          console.error('Error checking coin acceptor connection:', error);
         }
-      }, 60000); // 60 seconds
-    };
-
-    const stopConnectionMonitoring = () => {
-      if (connectionCheckIntervalRef.current) {
-        clearInterval(connectionCheckIntervalRef.current);
-        connectionCheckIntervalRef.current = null;
+      } catch (err: any) {
+        if (err?.name !== 'AbortError') {
+          console.error('Coin acceptor read error:', err);
+        }
+      } finally {
+        try { reader.releaseLock(); } catch (_) { /* already released */ }
+        serialReaderRef.current = null;
+        // Mark disconnected in DB
+        await (supabase as any)
+          .from('player_settings')
+          .update({ kiosk_coin_acceptor_connected: false, kiosk_coin_acceptor_device_id: null })
+          .eq('player_id', PLAYER_ID);
+        console.log('Coin acceptor reader closed');
       }
     };
 
@@ -379,11 +430,11 @@ function App() {
               <div className="flex flex-col">
                 <p className="text-white text-sm font-bold mb-1">NOW PLAYING</p>
                 <p className="text-yellow-300 text-sm font-semibold truncate">
-                  {playerStatus?.current_media?.title || 'No song playing'}
+                  {cleanDisplayText(playerStatus?.current_media?.title) || 'No song playing'}
                 </p>
                 {playerStatus?.current_media?.artist && (
                   <p className="text-gray-300 text-xs truncate">
-                    {playerStatus.current_media.artist.replace(/\s*-\s*Topic$/i, '')}
+                    {cleanDisplayText(playerStatus.current_media.artist)}
                   </p>
                 )}
               </div>
@@ -462,6 +513,9 @@ function App() {
             includeKaraoke={includeKaraoke}
             onIncludeKaraokeChange={setIncludeKaraoke}
             bypassCreditCheck={settings?.freeplay}
+            searchSource={searchSource}
+            onSearchSourceChange={setSearchSource}
+            cloudflareEnabled={settings?.cloudflare_enabled ?? false}
           />
 
           {/* Bottom marquee of upcoming songs */}
@@ -470,13 +524,23 @@ function App() {
               <div className="marquee">
                 <div className="marquee-track flex items-center whitespace-nowrap gap-8 text-yellow-400 font-semibold text-sm drop-shadow-lg">
                   {queue.length > 0 ? (
-                    queue.map((q, index) => (
-                      <div key={q.id} className="px-6 flex items-center gap-2">
-                        {q.type === 'priority' && <span className="text-red-400 drop-shadow-lg">★</span>}
-                        <span>{(q.media_item as any)?.title || 'Untitled'} - <span className="text-gray-300 drop-shadow-lg">{(q.media_item as any)?.artist?.replace(/\s*-\s*Topic$/i, '') || 'Unknown'}</span></span>
-                        {q.type === 'priority' && index === queue.filter(item => item.type === 'priority').length - 1 && queue.some(item => item.type === 'normal') && <span className="text-gray-400 mx-4 drop-shadow-lg">•</span>}
-                      </div>
-                    ))
+                    <>
+                      {queue.map((q, index) => (
+                        <div key={`${q.id}-1`} className="px-6 flex items-center gap-2">
+                          {q.type === 'priority' && <span className="text-red-400 drop-shadow-lg">★</span>}
+                          <span>{cleanDisplayText((q.media_item as any)?.title) || 'Untitled'} - <span className="text-gray-300 drop-shadow-lg">{cleanDisplayText((q.media_item as any)?.artist) || 'Unknown'}</span></span>
+                          {q.type === 'priority' && index === queue.filter(item => item.type === 'priority').length - 1 && queue.some(item => item.type === 'normal') && <span className="text-gray-400 mx-4 drop-shadow-lg">•</span>}
+                        </div>
+                      ))}
+                      {/* Duplicate content for seamless loop */}
+                      {queue.map((q, index) => (
+                        <div key={`${q.id}-2`} className="px-6 flex items-center gap-2">
+                          {q.type === 'priority' && <span className="text-red-400 drop-shadow-lg">★</span>}
+                          <span>{cleanDisplayText((q.media_item as any)?.title) || 'Untitled'} - <span className="text-gray-300 drop-shadow-lg">{cleanDisplayText((q.media_item as any)?.artist) || 'Unknown'}</span></span>
+                          {q.type === 'priority' && index === queue.filter(item => item.type === 'priority').length - 1 && queue.some(item => item.type === 'normal') && <span className="text-gray-400 mx-4 drop-shadow-lg">•</span>}
+                        </div>
+                      ))}
+                    </>
                   ) : (
                     <div className="px-6 drop-shadow-lg">Coming Up: No items</div>
                   )}
@@ -492,17 +556,21 @@ function App() {
                   <div className="text-lg font-bold mb-2">Add song to Playlist?</div>
                   <div className="text-sm text-gray-700 mb-4">Confirm adding this song to your playlist for playback.</div>
                   <div className="flex gap-4 items-center">
-                    <img src={selectedResult.thumbnail} className="w-20 h-20 object-cover rounded" />
+                    {selectedResult.thumbnail ? (
+                      <img src={selectedResult.thumbnail} className="w-20 h-20 object-cover rounded" />
+                    ) : (
+                      <div className="w-20 h-20 rounded bg-black flex-shrink-0" />
+                    )}
                     <div>
-                      <div className="font-semibold">{selectedResult.title}</div>
-                      <div className="text-sm text-gray-700">{selectedResult.artist?.replace(/\s*-\s*Topic$/i, '')}</div>
-                      <div className="text-sm text-gray-700 mt-2">Cost: 1 Credit</div>
+                      <div className="font-semibold">{cleanDisplayText(selectedResult.title)}</div>
+                      <div className="text-sm text-gray-700">{cleanDisplayText(selectedResult.artist)}</div>
+                      <div className="text-sm text-gray-700 mt-2">{settings?.freeplay ? 'Cost: FREE' : 'Cost: 1 Credit'}</div>
                     </div>
                   </div>
                   <div className="flex justify-end gap-3 mt-6">
                     <button onClick={() => setShowConfirm(false)} className="px-4 py-2 bg-red-100 rounded">No</button>
-                    <button 
-                      onClick={handleConfirmAdd} 
+                    <button
+                      onClick={handleConfirmAdd}
                       disabled={isConfirming}
                       className={`px-4 py-2 rounded ${isConfirming ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'} text-white`}
                     >

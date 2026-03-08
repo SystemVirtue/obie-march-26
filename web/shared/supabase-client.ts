@@ -70,6 +70,10 @@ export interface PlayerStatus {
   queue_head_position: number;
   last_updated: string;
   current_media?: MediaItem; // Joined data
+  /** 'youtube' = normal iframe mode (default); 'local' = yt-dlp download; 'cloudflare' = R2 bucket */
+  source?: 'youtube' | 'local' | 'cloudflare';
+  /** Public URL for non-YouTube playback (yt-dlp download or Cloudflare R2 video) */
+  local_url?: string | null;
 }
 
 export interface PlayerSettings {
@@ -92,6 +96,9 @@ export interface PlayerSettings {
   kiosk_coin_acceptor_connected?: boolean;
   kiosk_coin_acceptor_device_id?: string | null;
   kiosk_show_virtual_coin_button?: boolean;
+  player_mode?: 'iframe' | 'ytm_desktop';
+  cloudflare_enabled?: boolean;
+  cloudflare_r2_public_url?: string | null;
 }
 
 export interface KioskSession {
@@ -113,6 +120,25 @@ export interface SystemLog {
   timestamp: string;
 }
 
+export interface R2File {
+  id: string;
+  bucket_name: string;
+  object_key: string;
+  file_name: string;
+  content_type: string | null;
+  size_bytes: number | null;
+  etag: string | null;
+  last_modified: string | null;
+  public_url: string;
+  title: string | null;
+  artist: string | null;
+  duration: number | null;
+  thumbnail: string | null;
+  tags: string[] | null;
+  synced_at: string;
+  created_at: string;
+}
+
 export interface Database {
   public: {
     Tables: {
@@ -125,6 +151,7 @@ export interface Database {
       player_settings: { Row: PlayerSettings; Update: Partial<PlayerSettings> };
       kiosk_sessions: { Row: KioskSession };
       system_logs: { Row: SystemLog };
+      r2_files: { Row: R2File };
     };
   };
 }
@@ -411,7 +438,7 @@ export function subscribeToSystemLogs(
  */
 export async function callQueueManager(params: {
   player_id: string;
-  action: 'add' | 'remove' | 'reorder' | 'next' | 'skip' | 'clear';
+  action: 'add' | 'remove' | 'reorder' | 'next' | 'skip' | 'clear' | 'shuffle';
   media_item_id?: string;
   queue_id?: string;
   queue_ids?: string[];
@@ -478,16 +505,46 @@ export async function callPlayerControl(params: {
 }
 
 /**
+ * Trigger a yt-dlp download via the local companion service.
+ *
+ * Calls the download-service.mjs Node.js process running on localhost:3742
+ * (hosted Supabase Edge Functions cannot shell out to yt-dlp).
+ * The service downloads the video, uploads to Storage, and flips
+ * player_status to source='local'.  The Player's Realtime subscription
+ * then switches from the iframe to a native <video> element.
+ *
+ * Start the service:  node scripts/download-service.mjs
+ */
+export async function callDownloadVideo(params: {
+  videoId: string;
+  player_id?: string;
+}): Promise<{ success: boolean; publicUrl?: string }> {
+  const res = await fetch('http://127.0.0.1:3742/download', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify(params),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({})) as { error?: string };
+    throw new Error(err.error ?? `Download service returned HTTP ${res.status}`);
+  }
+
+  return res.json() as Promise<{ success: boolean; publicUrl?: string }>;
+}
+
+/**
  * Call kiosk handler edge function
  */
 export async function callKioskHandler(params: {
   session_id?: string;
   player_id?: string;
-  action: 'init' | 'search' | 'credit' | 'request';
+  action: 'init' | 'search' | 'credit' | 'request' | 'check' | 'search_r2' | 'request_r2';
   query?: string;
   media_item_id?: string;
   amount?: number;
   url?: string;
+  r2_file_id?: string;
 }) {
   try {
     // Call Edge Function directly to bypass authentication requirements for public kiosk
@@ -523,7 +580,7 @@ export async function callKioskHandler(params: {
  * Call playlist-manager Edge Function
  */
 export async function callPlaylistManager(params: {
-  action: 'create' | 'update' | 'delete' | 'add_item' | 'remove_item' | 'reorder' | 'scrape' | 'set_active' | 'clear_queue' | 'import_queue';
+  action: 'create' | 'update' | 'delete' | 'add_item' | 'remove_item' | 'reorder' | 'scrape' | 'set_active' | 'clear_queue' | 'import_queue' | 'load_playlist' | 'remove_media_globally';
   player_id?: string;
   playlist_id?: string;
   name?: string;

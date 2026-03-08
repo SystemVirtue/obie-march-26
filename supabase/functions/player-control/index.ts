@@ -167,10 +167,26 @@ Deno.serve(async (req)=>{
 
     // Handle status update
     if (action === 'update' || action === 'ended' || action === 'skip') {
-      const updateData = {
+      // For skip: capture current player state BEFORE updating, so we can decide
+      // whether the player needs to fade out or whether it's already idle.
+      let preUpdateState: string | null = null;
+      if (action === 'skip') {
+        const { data: currentStatus } = await supabase
+          .from('player_status')
+          .select('state')
+          .eq('player_id', player_id)
+          .single();
+        preUpdateState = currentStatus?.state ?? null;
+      }
+
+      const updateData: Record<string, unknown> = {
         last_updated: new Date().toISOString()
       };
-      if (state !== undefined) {
+      // For 'ended', skip writing state to player_status.  Writing state='idle' here
+      // fires a Realtime event that the player's status subscription misinterprets as
+      // an admin skip (playing→idle), triggering a second queue_next call.
+      // queue_next will set state='loading' atomically, so no intermediate write needed.
+      if (action !== 'ended' && state !== undefined) {
         updateData.state = state;
       }
       if (progress !== undefined) {
@@ -178,8 +194,9 @@ Deno.serve(async (req)=>{
       }
       const { error: updateError } = await supabase.from('player_status').update(updateData).eq('player_id', player_id);
       if (updateError) throw updateError;
-      // If action is 'skip' from Admin, just update state and return
-      // Let the Player handle the fade and call queue_next
+      // If action is 'skip' from Admin, check if player was already idle.
+      // If idle: call queue_next directly (no fade needed, nothing is playing).
+      // If playing/paused: let the Player handle the fade and then call queue_next.
       if (action === 'skip' && state === 'idle') {
         // Check if this player is the priority player before allowing queue progression
         const { data: player } = await supabase
@@ -193,6 +210,30 @@ Deno.serve(async (req)=>{
           return new Response(JSON.stringify({
             success: false,
             reason: 'not_priority_player'
+          }), {
+            status: 200,
+            headers: {
+              ...corsHeaders,
+              'Content-Type': 'application/json'
+            }
+          });
+        }
+
+        if (preUpdateState === 'idle') {
+          // Player was already idle — no video playing, skip the fade and advance queue now.
+          console.log('[player-control] Skip while idle - calling queue_next directly (no fade needed)');
+          const { data: nextItem, error: nextError } = await supabase.rpc('queue_next', {
+            p_player_id: player_id
+          });
+          if (nextError) {
+            console.error('[player-control] ❌ Failed to get next item on idle-skip:', nextError);
+          } else {
+            console.log('[player-control] 🎵 Idle-skip queue_next returned:', nextItem?.[0]?.title?.slice(0, 30) || 'none');
+          }
+          return new Response(JSON.stringify({
+            success: true,
+            next_item: nextItem?.[0] || null,
+            action: 'skip_idle'
           }), {
             status: 200,
             headers: {

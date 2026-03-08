@@ -158,6 +158,16 @@ Deno.serve(async (req) => {
         break;
       }
 
+      case "shuffle": {
+        const { error: shuffleError } = await supabase.rpc("queue_shuffle", {
+          p_player_id: player_id,
+          p_type: type === "priority" ? "priority" : "normal",
+        });
+        if (shuffleError) throw shuffleError;
+        result = { success: true };
+        break;
+      }
+
       default:
         return new Response(JSON.stringify({ error: `Unknown action: ${action}` }), {
           status: 400,

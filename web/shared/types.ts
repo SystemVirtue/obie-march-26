@@ -9,6 +9,8 @@ export interface SearchResult {
   videoUrl?: string;
   duration?: number;
   officialScore?: number;
+  /** Identifies result origin: 'youtube' (default) or 'cloudflare' (R2 bucket) */
+  source?: 'youtube' | 'cloudflare';
 }
 
 export interface SearchInterfaceProps {
@@ -29,4 +31,7 @@ export interface SearchInterfaceProps {
   includeKaraoke?: boolean;
   onIncludeKaraokeChange?: (checked: boolean) => void;
   bypassCreditCheck?: boolean;
+  searchSource?: 'youtube' | 'cloudflare';
+  onSearchSourceChange?: (source: 'youtube' | 'cloudflare') => void;
+  cloudflareEnabled?: boolean;
 }

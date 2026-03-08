@@ -11,6 +11,9 @@ interface SearchKeyboardProps {
   description?: string;
   includeKaraoke?: boolean;
   onIncludeKaraokeChange?: (checked: boolean) => void;
+  searchSource?: 'youtube' | 'cloudflare';
+  onSearchSourceChange?: (source: 'youtube' | 'cloudflare') => void;
+  cloudflareEnabled?: boolean;
 }
 
 export const SearchKeyboard: React.FC<SearchKeyboardProps> = ({
@@ -21,6 +24,9 @@ export const SearchKeyboard: React.FC<SearchKeyboardProps> = ({
   description = "Use the keyboard below to search for songs and add them to your playlist.",
   includeKaraoke = false,
   onIncludeKaraokeChange,
+  searchSource = 'youtube',
+  onSearchSourceChange,
+  cloudflareEnabled = false,
 }) => {
   console.log('[SearchKeyboard] Rendering with:', {
     includeKaraoke,
@@ -31,17 +37,8 @@ export const SearchKeyboard: React.FC<SearchKeyboardProps> = ({
   const handleKaraokeToggle = (checked: boolean) => {
     if (!onIncludeKaraokeChange) return;
 
-    if (checked) {
-      // Append " KARAOKE" to search query if not already present
-      if (!searchQuery.toUpperCase().includes(" KARAOKE")) {
-        onSearchQueryChange(searchQuery + " KARAOKE");
-      }
-    } else {
-      // Remove " KARAOKE" from search query (case insensitive)
-      const updatedQuery = searchQuery.replace(/ KARAOKE$/i, "");
-      onSearchQueryChange(updatedQuery);
-    }
-
+    // Don't modify the search query - just update the karaoke flag
+    // The search backend will add " Lyric Video Karaoke" to the query when needed
     onIncludeKaraokeChange(checked);
   };
 
@@ -66,24 +63,53 @@ export const SearchKeyboard: React.FC<SearchKeyboardProps> = ({
         />
       </div>
 
-      {/* Karaoke Checkbox */}
-      {onIncludeKaraokeChange && (
-        <div className="mb-6 flex items-center justify-center gap-3 bg-slate-800/40 p-3 rounded-lg border border-amber-500/30">
-          <label
-            htmlFor="karaoke-checkbox"
-            className="text-amber-200 text-base sm:text-xl font-semibold cursor-pointer select-none"
-          >
-            Show Karaoke Lyric Results
-          </label>
-          <input
-            id="karaoke-checkbox"
-            type="checkbox"
-            checked={includeKaraoke}
-            onChange={(e) => handleKaraokeToggle(e.target.checked)}
-            className="w-6 h-6 sm:w-8 sm:h-8 cursor-pointer accent-amber-500"
-          />
-        </div>
-      )}
+      {/* Source Toggle + Karaoke Checkbox */}
+      <div className="mb-6 flex items-center justify-center gap-4 flex-wrap">
+        {/* Source Toggle (YouTube / Cloudflare) */}
+        {cloudflareEnabled && onSearchSourceChange && (
+          <div className="flex items-center gap-2 bg-slate-800/40 p-3 rounded-lg border border-amber-500/30">
+            <button
+              onClick={() => onSearchSourceChange('youtube')}
+              className={`px-4 py-2 rounded-lg text-sm sm:text-base font-bold transition-all ${
+                searchSource === 'youtube'
+                  ? 'bg-red-600 text-white border-2 border-red-400'
+                  : 'bg-slate-700/60 text-slate-400 border-2 border-slate-600 hover:border-slate-400'
+              }`}
+            >
+              YouTube
+            </button>
+            <button
+              onClick={() => onSearchSourceChange('cloudflare')}
+              className={`px-4 py-2 rounded-lg text-sm sm:text-base font-bold transition-all ${
+                searchSource === 'cloudflare'
+                  ? 'bg-orange-500 text-white border-2 border-orange-400'
+                  : 'bg-slate-700/60 text-slate-400 border-2 border-slate-600 hover:border-slate-400'
+              }`}
+            >
+              Library
+            </button>
+          </div>
+        )}
+
+        {/* Karaoke Checkbox */}
+        {onIncludeKaraokeChange && (
+          <div className="flex items-center justify-center gap-3 bg-slate-800/40 p-3 rounded-lg border border-amber-500/30">
+            <label
+              htmlFor="karaoke-checkbox"
+              className="text-amber-200 text-base sm:text-xl font-semibold cursor-pointer select-none"
+            >
+              Show Karaoke Lyric Results
+            </label>
+            <input
+              id="karaoke-checkbox"
+              type="checkbox"
+              checked={includeKaraoke}
+              onChange={(e) => handleKaraokeToggle(e.target.checked)}
+              className="w-6 h-6 sm:w-8 sm:h-8 cursor-pointer accent-amber-500"
+            />
+          </div>
+        )}
+      </div>
 
       <div className="flex-1 flex flex-col justify-center space-y-4">
         {KEYBOARD_ROWS.map((row, rowIndex) => (

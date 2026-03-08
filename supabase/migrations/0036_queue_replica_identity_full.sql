@@ -1,0 +1,23 @@
+-- 0036_queue_replica_identity_full.sql
+--
+-- Fix: DELETE events on the queue table don't trigger client subscriptions.
+--
+-- Root cause:
+--   Supabase Realtime subscriptions can filter rows by column value, e.g.
+--   player_id=eq.<uuid>.  For INSERT and UPDATE events, Postgres sends the full
+--   new row, so the filter matches.  For DELETE events, Postgres only sends the
+--   primary key columns by default (REPLICA IDENTITY DEFAULT = primary key only).
+--   The player_id column is not present in the DELETE payload, so the
+--   player_id=eq.<uuid> filter never matches → subscribeToQueue never re-fetches
+--   → the queue panel stays stale after a removal.
+--
+-- Fix:
+--   Set REPLICA IDENTITY FULL on the queue table so that DELETE events include
+--   all columns.  The player_id filter then matches, the subscription fires, and
+--   subscribeToQueue re-fetches the correct (post-delete) state.
+--
+-- Trade-off:
+--   FULL sends the entire old row on every DELETE (slightly more WAL/network).
+--   For a jukebox queue that rarely exceeds a few hundred rows this is negligible.
+
+ALTER TABLE queue REPLICA IDENTITY FULL;

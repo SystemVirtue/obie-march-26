@@ -24,6 +24,9 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
   includeKaraoke,
   onIncludeKaraokeChange,
   bypassCreditCheck = false,
+  searchSource = 'youtube',
+  onSearchSourceChange,
+  cloudflareEnabled = false,
 }) => {
   console.log('SearchInterface props:', {
     isOpen,
@@ -91,6 +94,9 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
             onKeyPress={onKeyboardInput}
             includeKaraoke={includeKaraoke}
             onIncludeKaraokeChange={onIncludeKaraokeChange}
+            searchSource={searchSource}
+            onSearchSourceChange={onSearchSourceChange}
+            cloudflareEnabled={cloudflareEnabled}
           />
         )}
 

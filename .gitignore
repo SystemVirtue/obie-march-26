@@ -49,3 +49,11 @@ coverage/
 # Temporary files
 *.tmp
 *.temp
+
+# Audit output
+audit-playlists-vs-cloudflare.txt
+
+# Playwright
+tests/.auth/
+playwright-report/
+test-results/
