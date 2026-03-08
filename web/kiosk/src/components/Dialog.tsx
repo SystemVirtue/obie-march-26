@@ -16,7 +16,7 @@ export const Dialog: React.FC<DialogProps> = ({ open, onOpenChange, children }) 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => onOpenChange(false)}>
-      <div onClick={(e) => e.stopPropagation()}>
+      <div className="max-h-[100vh] max-w-[100vw]" onClick={(e) => e.stopPropagation()}>
         {children}
       </div>
     </div>
