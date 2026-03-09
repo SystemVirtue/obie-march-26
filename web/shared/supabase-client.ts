@@ -491,6 +491,7 @@ export async function callPlayerControl(params: {
   action?: 'heartbeat' | 'update' | 'ended' | 'skip' | 'register_session' | 'reset_priority';
   session_id?: string;
   stored_player_id?: string;
+  current_media_id?: string;
 }) {
   const { data, error } = await supabase.functions.invoke('player-control', {
     body: params
