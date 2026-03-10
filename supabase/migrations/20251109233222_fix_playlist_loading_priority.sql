@@ -12,7 +12,6 @@ DECLARE
   v_item RECORD;
   v_position INT := 0;
   v_shuffle BOOLEAN;
-  v_items RECORD[];
 BEGIN
   -- Acquire lock
   PERFORM pg_advisory_xact_lock(hashtext('queue_' || p_player_id::text));
@@ -25,32 +24,17 @@ BEGIN
   WHERE player_id = p_player_id
     AND type = 'normal';
 
-  -- Load playlist items
-  SELECT array_agg(ROW(pi.media_item_id, pi.position)) INTO v_items
-  FROM playlist_items pi
-  WHERE pi.playlist_id = p_playlist_id
-  ORDER BY pi.position;
-
-  -- If shuffle enabled, randomize the order
-  IF v_shuffle THEN
-    -- Randomize the array order
-    SELECT array_agg(elem) INTO v_items
-    FROM (
-      SELECT unnest(v_items) AS elem
-      ORDER BY RANDOM()
-    ) AS randomized;
-  ELSE
-    -- Keep original order starting from start_index, wrapping around
-    SELECT array_agg(elem) INTO v_items
-    FROM (
-      SELECT unnest(v_items) AS elem
-      ORDER BY (elem.position + (SELECT MAX(position) + 1 FROM playlist_items WHERE playlist_id = p_playlist_id) - p_start_index)
-               % (SELECT MAX(position) + 1 FROM playlist_items WHERE playlist_id = p_playlist_id)
-    ) AS ordered;
-  END IF;
-
   -- Insert items into queue with sequential positions
-  FOREACH v_item IN ARRAY v_items LOOP
+  FOR v_item IN
+    SELECT pi.media_item_id, pi.position
+    FROM playlist_items pi
+    WHERE pi.playlist_id = p_playlist_id
+    ORDER BY
+      CASE WHEN v_shuffle THEN RANDOM() ELSE
+        ((pi.position + (SELECT COALESCE(MAX(position) + 1, 1) FROM playlist_items WHERE playlist_id = p_playlist_id) - p_start_index)
+         % (SELECT COALESCE(MAX(position) + 1, 1) FROM playlist_items WHERE playlist_id = p_playlist_id))::float
+      END
+  LOOP
     INSERT INTO queue (player_id, type, media_item_id, position, requested_by)
     VALUES (p_player_id, 'normal', v_item.media_item_id, v_position, 'playlist');
 

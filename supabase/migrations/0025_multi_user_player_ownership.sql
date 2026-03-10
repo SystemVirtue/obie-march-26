@@ -112,7 +112,7 @@ CREATE POLICY "Owner access to own playlist items"
   ON playlist_items FOR ALL
   USING (
     playlist_id IN (
-      SELECT pi.playlist_id FROM playlists pi
+      SELECT pi.id FROM playlists pi
       JOIN players p ON p.id = pi.player_id
       WHERE p.owner_id = auth.uid()
     )
@@ -159,13 +159,7 @@ CREATE POLICY "Service role can insert system_logs"
   ON system_logs FOR INSERT
   WITH CHECK (true);
 
--- playlist_positions (from migration 0024)
-DROP POLICY IF EXISTS "Admin full access to playlist_positions" ON playlist_positions;
-CREATE POLICY "Owner full access to own playlist_positions"
-  ON playlist_positions FOR ALL
-  USING (
-    player_id IN (SELECT id FROM players WHERE owner_id = auth.uid())
-  );
+-- playlist_positions (from migration 0024) - skipped: table does not exist
 
 -- -----------------------------------------------------------------------------
 -- 6. Anon policies for player/kiosk apps (read-only where needed)
