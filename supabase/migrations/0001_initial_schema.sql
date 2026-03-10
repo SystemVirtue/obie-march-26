@@ -1,8 +1,7 @@
 -- Obie Jukebox v2 - Complete Schema
 -- Server-first architecture with Realtime sync and RLS
 
--- Enable UUID generation
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+-- Enable UUID generation (gen_random_uuid is built into PostgreSQL 13+)
 
 -- =============================================================================
 -- TABLES
@@ -10,7 +9,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- Core player instance
 CREATE TABLE players (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
   status TEXT DEFAULT 'offline' CHECK (status IN ('offline', 'online', 'error')),
   last_heartbeat TIMESTAMPTZ DEFAULT NOW(),
@@ -21,7 +20,7 @@ CREATE TABLE players (
 
 -- Playlist library
 CREATE TABLE playlists (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   player_id UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   description TEXT,
@@ -32,7 +31,7 @@ CREATE TABLE playlists (
 
 -- Normalized playlist items (replaces JSONB[] approach)
 CREATE TABLE playlist_items (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   playlist_id UUID NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
   position INT NOT NULL,
   media_item_id UUID NOT NULL,
@@ -42,7 +41,7 @@ CREATE TABLE playlist_items (
 
 -- Deduplicated media metadata cache
 CREATE TABLE media_items (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   source_id TEXT UNIQUE NOT NULL, -- e.g., "youtube:dQw4w9WgXcQ"
   source_type TEXT NOT NULL DEFAULT 'youtube',
   title TEXT NOT NULL,
@@ -56,7 +55,7 @@ CREATE TABLE media_items (
 
 -- Unified queue (normal + priority)
 CREATE TABLE queue (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   player_id UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
   type TEXT NOT NULL DEFAULT 'normal' CHECK (type IN ('normal', 'priority')),
   media_item_id UUID NOT NULL REFERENCES media_items(id),
@@ -99,7 +98,7 @@ CREATE TABLE player_settings (
 
 -- Kiosk session + credits
 CREATE TABLE kiosk_sessions (
-  session_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  session_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   player_id UUID NOT NULL REFERENCES players(id) ON DELETE CASCADE,
   credits INT DEFAULT 0 CHECK (credits >= 0),
   last_active TIMESTAMPTZ DEFAULT NOW(),
