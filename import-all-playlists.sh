@@ -8,24 +8,32 @@ echo "🎵 Importing multiple playlists to Obie Jukebox..."
 
 # Configuration
 SUPABASE_URL="${SUPABASE_URL:-http://localhost:54321}"
+SERVICE_ROLE_KEY="${SERVICE_ROLE_KEY:-${SUPABASE_SERVICE_ROLE_KEY:-${VITE_SUPABASE_SERVICE_KEY:-}}}"
 DEFAULT_PLAYER_ID="00000000-0000-0000-0000-000000000001"
 REQUEST_DELAY=3  # Delay in seconds between requests to avoid rate limiting
 
-# Check if Supabase is running
-if ! curl -s "${SUPABASE_URL}/health" > /dev/null 2>&1; then
-  echo "❌ Error: Supabase is not running at ${SUPABASE_URL}"
-  echo "   Please start Supabase with: supabase start"
-  exit 1
-fi
+# Use local Supabase credentials only when no explicit cloud credentials are set
+if [ -z "$SERVICE_ROLE_KEY" ]; then
+  # Check if local Supabase is running
+  if ! curl -s "${SUPABASE_URL}/health" > /dev/null 2>&1; then
+    echo "❌ Error: Supabase is not running at ${SUPABASE_URL}"
+    echo "   Please start Supabase with: supabase start"
+    echo "   Or provide SUPABASE_URL and SERVICE_ROLE_KEY for cloud import"
+    exit 1
+  fi
 
-# Get Supabase configuration
-echo "📋 Getting Supabase credentials..."
-SUPABASE_URL=$(supabase status | grep "API URL" | awk '{print $NF}')
-SERVICE_ROLE_KEY=$(supabase status | grep "Secret key" | awk '{print $NF}')
+  # Get local Supabase credentials
+  echo "📋 Getting Supabase credentials from local Supabase..."
+  SUPABASE_URL=$(supabase status | grep "API URL" | awk '{print $NF}')
+  SERVICE_ROLE_KEY=$(supabase status | grep "Secret key" | awk '{print $NF}')
+else
+  echo "📋 Using Supabase credentials from environment variables"
+fi
 
 if [ -z "$SERVICE_ROLE_KEY" ]; then
   echo "❌ Error: Could not get Supabase service role key"
   echo "   Make sure Supabase is running: supabase start"
+  echo "   Or set SERVICE_ROLE_KEY / SUPABASE_SERVICE_ROLE_KEY"
   exit 1
 fi
 
@@ -62,6 +70,7 @@ for playlist_info in "${PLAYLISTS[@]}"; do
   CREATE_RESPONSE=$(curl -s -X POST "${SUPABASE_URL}/functions/v1/playlist-manager" \
     -H "Content-Type: application/json" \
     -H "apikey: ${SERVICE_ROLE_KEY}" \
+    -H "Authorization: Bearer ${SERVICE_ROLE_KEY}" \
     -d "{
       \"action\": \"create\",
       \"player_id\": \"${DEFAULT_PLAYER_ID}\",
@@ -102,6 +111,7 @@ for playlist_info in "${PLAYLISTS[@]}"; do
   SCRAPE_RESPONSE=$(curl -s -X POST "${SUPABASE_URL}/functions/v1/playlist-manager" \
     -H "Content-Type: application/json" \
     -H "apikey: ${SERVICE_ROLE_KEY}" \
+    -H "Authorization: Bearer ${SERVICE_ROLE_KEY}" \
     -d "{
       \"action\": \"scrape\",
       \"playlist_id\": \"${DB_PLAYLIST_ID}\",

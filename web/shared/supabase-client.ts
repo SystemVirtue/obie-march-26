@@ -897,7 +897,13 @@ export async function signOut() {
  */
 export async function getCurrentUser(): Promise<AuthUser | null> {
   const { data: { user }, error } = await supabase.auth.getUser();
-  if (error) throw error;
+  if (error) {
+    // Expected on first load before sign-in; treat as logged out state.
+    if (error.name === 'AuthSessionMissingError' || /auth session missing/i.test(error.message || '')) {
+      return null;
+    }
+    throw error;
+  }
   if (!user) return null;
 
   return {

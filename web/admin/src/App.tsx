@@ -27,6 +27,7 @@ import {
   signIn,
   signOut,
   getCurrentUser,
+  getUserPlayerId,
   subscribeToAuth,
   type AuthUser,
 } from '@shared/supabase-client';
@@ -1577,6 +1578,7 @@ function LogsPanel() {
 function App() {
   const [user, setUser]         = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [resolvedPlayerId, setResolvedPlayerId] = useState<string | null>(null);
   const [view, setView]         = useState<ViewId>('queue');
   const [queue, setQueue]       = useState<QueueItem[]>([]);
   const [status, setStatus]     = useState<PlayerStatus | null>(null);
@@ -1590,22 +1592,65 @@ function App() {
 
   // Auth
   useEffect(() => {
-    getCurrentUser().then(setUser).finally(() => setAuthLoading(false));
+    getCurrentUser()
+      .then(setUser)
+      .catch((err) => {
+        console.error('[Auth] Failed to fetch current user:', err);
+        setUser(null);
+      })
+      .finally(() => setAuthLoading(false));
     const sub = subscribeToAuth(setUser);
     return () => sub.unsubscribe();
   }, []);
 
+  // Resolve player_id for the authenticated user (falls back to legacy default)
+  useEffect(() => {
+    if (!user) {
+      setResolvedPlayerId(null);
+      return;
+    }
+
+    let cancelled = false;
+    const resolve = async () => {
+      try {
+        for (let attempt = 0; attempt < 5; attempt++) {
+          const id = await getUserPlayerId();
+          if (id) {
+            if (!cancelled) setResolvedPlayerId(id);
+            return;
+          }
+          await new Promise((res) => setTimeout(res, 200 * (attempt + 1)));
+        }
+
+        if (!cancelled) {
+          console.warn('[Auth] No player mapping found for user after retries; using legacy default player id');
+          setResolvedPlayerId(PLAYER_ID);
+        }
+      } catch (err) {
+        console.error('[Auth] Failed to resolve player id, using legacy default:', err);
+        if (!cancelled) setResolvedPlayerId(PLAYER_ID);
+      }
+    };
+
+    resolve();
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  const activePlayerId = resolvedPlayerId;
+
   // Realtime subscriptions — deps intentionally omit isSkipping; use ref to avoid subscription churn
   useEffect(() => {
-    if (!user) return;
-    const q  = subscribeToQueue(PLAYER_ID, setQueue);
-    const s  = subscribeToPlayerStatus(PLAYER_ID, (ns) => {
+    if (!user || !activePlayerId) return;
+    const q  = subscribeToQueue(activePlayerId, setQueue);
+    const s  = subscribeToPlayerStatus(activePlayerId, (ns) => {
       setStatus(ns);
       if (isSkippingRef.current && (ns.state === 'playing' || ns.state === 'loading')) setIsSkipping(false);
     });
-    const ps = subscribeToPlayerSettings(PLAYER_ID, setSettings);
+    const ps = subscribeToPlayerSettings(activePlayerId, setSettings);
     return () => { q.unsubscribe(); s.unsubscribe(); ps.unsubscribe(); };
-  }, [user]);
+  }, [user, activePlayerId]);
 
   // ── Queue handlers ────────────────────────────────────────────────────────
   const handleRemove = async (queueId: string) => {
@@ -1614,7 +1659,7 @@ function App() {
     // so the queue subscription filter never fires on DELETE — the UI would
     // otherwise show the stale item until the next unrelated change triggers a refetch.
     setQueue(prev => prev.filter(item => item.id !== queueId));
-    try { await callQueueManager({ player_id: PLAYER_ID, action: 'remove', queue_id: queueId }); }
+    try { await callQueueManager({ player_id: activePlayerId ?? PLAYER_ID, action: 'remove', queue_id: queueId }); }
     catch (e) { console.error(e); }
   };
 
@@ -1629,8 +1674,8 @@ function App() {
     const current   = queue.filter(i => i.media_item_id === status?.current_media_id);
     setQueue([...current, ...priority, ...reordered]); // optimistic
     try {
-      const ids = Array.from(new Set(reordered.map(i => i.id)));
-      await callQueueManager({ player_id: PLAYER_ID, action: 'reorder', queue_ids: ids, type: 'normal' });
+      const ids = Array.from(new Set(reordered.map((i) => i.id).filter(Boolean))) as string[];
+      await callQueueManager({ player_id: activePlayerId ?? PLAYER_ID, action: 'reorder', queue_ids: ids, type: 'normal' });
     } catch (e) { console.error(e); setQueue(queue); }
   };
 
@@ -1643,7 +1688,7 @@ function App() {
       // necessitated the previous client-side retry loop.
       const normalQ = queue.filter(i => i.type === 'normal' && i.media_item_id !== status?.current_media_id && i.id);
       if (normalQ.length <= 1) return;
-      await callQueueManager({ player_id: PLAYER_ID, action: 'shuffle', type: 'normal' });
+      await callQueueManager({ player_id: activePlayerId ?? PLAYER_ID, action: 'shuffle', type: 'normal' });
     } catch (e) { console.error('[Shuffle] Failed:', e); }
     finally { setIsShuffling(false); }
   };
@@ -1651,14 +1696,14 @@ function App() {
   const handlePlayPause = async () => {
     try {
       const newState = status?.state === 'playing' ? 'paused' : 'playing';
-      await callPlayerControl({ player_id: PLAYER_ID, state: newState, action: 'update' });
+      await callPlayerControl({ player_id: activePlayerId ?? PLAYER_ID, state: newState, action: 'update' });
     } catch (e) { console.error(e); }
   };
 
   const handleSkip = async () => {
     if (isSkipping) return;
     setIsSkipping(true);
-    try { await callPlayerControl({ player_id: PLAYER_ID, state: 'idle', action: 'skip' }); }
+    try { await callPlayerControl({ player_id: activePlayerId ?? PLAYER_ID, state: 'idle', action: 'skip' }); }
     catch (e) { console.error(e); setIsSkipping(false); }
     setTimeout(() => setIsSkipping(false), 3000); // failsafe
   };
@@ -1672,6 +1717,13 @@ function App() {
   );
 
   if (!user) return <LoginForm onSignIn={setUser} />;
+
+  if (!activePlayerId) return (
+    <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14 }}>
+      <Spinner size={36} />
+      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--muted)' }}>Resolving player…</span>
+    </div>
+  );
 
   const isQueueView     = view.startsWith('queue');
   const isPlaylistView  = view.startsWith('playlists');
