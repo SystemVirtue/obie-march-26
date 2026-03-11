@@ -148,6 +148,26 @@ export function ScriptsPanel({ playerId }: { playerId: string }) {
     log({ ts: now(), text: `✓ Scraped ${(data as { count?: number })?.count ?? '?'} items.`, level: 'ok' });
   };
 
+  const runSyncChannel = async (input: string, log: (e: ScriptLog) => void) => {
+    let channelId = input.trim();
+    const match = channelId.match(/youtube\.com\/channel\/(UC[a-zA-Z0-9_-]{22})/);
+    if (match) channelId = match[1];
+    if (!/^UC[a-zA-Z0-9_-]{22}$/.test(channelId)) throw new Error('Invalid channel ID. Must start with UC and be 24 characters, or a full channel URL.');
+    log({ ts: now(), text: `Syncing all playlists from channel: ${channelId}…`, level: 'info' });
+    const result = await callPlaylistManager({ action: 'sync_channel', player_id: playerId, channel_id: channelId }) as {
+      playlists_found?: number;
+      results?: { name: string; success: boolean; video_count?: number; error?: string }[];
+    };
+    const results = result?.results || [];
+    for (const r of results) {
+      if (r.success) log({ ts: now(), text: `  ✓ ${r.name}: ${r.video_count ?? 0} videos`, level: 'ok' });
+      else log({ ts: now(), text: `  ✗ ${r.name}: ${r.error || 'unknown error'}`, level: 'err' });
+    }
+    const ok = results.filter(r => r.success).length;
+    const totalVideos = results.reduce((s, r) => s + (r.video_count ?? 0), 0);
+    log({ ts: now(), text: `Done. ${ok}/${result?.playlists_found ?? 0} playlists synced (${totalVideos} total videos).`, level: ok > 0 ? 'ok' : 'err' });
+  };
+
   const runDeduplicateAllPlaylists = async (_: string, log: (e: ScriptLog) => void) => {
     log({ ts: now(), text: 'Fetching playlists…', level: 'info' });
     const { data: playlists, error: plErr } = await supabase
@@ -220,7 +240,12 @@ export function ScriptsPanel({ playerId }: { playerId: string }) {
           desc="Remove duplicate tracks within each playlist (same video appearing more than once). Keeps the first occurrence (lowest position) and re-sequences positions."
           onRun={runDeduplicateAllPlaylists}
         />
-        <ScriptCard icon="🔍" name="youtube-scraper" category="YouTube"
+        <ScriptCard icon="�" name="sync-channel-playlists" category="Playlists"
+          desc="Import ALL playlists from a YouTube channel. Existing playlists with the same name are replaced. Enter the Channel ID (starts with UC) or a full channel URL."
+          input={{ label: 'YouTube Channel ID or URL', placeholder: 'UCxxxxxxxxxxxxxxxxxxxxxx  or  https://www.youtube.com/channel/UCxxxxxx', required: true }}
+          onRun={runSyncChannel}
+        />
+        <ScriptCard icon="�🔍" name="youtube-scraper" category="YouTube"
           desc="Directly invoke the youtube-scraper Edge Function with any YouTube playlist URL."
           input={{ label: 'YouTube URL or Playlist ID', placeholder: 'https://www.youtube.com/playlist?list=PL…', required: true }}
           onRun={runScrapeYtScraper}
