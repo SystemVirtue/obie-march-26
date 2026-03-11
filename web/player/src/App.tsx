@@ -50,7 +50,7 @@ function App() {
   const isSkipLoadingRef = useRef(false); // Track if loading after skip
   const recentlyLoadedRef = useRef(false); // Track if video was recently loaded and should auto-play
   const isEndingRef = useRef(false); // In-flight guard: prevents double queue_next from concurrent calls
-  const loadingTimeoutRef = useRef<number | null>(null); // Timeout to skip if status stays in 'loading' for 4+ seconds
+  const loadingTimeoutRef = useRef<number | null>(null); // Timeout to skip if status stays in 'loading' for 6+ seconds
   const videoHasPlayedRef = useRef(false); // true once current video reaches YouTube state PLAYING; reset on new media
   const unexpectedPauseTimeoutRef = useRef<number | null>(null); // Timeout to auto-advance if paused before video ever played
   // ── Local video fallback (yt-dlp) ──────────────────────────────────────────
@@ -1312,12 +1312,12 @@ function App() {
     }
 
     if (status.state === 'loading') {
-      // ── 4-second loading timeout ──────────────────────────────────────────
-      console.log('[Player] Video entered loading state, setting 4-second timeout to load next if not loaded');
+      // ── 6-second loading timeout ──────────────────────────────────────────
+      console.log('[Player] Video entered loading state, setting 6-second timeout to load next if not loaded');
       loadingTimeoutRef.current = window.setTimeout(() => {
         loadingTimeoutRef.current = null;
-        advanceToNext('Video still in loading state after 4 seconds');
-      }, 4000);
+        advanceToNext('Video still in loading state after 6 seconds');
+      }, 6000);
 
     } else if (status.state === 'paused' && !videoHasPlayedRef.current) {
       // ── Unexpected pause: video paused before it ever played ──────────────
