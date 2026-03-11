@@ -593,8 +593,8 @@ function App() {
             />
           )}
 
-          {/* Insert coin dev button (moved to avoid conflict with search button) */}
-          {!settings?.freeplay && settings?.kiosk_show_virtual_coin_button && (
+          {/* Insert coin dev button — hidden when a physical coin acceptor is connected */}
+          {!settings?.freeplay && settings?.kiosk_show_virtual_coin_button && !settings?.kiosk_coin_acceptor_connected && (
             <div className="fixed bottom-4 right-4 z-20">
               <button
                 onClick={handleCoinInsert}
