@@ -22,25 +22,10 @@ import { SearchInterface } from './components/SearchInterface';
 import { SearchResult } from '../../shared/types';
 import { BackgroundPlaylist, DEFAULT_BACKGROUND_ASSETS } from './components/BackgroundPlaylist';
 import { cleanDisplayText } from '../../shared/media-utils';
+import { normalizeJukeboxSlug, getPathJukeboxSlug } from '../../shared/jukebox-utils';
 
 const DEFAULT_PLAYER_ID = import.meta.env.VITE_PLAYER_ID || '00000000-0000-0000-0000-000000000001';
 const KIOSK_JUKEBOX_STORAGE_KEY = 'obie_kiosk_jukebox_slug';
-
-function normalizeJukeboxSlug(raw: string | null | undefined): string {
-  return (raw || '')
-    .trim()
-    .toUpperCase()
-    .replace(/\s+/g, '_')
-    .replace(/[^A-Z0-9_-]/g, '')
-    .replace(/_+/g, '_')
-    .replace(/-+/g, '-')
-    .replace(/^[_-]+|[_-]+$/g, '');
-}
-
-function getPathJukeboxSlug(): string {
-  const firstPathPart = window.location.pathname.split('/').filter(Boolean)[0] || '';
-  return normalizeJukeboxSlug(firstPathPart);
-}
 
 function App() {
   const [activePlayerId, setActivePlayerId] = useState<string | null>(null);
