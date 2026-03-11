@@ -1,7 +1,7 @@
 // Player Control Edge Function
 // Handles player status updates and heartbeat
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
+import { createServiceClient } from '../_shared/supabase-client.ts';
 Deno.serve(async (req)=>{
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -11,7 +11,7 @@ Deno.serve(async (req)=>{
   }
   try {
     // Create Supabase client with service role key to bypass RLS
-    const supabase = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '');
+    const supabase = createServiceClient();
     // Parse request body
     const body = await req.json();
     const { player_id, state, progress, action = 'update', session_id, stored_player_id, current_media_id } = body;

@@ -2,8 +2,8 @@
 // Syncs Cloudflare R2 bucket file list into the r2_files table
 // Uses S3-compatible API (ListObjectsV2) to enumerate bucket contents
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
+import { createServiceClient } from '../_shared/supabase-client.ts';
 
 // S3-compatible request signing for Cloudflare R2
 async function signS3Request(
@@ -289,10 +289,7 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-    );
+    const supabase = createServiceClient();
 
     const body = await req.json();
     const { action } = body;

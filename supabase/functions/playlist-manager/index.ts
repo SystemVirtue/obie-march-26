@@ -1,57 +1,8 @@
 // Playlist Manager Edge Function
 // Handles playlist CRUD operations and media scraping
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
-
-function isLikelyJwt(token: string | null | undefined): token is string {
-  if (!token) return false;
-  return token.split('.').length === 3;
-}
-
-async function callYouTubeScraperWithFallback(params: {
-  supabaseUrl: string;
-  url: string;
-  incomingAuthorization: string | null;
-  serviceRoleToken: string | null;
-  anonJwt: string | null;
-}): Promise<Response> {
-  const { supabaseUrl, url, incomingAuthorization, serviceRoleToken, anonJwt } = params;
-  const endpoint = `${supabaseUrl}/functions/v1/youtube-scraper`;
-
-  const authCandidates: (string | null)[] = [
-    incomingAuthorization,
-    isLikelyJwt(serviceRoleToken) ? `Bearer ${serviceRoleToken}` : null,
-    isLikelyJwt(anonJwt) ? `Bearer ${anonJwt}` : null,
-  ];
-
-  const uniqueCandidates = Array.from(new Set(authCandidates.filter((v): v is string => Boolean(v))));
-
-  // Final fallback with no Authorization header in case target function runs verify_jwt=false.
-  uniqueCandidates.push('');
-
-  let lastResponse: Response | null = null;
-  for (const authHeader of uniqueCandidates) {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-    if (anonJwt) headers['apikey'] = anonJwt;
-    if (authHeader) headers['Authorization'] = authHeader;
-
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ url }),
-    });
-
-    if (response.status !== 401) {
-      return response;
-    }
-
-    lastResponse = response;
-  }
-
-  return lastResponse ?? new Response(JSON.stringify({ error: 'youtube-scraper auth failed' }), { status: 401 });
-}
+import { createServiceClient } from '../_shared/supabase-client.ts';
+import { callYouTubeScraperWithFallback } from '../_shared/youtube-scraper-caller.ts';
 
 Deno.serve(async (req)=>{
   // Handle CORS preflight
@@ -64,13 +15,7 @@ Deno.serve(async (req)=>{
     const serviceRoleToken = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? Deno.env.get('SERVICE_ROLE_JWT');
     const anonJwt = Deno.env.get('SUPABASE_ANON_KEY');
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
-    // Create Supabase client (uses service role for admin operations)
-    const supabase = createClient(supabaseUrl, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '', {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false
-      }
-    });
+    const supabase = createServiceClient();
     // Parse request body
     const body = await req.json();
     const { action, player_id, playlist_id, name, description, media_item_id, item_ids, url, current_index } = body;
@@ -304,7 +249,7 @@ Deno.serve(async (req)=>{
       // Call youtube-scraper function
       const scrapeResponse = await callYouTubeScraperWithFallback({
         supabaseUrl,
-        url,
+        payload: { url },
         incomingAuthorization: req.headers.get('Authorization'),
         serviceRoleToken,
         anonJwt,

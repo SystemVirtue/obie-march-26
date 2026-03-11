@@ -1,5 +1,5 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import { createServiceClient } from "../_shared/supabase-client.ts";
 
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 100;
@@ -17,11 +17,7 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL") ?? "",
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-      { auth: { persistSession: false, autoRefreshToken: false } }
-    );
+    const supabase = createServiceClient();
 
     const body = await req.json();
     const {

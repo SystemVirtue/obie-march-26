@@ -1,55 +1,8 @@
 // Kiosk Handler Edge Function
 // Handles kiosk operations: search, credits, song requests
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
-
-function isLikelyJwt(token: string | null | undefined): token is string {
-  if (!token) return false;
-  return token.split('.').length === 3;
-}
-
-async function callYouTubeScraperWithFallback(params: {
-  supabaseUrl: string;
-  payload: Record<string, unknown>;
-  incomingAuthorization: string | null;
-  serviceRoleToken: string | null;
-  anonJwt: string | null;
-}): Promise<Response> {
-  const { supabaseUrl, payload, incomingAuthorization, serviceRoleToken, anonJwt } = params;
-  const endpoint = `${supabaseUrl}/functions/v1/youtube-scraper`;
-
-  const authCandidates: (string | null)[] = [
-    incomingAuthorization,
-    isLikelyJwt(serviceRoleToken) ? `Bearer ${serviceRoleToken}` : null,
-    isLikelyJwt(anonJwt) ? `Bearer ${anonJwt}` : null,
-  ];
-
-  const uniqueCandidates = Array.from(new Set(authCandidates.filter((v): v is string => Boolean(v))));
-  uniqueCandidates.push('');
-
-  let lastResponse: Response | null = null;
-  for (const authHeader of uniqueCandidates) {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-    if (anonJwt) headers['apikey'] = anonJwt;
-    if (authHeader) headers['Authorization'] = authHeader;
-
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(payload),
-    });
-
-    if (response.status !== 401) {
-      return response;
-    }
-
-    lastResponse = response;
-  }
-
-  return lastResponse ?? new Response(JSON.stringify({ error: 'youtube-scraper auth failed' }), { status: 401 });
-}
+import { createServiceClient } from '../_shared/supabase-client.ts';
+import { callYouTubeScraperWithFallback } from '../_shared/youtube-scraper-caller.ts';
 
 Deno.serve(async (req)=>{
   // Handle CORS preflight
@@ -62,8 +15,7 @@ Deno.serve(async (req)=>{
     const serviceRoleToken = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? Deno.env.get('SERVICE_ROLE_JWT');
     const anonJwt = Deno.env.get('SUPABASE_ANON_KEY');
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
-    // Initialize Supabase client with service role key
-    const supabase = createClient(supabaseUrl, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '');
+    const supabase = createServiceClient();
     // Parse request body
     const body = await req.json();
     const { action } = body;

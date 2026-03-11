@@ -13,8 +13,8 @@
 //   { source: 'local', local_url: <publicUrl>, state: 'playing' }
 // The Player app's realtime subscription fires and switches to the <video> element.
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
+import { createServiceClient } from '../_shared/supabase-client.ts';
 
 const DEFAULT_PLAYER_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -78,7 +78,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     }
 
     const log = makeLogger(videoId);
-    const supabase = createClient(supabaseUrl, serviceKey);
+    const supabase = createServiceClient();
 
     log.info('══ REQUEST ══════════════════════════════════════════');
     log.info(`videoId=${videoId}  player_id=${player_id}`);
