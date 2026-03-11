@@ -702,7 +702,7 @@ function QueuePanel({ queue, status, onRemove, onReorder, onShuffle, isShuffling
 // PLAYLISTS PANEL
 // ─────────────────────────────────────────────────────────────────────────────
 
-function PlaylistsPanel({ view }: { view: ViewId }) {
+function PlaylistsPanel({ view, playerId }: { view: ViewId; playerId: string }) {
   const [playlists, setPlaylists] = useState<(Playlist & { item_count?: number })[]>([]);
   const [playlistItems, setPlaylistItems] = useState<(PlaylistItem & { media_item?: MediaItem })[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -715,9 +715,9 @@ function PlaylistsPanel({ view }: { view: ViewId }) {
   const [importResult, setImportResult] = useState<{ text: string; ok: boolean } | null>(null);
 
   const loadPlaylists = useCallback(async () => {
-    try { const data = await getPlaylists(PLAYER_ID); setPlaylists(data as typeof playlists); }
+    try { const data = await getPlaylists(playerId); setPlaylists(data as typeof playlists); }
     catch (e) { console.error(e); }
-  }, []);
+  }, [playerId]);
 
   useEffect(() => { loadPlaylists(); }, [loadPlaylists]);
   useEffect(() => {
@@ -735,7 +735,7 @@ function PlaylistsPanel({ view }: { view: ViewId }) {
     try {
       // Single atomic call: clears normal queue, loads playlist, sets active_playlist_id,
       // updates player_status — all under pg_advisory_xact_lock in the load_playlist RPC.
-      await callPlaylistManager({ action: 'load_playlist', player_id: PLAYER_ID, playlist_id: playlist.id });
+      await callPlaylistManager({ action: 'load_playlist', player_id: playerId, playlist_id: playlist.id });
       setMsg({ text: `✓ Loaded "${playlist.name}" into queue`, ok: true });
       await loadPlaylists();
     } catch (e) { console.error(e); setMsg({ text: '❌ Failed to load playlist', ok: false }); }
@@ -744,14 +744,14 @@ function PlaylistsPanel({ view }: { view: ViewId }) {
 
   const handleDelete = async (playlist: Playlist) => {
     if (!window.confirm(`Delete "${playlist.name}"? This cannot be undone.`)) return;
-    try { await callPlaylistManager({ action: 'delete', player_id: PLAYER_ID, playlist_id: playlist.id }); await loadPlaylists(); }
+    try { await callPlaylistManager({ action: 'delete', player_id: playerId, playlist_id: playlist.id }); await loadPlaylists(); }
     catch (e) { console.error(e); }
   };
 
   const handleCreate = async () => {
     const name = window.prompt('New playlist name:');
     if (!name) return;
-    try { await callPlaylistManager({ action: 'create', player_id: PLAYER_ID, name }); await loadPlaylists(); }
+    try { await callPlaylistManager({ action: 'create', player_id: playerId, name }); await loadPlaylists(); }
     catch (e) { console.error(e); }
   };
 
@@ -760,7 +760,7 @@ function PlaylistsPanel({ view }: { view: ViewId }) {
     setImporting(true); setImportResult(null);
     try {
       const name = importName.trim() || `Imported ${importYtId.trim().slice(0, 12)}`;
-      const created = await callPlaylistManager({ action: 'create', player_id: PLAYER_ID, name }) as { playlist?: { id: string } };
+      const created = await callPlaylistManager({ action: 'create', player_id: playerId, name }) as { playlist?: { id: string } };
       const playlistId = created?.playlist?.id;
       if (!playlistId) throw new Error('Failed to create playlist record');
       const ytUrl = `https://www.youtube.com/playlist?list=${importYtId.trim()}`;
@@ -893,7 +893,7 @@ function SettingsRow({ label, desc, children }: { label: string; desc?: string; 
 // SETTINGS PANEL
 // ─────────────────────────────────────────────────────────────────────────────
 
-function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: PlayerSettings | null; prefs: Prefs }) {
+function SettingsPanel({ view, settings, prefs, playerId }: { view: ViewId; settings: PlayerSettings | null; prefs: Prefs; playerId: string }) {
   const [local, setLocal]     = useState<PlayerSettings | null>(null);
   const [credits, setCredits] = useState<number | null>(null);
   const [creditsLoading, setCreditsLoading] = useState(false);
@@ -905,14 +905,14 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
   useEffect(() => { setLocal(settings ? { ...settings } : null); }, [settings]);
   useEffect(() => {
     setCreditsLoading(true);
-    getTotalCredits(PLAYER_ID).then(setCredits).catch(console.error).finally(() => setCreditsLoading(false));
+    getTotalCredits(playerId).then(setCredits).catch(console.error).finally(() => setCreditsLoading(false));
 
-    const sub = subscribeToTable('kiosk_sessions', { column: 'player_id', value: PLAYER_ID }, async () => {
-      const total = await getTotalCredits(PLAYER_ID).catch(() => null);
+    const sub = subscribeToTable('kiosk_sessions', { column: 'player_id', value: playerId }, async () => {
+      const total = await getTotalCredits(playerId).catch(() => null);
       if (total !== null) setCredits(total);
     });
     return () => sub.unsubscribe();
-  }, []);
+  }, [playerId]);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const set = (k: keyof PlayerSettings, v: any) => setLocal(p => p ? { ...p, [k]: v } : p);
@@ -921,7 +921,7 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
     setSaving(true); setError(null);
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error } = await (supabase as any).from('player_settings').update(fields).eq('player_id', PLAYER_ID);
+      const { error } = await (supabase as any).from('player_settings').update(fields).eq('player_id', playerId);
       if (error) throw error;
     } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Failed to save'); }
     finally { setSaving(false); }
@@ -937,22 +937,22 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
     set(field, newVal);
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (supabase as any).from('player_settings').update({ [field]: newVal }).eq('player_id', PLAYER_ID);
+      await (supabase as any).from('player_settings').update({ [field]: newVal }).eq('player_id', playerId);
     } catch (e) { console.error(e); set(field, !newVal); }
   };
 
   const handleAddCredits = async (amt: number) => {
     setCreditsLoading(true);
-    try { await updateAllCredits(PLAYER_ID, 'add', amt); setCredits(await getTotalCredits(PLAYER_ID)); }
+    try { await updateAllCredits(playerId, 'add', amt); setCredits(await getTotalCredits(playerId)); }
     catch (e) { console.error(e); } finally { setCreditsLoading(false); }
   };
   const handleClearCredits = async () => {
     setCreditsLoading(true);
-    try { await updateAllCredits(PLAYER_ID, 'clear'); setCredits(0); }
+    try { await updateAllCredits(playerId, 'clear'); setCredits(0); }
     catch (e) { console.error(e); } finally { setCreditsLoading(false); }
   };
   const handleResetPriorityPlayer = async () => {
-    try { await callPlayerControl({ player_id: PLAYER_ID, action: 'reset_priority' }); }
+    try { await callPlayerControl({ player_id: playerId, action: 'reset_priority' }); }
     catch (e) { console.error(e); }
   };
 
@@ -1222,13 +1222,13 @@ function ScriptCard({ icon, name, desc, category, onRun, input }: {
   );
 }
 
-function ScriptsPanel() {
+function ScriptsPanel({ playerId }: { playerId: string }) {
   const now = () => new Date().toLocaleTimeString();
   const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
   const importSingle = async (ytId: string, name: string, log: (e: ScriptLog) => void) => {
     log({ ts: now(), text: `Creating playlist: "${name}"…`, level: 'info' });
-    const created = await callPlaylistManager({ action: 'create', player_id: PLAYER_ID, name }) as { playlist?: { id: string } };
+    const created = await callPlaylistManager({ action: 'create', player_id: playerId, name }) as { playlist?: { id: string } };
     const playlistId = created?.playlist?.id;
     if (!playlistId) throw new Error('Server did not return playlist ID');
     log({ ts: now(), text: `✓ Created: ${playlistId}`, level: 'ok' });
@@ -1265,7 +1265,7 @@ function ScriptsPanel() {
 
   const runRetryFailed = async (_: string, log: (e: ScriptLog) => void) => {
     log({ ts: now(), text: 'Fetching existing playlists…', level: 'info' });
-    const { data } = await supabase.from('playlists' as 'playlists').select('id,name').eq('player_id' as 'id', PLAYER_ID);
+    const { data } = await supabase.from('playlists' as 'playlists').select('id,name').eq('player_id' as 'id', playerId);
     const rows = (data || []) as { id: string; name: string }[];
     const existingNames = new Set(rows.map(p => p.name));
     const toRetry = PREDEFINED_PLAYLISTS.filter(p => existingNames.has(p.name));
@@ -1302,7 +1302,7 @@ function ScriptsPanel() {
     const { data: playlists, error: plErr } = await supabase
       .from('playlists' as 'playlists')
       .select('id,name')
-      .eq('player_id' as 'id', PLAYER_ID);
+      .eq('player_id' as 'id', playerId);
     if (plErr) throw plErr;
     if (!playlists?.length) { log({ ts: now(), text: 'No playlists found.', level: 'err' }); return; }
 
@@ -1753,9 +1753,9 @@ function App() {
               onRemove={handleRemove} onReorder={handleReorder}
               onShuffle={handleShuffle} isShuffling={isShuffling} />
           )}
-          {isPlaylistView && <PlaylistsPanel view={view} />}
-          {isScriptsView  && <ScriptsPanel />}
-          {isSettingsView && !isScriptsView && <SettingsPanel view={view} settings={settings} prefs={prefs} />}
+          {isPlaylistView && <PlaylistsPanel view={view} playerId={activePlayerId} />}
+          {isScriptsView  && <ScriptsPanel playerId={activePlayerId} />}
+          {isSettingsView && !isScriptsView && <SettingsPanel view={view} settings={settings} prefs={prefs} playerId={activePlayerId} />}
           {view === 'logs' && <LogsPanel />}
         </main>
       </div>
