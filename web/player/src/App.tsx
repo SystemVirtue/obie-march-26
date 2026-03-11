@@ -1372,6 +1372,68 @@ function App() {
     };
   }, [status?.state]);
 
+  useEffect(() => {
+    if (!status || status.state !== 'idle' || !currentMedia || isSlavePlayer) return;
+    if (isEndingRef.current) return;
+
+    const recoverFromIdle = async () => {
+      if (localPlaybackUrlRef.current && localVideoRef.current) {
+        if (localVideoRef.current.ended) {
+          console.warn('[Player] Idle with ended local video - advancing queue');
+          await reportEndedAndNext();
+          return;
+        }
+
+        console.warn('[Player] Idle while local video is loaded - resuming playback');
+        try {
+          await localVideoRef.current.play();
+        } catch (error) {
+          console.error('[Player] Failed to resume local video from idle state:', error);
+        }
+        return;
+      }
+
+      if (playerModeRef.current === 'ytm_desktop') {
+        console.warn('[Player] Idle while YTM Desktop is active - requesting play');
+        try {
+          await ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'play' }) });
+          reportStatus('playing');
+        } catch (error) {
+          console.error('[Player] Failed to resume YTM Desktop from idle state:', error);
+        }
+        return;
+      }
+
+      if (!playerRef.current || typeof playerRef.current.getPlayerState !== 'function') return;
+      if (currentMediaIdRef.current !== currentMedia.id) return;
+
+      const ytState = playerRef.current.getPlayerState();
+
+      if (ytState === 0) {
+        console.warn('[Player] Idle with ended YouTube video - advancing queue');
+        await reportEndedAndNext();
+        return;
+      }
+
+      if (ytState === 1 || ytState === 3) {
+        console.warn('[Player] Idle while YouTube player is active - correcting server state to playing');
+        reportStatus('playing');
+        return;
+      }
+
+      console.warn('[Player] Idle while YouTube video is loaded - attempting resume');
+      try {
+        playerRef.current.playVideo();
+      } catch (error) {
+        console.error('[Player] Failed to resume YouTube video from idle state:', error);
+      }
+    };
+
+    recoverFromIdle().catch((error) => {
+      console.error('[Player] Idle recovery failed:', error);
+    });
+  }, [status?.state, status?.current_media_id, currentMedia, isSlavePlayer, reportEndedAndNext, reportStatus]);
+
   // Sync player state with server commands
   useEffect(() => {
     if (!status) return;
