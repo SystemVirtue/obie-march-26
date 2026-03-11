@@ -16,6 +16,7 @@ lerna-debug.log*
 # Build outputs
 dist/
 dist-ssr/
+web/*/dist/
 *.local
 
 # Editor directories and files

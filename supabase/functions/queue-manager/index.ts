@@ -3,6 +3,7 @@ import { createServiceClient } from "../_shared/supabase-client.ts";
 
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 100;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function sleep(ms: number) {
   return new Promise((res) => setTimeout(res, ms));
@@ -30,8 +31,8 @@ Deno.serve(async (req) => {
       requested_by = "admin",
     } = body;
 
-    if (!player_id) {
-      return new Response(JSON.stringify({ error: "player_id is required" }), {
+    if (!player_id || !UUID_RE.test(player_id)) {
+      return new Response(JSON.stringify({ error: "player_id is required and must be a valid UUID" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -97,9 +98,9 @@ Deno.serve(async (req) => {
       }
 
       case "reorder": {
-        if (!queue_ids || !Array.isArray(queue_ids)) {
+        if (!queue_ids || !Array.isArray(queue_ids) || !queue_ids.every((id: unknown) => typeof id === 'string' && UUID_RE.test(id))) {
           return new Response(
-            JSON.stringify({ error: "queue_ids array is required for reorder action" }),
+            JSON.stringify({ error: "queue_ids must be an array of valid UUIDs" }),
             { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
         }
