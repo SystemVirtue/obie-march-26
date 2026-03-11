@@ -28,7 +28,12 @@ import {
   signOut,
   getCurrentUser,
   getUserPlayerId,
+  getMyJukeboxes,
+  createJukebox,
+  callYouTubeScraper,
+  resolveJukeboxSlug,
   subscribeToAuth,
+  type JukeboxSummary,
   type AuthUser,
 } from '@shared/supabase-client';
 import {
@@ -54,6 +59,22 @@ import { CSS } from '@dnd-kit/utilities';
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PLAYER_ID = '00000000-0000-0000-0000-000000000001';
+
+function normalizeJukeboxSlug(raw: string | null | undefined): string {
+  return (raw || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^A-Z0-9_-]/g, '')
+    .replace(/_+/g, '_')
+    .replace(/-+/g, '-')
+    .replace(/^[_-]+|[_-]+$/g, '');
+}
+
+function getPathJukeboxSlug(): string {
+  const firstPathPart = window.location.pathname.split('/').filter(Boolean)[0] || '';
+  return normalizeJukeboxSlug(firstPathPart);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PREFERENCES  (localStorage-backed font size + accent colour)
@@ -246,6 +267,40 @@ function LoginForm({ onSignIn }: { onSignIn: (user: AuthUser) => void }) {
     finally { setLoading(false); }
   };
 
+  const handleCreateNewJukebox = async () => {
+    if (!email.trim() || !password.trim()) {
+      setError('Enter email and password to create a new jukebox.');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    try {
+      const auth = await signIn(email, password);
+      if (!auth.user) throw new Error('Authentication failed');
+
+      const entered = window.prompt('Enter new jukebox name (A-Z, 0-9, underscore, dash):');
+      const slug = normalizeJukeboxSlug(entered);
+      if (!slug) {
+        setLoading(false);
+        return;
+      }
+
+      const created = await createJukebox(slug, slug);
+      onSignIn({
+        id: auth.user.id,
+        email: auth.user.email || '',
+        role: auth.user.user_metadata?.role || auth.user.app_metadata?.role,
+      });
+
+      window.location.assign(`/${created.jukebox_slug}`);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to create jukebox');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{ position: 'fixed', inset: 0, background: 'radial-gradient(ellipse 60% 50% at 50% 0%,rgba(245,158,11,0.08),transparent)', pointerEvents: 'none' }} />
@@ -262,6 +317,8 @@ function LoginForm({ onSignIn }: { onSignIn: (user: AuthUser) => void }) {
             <div key={label} style={{ marginBottom: 16 }}>
               <label style={{ display: 'block', fontFamily: 'var(--font-display)', fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>{label}</label>
               <input type={label === 'Password' ? 'password' : 'email'} required
+                name={label === 'Email' ? 'email' : 'password'}
+                autoComplete={label === 'Email' ? 'email' : 'current-password'}
                 value={label === 'Email' ? email : password}
                 onChange={e => label === 'Email' ? setEmail(e.target.value) : setPassword(e.target.value)}
                 style={{ width: '100%', padding: '10px 14px', borderRadius: 10, background: '#0a0a0a',
@@ -274,6 +331,16 @@ function LoginForm({ onSignIn }: { onSignIn: (user: AuthUser) => void }) {
               background: 'var(--accent)', color: '#000', fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 700,
               opacity: loading ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
             {loading ? <><Spinner size={16} /> Signing in…</> : 'Sign In'}
+          </button>
+          <button
+            type="button"
+            disabled={loading}
+            onClick={handleCreateNewJukebox}
+            style={{ width: '100%', marginTop: 10, padding: '11px 12px', borderRadius: 12, border: '1px solid rgba(255,255,255,0.15)', cursor: loading ? 'default' : 'pointer',
+              background: 'rgba(255,255,255,0.04)', color: '#fff', fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 600,
+              opacity: loading ? 0.6 : 1 }}
+          >
+            Create New Jukebox
           </button>
         </form>
       </div>
@@ -511,13 +578,19 @@ const NAV = [
   { id: 'logs',      icon: '📄', label: 'Logs',      children: [] as { id: ViewId; label: string }[] },
 ];
 
-function Sidebar({ view, setView, queue, user, onSignOut }: {
+function Sidebar({ view, setView, queue, user, onSignOut, jukeboxes, activeJukeboxSlug, onSwitchJukebox }: {
   view: ViewId; setView: (v: ViewId) => void;
   queue: QueueItem[]; user: AuthUser; onSignOut: () => void;
+  jukeboxes: JukeboxSummary[];
+  activeJukeboxSlug: string | null;
+  onSwitchJukebox: (slug: string) => void;
 }) {
   const [expanded, setExpanded] = useState(true);
   const [openGroup, setOpenGroup] = useState<string>('queue');
+  const [showJukeboxPicker, setShowJukeboxPicker] = useState(false);
   const priorityCount = queue.filter(q => q.type === 'priority').length;
+  const canSwitchJukebox = jukeboxes.length > 1;
+  const currentJukebox = jukeboxes.find((j) => j.jukebox_slug === activeJukeboxSlug) || jukeboxes[0] || null;
 
   const handleGroup = (group: typeof NAV[0]) => {
     if (group.children.length === 0) { setOpenGroup(''); setView(group.id as ViewId); return; }
@@ -587,8 +660,43 @@ function Sidebar({ view, setView, queue, user, onSignOut }: {
 
       {/* Footer */}
       {expanded ? (
-        <div style={{ padding: '10px 13px', borderTop: '1px solid rgba(255,255,255,0.05)', flexShrink: 0 }}>
+        <div style={{ padding: '10px 13px', borderTop: '1px solid rgba(255,255,255,0.05)', flexShrink: 0, position: 'relative' }}>
           <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.25)', marginBottom: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.email}</div>
+          <button
+            onClick={() => {
+              if (!canSwitchJukebox) return;
+              setShowJukeboxPicker((v) => !v);
+            }}
+            style={{ width: '100%', padding: '6px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.16)', background: 'rgba(255,255,255,0.06)', color: '#e5e7eb', cursor: canSwitchJukebox ? 'pointer' : 'default', fontFamily: 'var(--font-display)', fontSize: 11, marginBottom: 6, opacity: canSwitchJukebox ? 1 : 0.7 }}
+            title={canSwitchJukebox ? 'Select a Jukebox' : 'Only one jukebox is associated with this account'}
+          >
+            Jukebox : {currentJukebox?.jukebox_slug || activeJukeboxSlug || 'N/A'}
+          </button>
+          {showJukeboxPicker && canSwitchJukebox && (
+            <div style={{ position: 'absolute', left: 13, right: 13, bottom: 76, borderRadius: 10, border: '1px solid rgba(255,255,255,0.15)', background: '#111', boxShadow: '0 10px 30px rgba(0,0,0,0.4)', overflow: 'hidden', zIndex: 30 }}>
+              <div style={{ padding: '8px 10px', fontFamily: 'var(--font-display)', fontSize: 11, color: 'rgba(255,255,255,0.6)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                Select a Jukebox
+              </div>
+              {jukeboxes.map((j) => (
+                <button
+                  key={j.player_id}
+                  onClick={() => {
+                    setShowJukeboxPicker(false);
+                    if (j.jukebox_slug !== activeJukeboxSlug) onSwitchJukebox(j.jukebox_slug);
+                  }}
+                  style={{ width: '100%', textAlign: 'left', padding: '8px 10px', border: 'none', borderBottom: '1px solid rgba(255,255,255,0.05)', background: j.jukebox_slug === activeJukeboxSlug ? 'rgba(245,158,11,0.12)' : 'transparent', color: j.jukebox_slug === activeJukeboxSlug ? '#fbbf24' : '#e5e7eb', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 11 }}
+                >
+                  {j.jukebox_slug}
+                </button>
+              ))}
+              <button
+                onClick={() => setShowJukeboxPicker(false)}
+                style={{ width: '100%', textAlign: 'center', padding: '8px 10px', border: 'none', background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.7)', cursor: 'pointer', fontFamily: 'var(--font-display)', fontSize: 11 }}
+              >
+                Cancel
+              </button>
+            </div>
+          )}
           <button onClick={onSignOut} style={{ width: '100%', padding: '6px', borderRadius: 8, border: '1px solid rgba(239,68,68,0.2)', background: 'rgba(239,68,68,0.08)', color: '#f87171', cursor: 'pointer', fontFamily: 'var(--font-display)', fontSize: 11 }}>Sign Out</button>
         </div>
       ) : (
@@ -702,7 +810,7 @@ function QueuePanel({ queue, status, onRemove, onReorder, onShuffle, isShuffling
 // PLAYLISTS PANEL
 // ─────────────────────────────────────────────────────────────────────────────
 
-function PlaylistsPanel({ view }: { view: ViewId }) {
+function PlaylistsPanel({ view, playerId }: { view: ViewId; playerId: string }) {
   const [playlists, setPlaylists] = useState<(Playlist & { item_count?: number })[]>([]);
   const [playlistItems, setPlaylistItems] = useState<(PlaylistItem & { media_item?: MediaItem })[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -715,9 +823,9 @@ function PlaylistsPanel({ view }: { view: ViewId }) {
   const [importResult, setImportResult] = useState<{ text: string; ok: boolean } | null>(null);
 
   const loadPlaylists = useCallback(async () => {
-    try { const data = await getPlaylists(PLAYER_ID); setPlaylists(data as typeof playlists); }
+    try { const data = await getPlaylists(playerId); setPlaylists(data as typeof playlists); }
     catch (e) { console.error(e); }
-  }, []);
+  }, [playerId]);
 
   useEffect(() => { loadPlaylists(); }, [loadPlaylists]);
   useEffect(() => {
@@ -735,7 +843,7 @@ function PlaylistsPanel({ view }: { view: ViewId }) {
     try {
       // Single atomic call: clears normal queue, loads playlist, sets active_playlist_id,
       // updates player_status — all under pg_advisory_xact_lock in the load_playlist RPC.
-      await callPlaylistManager({ action: 'load_playlist', player_id: PLAYER_ID, playlist_id: playlist.id });
+      await callPlaylistManager({ action: 'load_playlist', player_id: playerId, playlist_id: playlist.id });
       setMsg({ text: `✓ Loaded "${playlist.name}" into queue`, ok: true });
       await loadPlaylists();
     } catch (e) { console.error(e); setMsg({ text: '❌ Failed to load playlist', ok: false }); }
@@ -744,14 +852,14 @@ function PlaylistsPanel({ view }: { view: ViewId }) {
 
   const handleDelete = async (playlist: Playlist) => {
     if (!window.confirm(`Delete "${playlist.name}"? This cannot be undone.`)) return;
-    try { await callPlaylistManager({ action: 'delete', player_id: PLAYER_ID, playlist_id: playlist.id }); await loadPlaylists(); }
+    try { await callPlaylistManager({ action: 'delete', player_id: playerId, playlist_id: playlist.id }); await loadPlaylists(); }
     catch (e) { console.error(e); }
   };
 
   const handleCreate = async () => {
     const name = window.prompt('New playlist name:');
     if (!name) return;
-    try { await callPlaylistManager({ action: 'create', player_id: PLAYER_ID, name }); await loadPlaylists(); }
+    try { await callPlaylistManager({ action: 'create', player_id: playerId, name }); await loadPlaylists(); }
     catch (e) { console.error(e); }
   };
 
@@ -760,7 +868,7 @@ function PlaylistsPanel({ view }: { view: ViewId }) {
     setImporting(true); setImportResult(null);
     try {
       const name = importName.trim() || `Imported ${importYtId.trim().slice(0, 12)}`;
-      const created = await callPlaylistManager({ action: 'create', player_id: PLAYER_ID, name }) as { playlist?: { id: string } };
+      const created = await callPlaylistManager({ action: 'create', player_id: playerId, name }) as { playlist?: { id: string } };
       const playlistId = created?.playlist?.id;
       if (!playlistId) throw new Error('Failed to create playlist record');
       const ytUrl = `https://www.youtube.com/playlist?list=${importYtId.trim()}`;
@@ -893,7 +1001,7 @@ function SettingsRow({ label, desc, children }: { label: string; desc?: string; 
 // SETTINGS PANEL
 // ─────────────────────────────────────────────────────────────────────────────
 
-function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: PlayerSettings | null; prefs: Prefs }) {
+function SettingsPanel({ view, settings, prefs, playerId }: { view: ViewId; settings: PlayerSettings | null; prefs: Prefs; playerId: string }) {
   const [local, setLocal]     = useState<PlayerSettings | null>(null);
   const [credits, setCredits] = useState<number | null>(null);
   const [creditsLoading, setCreditsLoading] = useState(false);
@@ -905,14 +1013,14 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
   useEffect(() => { setLocal(settings ? { ...settings } : null); }, [settings]);
   useEffect(() => {
     setCreditsLoading(true);
-    getTotalCredits(PLAYER_ID).then(setCredits).catch(console.error).finally(() => setCreditsLoading(false));
+    getTotalCredits(playerId).then(setCredits).catch(console.error).finally(() => setCreditsLoading(false));
 
-    const sub = subscribeToTable('kiosk_sessions', { column: 'player_id', value: PLAYER_ID }, async () => {
-      const total = await getTotalCredits(PLAYER_ID).catch(() => null);
+    const sub = subscribeToTable('kiosk_sessions', { column: 'player_id', value: playerId }, async () => {
+      const total = await getTotalCredits(playerId).catch(() => null);
       if (total !== null) setCredits(total);
     });
     return () => sub.unsubscribe();
-  }, []);
+  }, [playerId]);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const set = (k: keyof PlayerSettings, v: any) => setLocal(p => p ? { ...p, [k]: v } : p);
@@ -921,7 +1029,7 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
     setSaving(true); setError(null);
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error } = await (supabase as any).from('player_settings').update(fields).eq('player_id', PLAYER_ID);
+      const { error } = await (supabase as any).from('player_settings').update(fields).eq('player_id', playerId);
       if (error) throw error;
     } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Failed to save'); }
     finally { setSaving(false); }
@@ -937,22 +1045,22 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
     set(field, newVal);
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (supabase as any).from('player_settings').update({ [field]: newVal }).eq('player_id', PLAYER_ID);
+      await (supabase as any).from('player_settings').update({ [field]: newVal }).eq('player_id', playerId);
     } catch (e) { console.error(e); set(field, !newVal); }
   };
 
   const handleAddCredits = async (amt: number) => {
     setCreditsLoading(true);
-    try { await updateAllCredits(PLAYER_ID, 'add', amt); setCredits(await getTotalCredits(PLAYER_ID)); }
+    try { await updateAllCredits(playerId, 'add', amt); setCredits(await getTotalCredits(playerId)); }
     catch (e) { console.error(e); } finally { setCreditsLoading(false); }
   };
   const handleClearCredits = async () => {
     setCreditsLoading(true);
-    try { await updateAllCredits(PLAYER_ID, 'clear'); setCredits(0); }
+    try { await updateAllCredits(playerId, 'clear'); setCredits(0); }
     catch (e) { console.error(e); } finally { setCreditsLoading(false); }
   };
   const handleResetPriorityPlayer = async () => {
-    try { await callPlayerControl({ player_id: PLAYER_ID, action: 'reset_priority' }); }
+    try { await callPlayerControl({ player_id: playerId, action: 'reset_priority' }); }
     catch (e) { console.error(e); }
   };
 
@@ -1222,13 +1330,13 @@ function ScriptCard({ icon, name, desc, category, onRun, input }: {
   );
 }
 
-function ScriptsPanel() {
+function ScriptsPanel({ playerId }: { playerId: string }) {
   const now = () => new Date().toLocaleTimeString();
   const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
   const importSingle = async (ytId: string, name: string, log: (e: ScriptLog) => void) => {
     log({ ts: now(), text: `Creating playlist: "${name}"…`, level: 'info' });
-    const created = await callPlaylistManager({ action: 'create', player_id: PLAYER_ID, name }) as { playlist?: { id: string } };
+    const created = await callPlaylistManager({ action: 'create', player_id: playerId, name }) as { playlist?: { id: string } };
     const playlistId = created?.playlist?.id;
     if (!playlistId) throw new Error('Server did not return playlist ID');
     log({ ts: now(), text: `✓ Created: ${playlistId}`, level: 'ok' });
@@ -1265,7 +1373,7 @@ function ScriptsPanel() {
 
   const runRetryFailed = async (_: string, log: (e: ScriptLog) => void) => {
     log({ ts: now(), text: 'Fetching existing playlists…', level: 'info' });
-    const { data } = await supabase.from('playlists' as 'playlists').select('id,name').eq('player_id' as 'id', PLAYER_ID);
+    const { data } = await supabase.from('playlists' as 'playlists').select('id,name').eq('player_id' as 'id', playerId);
     const rows = (data || []) as { id: string; name: string }[];
     const existingNames = new Set(rows.map(p => p.name));
     const toRetry = PREDEFINED_PLAYLISTS.filter(p => existingNames.has(p.name));
@@ -1290,8 +1398,7 @@ function ScriptsPanel() {
   const runScrapeYtScraper = async (input: string, log: (e: ScriptLog) => void) => {
     const url = input.startsWith('http') ? input : `https://www.youtube.com/playlist?list=${input}`;
     log({ ts: now(), text: `Calling youtube-scraper for: ${url}`, level: 'info' });
-    const { data, error } = await supabase.functions.invoke('youtube-scraper', { body: { url } });
-    if (error) throw error;
+    const data = await callYouTubeScraper({ url });
     log({ ts: now(), text: `✓ Scraped ${(data as { count?: number })?.count ?? '?'} items.`, level: 'ok' });
   };
 
@@ -1302,7 +1409,7 @@ function ScriptsPanel() {
     const { data: playlists, error: plErr } = await supabase
       .from('playlists' as 'playlists')
       .select('id,name')
-      .eq('player_id' as 'id', PLAYER_ID);
+      .eq('player_id' as 'id', playerId);
     if (plErr) throw plErr;
     if (!playlists?.length) { log({ ts: now(), text: 'No playlists found.', level: 'err' }); return; }
 
@@ -1579,6 +1686,9 @@ function App() {
   const [user, setUser]         = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [resolvedPlayerId, setResolvedPlayerId] = useState<string | null>(null);
+  const [resolvedJukeboxSlug, setResolvedJukeboxSlug] = useState<string | null>(null);
+  const [availableJukeboxes, setAvailableJukeboxes] = useState<JukeboxSummary[]>([]);
+  const [resolveError, setResolveError] = useState<string | null>(null);
   const [view, setView]         = useState<ViewId>('queue');
   const [queue, setQueue]       = useState<QueueItem[]>([]);
   const [status, setStatus]     = useState<PlayerStatus | null>(null);
@@ -1603,32 +1713,82 @@ function App() {
     return () => sub.unsubscribe();
   }, []);
 
-  // Resolve player_id for the authenticated user (falls back to legacy default)
+  // Resolve player_id for the authenticated user using URL slug when present.
   useEffect(() => {
     if (!user) {
       setResolvedPlayerId(null);
+      setResolvedJukeboxSlug(null);
+      setAvailableJukeboxes([]);
+      setResolveError(null);
       return;
     }
 
     let cancelled = false;
     const resolve = async () => {
       try {
+        const pathSlug = getPathJukeboxSlug();
+        const myJukeboxes = await getMyJukeboxes();
+        if (!cancelled) setAvailableJukeboxes(myJukeboxes);
+
+        if (pathSlug) {
+          const resolved = await resolveJukeboxSlug(pathSlug);
+          if (!resolved) {
+            throw new Error(`Jukebox "${pathSlug}" was not found.`);
+          }
+
+          const hasAccess = myJukeboxes.some((j) => j.player_id === resolved.player_id);
+          if (!hasAccess) {
+            throw new Error(`You do not have access to jukebox "${resolved.jukebox_slug}".`);
+          }
+
+          if (!cancelled) {
+            setResolvedPlayerId(resolved.player_id);
+            setResolvedJukeboxSlug(resolved.jukebox_slug);
+            setResolveError(null);
+          }
+
+          if (pathSlug !== resolved.jukebox_slug) {
+            window.history.replaceState({}, '', `/${resolved.jukebox_slug}`);
+          }
+          return;
+        }
+
+        if (myJukeboxes.length > 0) {
+          const first = myJukeboxes[0];
+          if (!cancelled) {
+            setResolvedPlayerId(first.player_id);
+            setResolvedJukeboxSlug(first.jukebox_slug);
+            setResolveError(null);
+          }
+          window.history.replaceState({}, '', `/${first.jukebox_slug}`);
+          return;
+        }
+
         for (let attempt = 0; attempt < 5; attempt++) {
           const id = await getUserPlayerId();
           if (id) {
-            if (!cancelled) setResolvedPlayerId(id);
+            if (!cancelled) {
+              setResolvedPlayerId(id);
+              setResolvedJukeboxSlug(null);
+              setResolveError(null);
+            }
             return;
           }
           await new Promise((res) => setTimeout(res, 200 * (attempt + 1)));
         }
 
         if (!cancelled) {
-          console.warn('[Auth] No player mapping found for user after retries; using legacy default player id');
           setResolvedPlayerId(PLAYER_ID);
+          setResolvedJukeboxSlug(null);
+          setResolveError('No jukebox mapping found for your account; using legacy default player.');
         }
       } catch (err) {
-        console.error('[Auth] Failed to resolve player id, using legacy default:', err);
-        if (!cancelled) setResolvedPlayerId(PLAYER_ID);
+        console.error('[Auth] Failed to resolve player id:', err);
+        if (!cancelled) {
+          setResolvedPlayerId(null);
+          setResolvedJukeboxSlug(null);
+          setResolveError(err instanceof Error ? err.message : 'Failed to resolve jukebox.');
+        }
       }
     };
 
@@ -1639,6 +1799,12 @@ function App() {
   }, [user]);
 
   const activePlayerId = resolvedPlayerId;
+
+  const handleSwitchJukebox = (slug: string) => {
+    const normalized = normalizeJukeboxSlug(slug);
+    if (!normalized) return;
+    window.location.assign(`/${normalized}`);
+  };
 
   // Realtime subscriptions — deps intentionally omit isSkipping; use ref to avoid subscription churn
   useEffect(() => {
@@ -1718,6 +1884,18 @@ function App() {
 
   if (!user) return <LoginForm onSignIn={setUser} />;
 
+  if (resolveError) return (
+    <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, padding: 24 }}>
+      <div style={{ maxWidth: 560, textAlign: 'center', color: '#fca5a5', fontFamily: 'var(--font-display)', fontSize: 18 }}>{resolveError}</div>
+      <button
+        onClick={() => { window.location.assign('/'); }}
+        style={{ padding: '10px 16px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.06)', color: '#fff', cursor: 'pointer' }}
+      >
+        Choose Another Jukebox
+      </button>
+    </div>
+  );
+
   if (!activePlayerId) return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14 }}>
       <Spinner size={36} />
@@ -1745,7 +1923,16 @@ function App() {
 
       {/* Body */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        <Sidebar view={view} setView={setView} queue={queue} user={user} onSignOut={() => signOut().catch(console.error)} />
+        <Sidebar
+          view={view}
+          setView={setView}
+          queue={queue}
+          user={user}
+          onSignOut={() => signOut().catch(console.error)}
+          jukeboxes={availableJukeboxes}
+          activeJukeboxSlug={resolvedJukeboxSlug}
+          onSwitchJukebox={handleSwitchJukebox}
+        />
 
         <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
           {isQueueView && (
@@ -1753,9 +1940,9 @@ function App() {
               onRemove={handleRemove} onReorder={handleReorder}
               onShuffle={handleShuffle} isShuffling={isShuffling} />
           )}
-          {isPlaylistView && <PlaylistsPanel view={view} />}
-          {isScriptsView  && <ScriptsPanel />}
-          {isSettingsView && !isScriptsView && <SettingsPanel view={view} settings={settings} prefs={prefs} />}
+          {isPlaylistView && <PlaylistsPanel view={view} playerId={activePlayerId} />}
+          {isScriptsView  && <ScriptsPanel playerId={activePlayerId} />}
+          {isSettingsView && !isScriptsView && <SettingsPanel view={view} settings={settings} prefs={prefs} playerId={activePlayerId} />}
           {view === 'logs' && <LogsPanel />}
         </main>
       </div>

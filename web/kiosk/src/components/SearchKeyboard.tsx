@@ -59,7 +59,8 @@ export const SearchKeyboard: React.FC<SearchKeyboardProps> = ({
           onChange={(e) => onSearchQueryChange(e.target.value)}
           placeholder="Enter song or artist..."
           className="w-full h-12 sm:h-16 text-lg sm:text-2xl bg-slate-800/60 backdrop-blur border-slate-600 text-white placeholder-slate-400"
-          readOnly
+          onKeyDown={(e) => { if (e.key === 'Enter' && searchQuery.trim()) onKeyPress(SPECIAL_KEYS.SEARCH); }}
+          inputMode="none"
         />
       </div>
 

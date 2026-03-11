@@ -10,6 +10,7 @@ Deno.serve(async (req)=>{
     });
   }
   try {
+      const functionJwt = Deno.env.get('SERVICE_ROLE_JWT') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
     // Create Supabase client (uses service role for admin operations)
     const supabase = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '', {
       auth: {
@@ -252,7 +253,7 @@ Deno.serve(async (req)=>{
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
+            'Authorization': `Bearer ${functionJwt}`
         },
         body: JSON.stringify({
           url

@@ -10,6 +10,7 @@ import {
   subscribeToTable,
   callKioskHandler,
   getTotalCredits,
+  resolveJukeboxSlug,
   supabase,
   type KioskSession,
   type PlayerSettings,
@@ -22,13 +23,34 @@ import { SearchResult } from '../../shared/types';
 import { BackgroundPlaylist, DEFAULT_BACKGROUND_ASSETS } from './components/BackgroundPlaylist';
 import { cleanDisplayText } from '../../shared/media-utils';
 
-const PLAYER_ID = '00000000-0000-0000-0000-000000000001'; // Default player
+const DEFAULT_PLAYER_ID = import.meta.env.VITE_PLAYER_ID || '00000000-0000-0000-0000-000000000001';
+const KIOSK_JUKEBOX_STORAGE_KEY = 'obie_kiosk_jukebox_slug';
+
+function normalizeJukeboxSlug(raw: string | null | undefined): string {
+  return (raw || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^A-Z0-9_-]/g, '')
+    .replace(/_+/g, '_')
+    .replace(/-+/g, '-')
+    .replace(/^[_-]+|[_-]+$/g, '');
+}
+
+function getPathJukeboxSlug(): string {
+  const firstPathPart = window.location.pathname.split('/').filter(Boolean)[0] || '';
+  return normalizeJukeboxSlug(firstPathPart);
+}
 
 function App() {
+  const [activePlayerId, setActivePlayerId] = useState<string | null>(null);
+  const [activeJukeboxSlug, setActiveJukeboxSlug] = useState<string | null>(null);
+  const [identityReady, setIdentityReady] = useState(false);
   const [session, setSession] = useState<KioskSession | null>(null);
   const [settings, setSettings] = useState<PlayerSettings | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [queue, setQueue] = useState<QueueItem[]>([]);
+  const PLAYER_ID = activePlayerId || DEFAULT_PLAYER_ID;
 
   // Log queue state changes
   useEffect(() => {
@@ -57,8 +79,60 @@ function App() {
   const settingsRef = useRef<PlayerSettings | null>(null);
   const playerStatusRef = useRef<PlayerStatus | null>(null);
 
+    // Resolve player identity from URL slug, remembered slug, or prompt.
+    useEffect(() => {
+      let cancelled = false;
+
+      const resolveIdentity = async () => {
+        try {
+          const pathSlug = getPathJukeboxSlug();
+          const rememberedSlug = normalizeJukeboxSlug(localStorage.getItem(KIOSK_JUKEBOX_STORAGE_KEY));
+          let candidateSlug = pathSlug || rememberedSlug;
+
+          if (!candidateSlug) {
+            const entered = window.prompt('Enter Jukebox Name (e.g. OBIE):');
+            candidateSlug = normalizeJukeboxSlug(entered);
+          }
+
+          if (!candidateSlug) {
+            return;
+          }
+
+          const resolved = await resolveJukeboxSlug(candidateSlug);
+          if (!resolved) {
+            alert(`Jukebox "${candidateSlug}" was not found.`);
+            localStorage.removeItem(KIOSK_JUKEBOX_STORAGE_KEY);
+            return;
+          }
+
+          if (!cancelled) {
+            setActivePlayerId(resolved.player_id);
+            setActiveJukeboxSlug(resolved.jukebox_slug);
+          }
+
+          localStorage.setItem(KIOSK_JUKEBOX_STORAGE_KEY, resolved.jukebox_slug);
+          if (pathSlug !== resolved.jukebox_slug) {
+            window.history.replaceState({}, '', `/${resolved.jukebox_slug}`);
+          }
+        } catch (error) {
+          console.error('Failed to resolve kiosk jukebox identity:', error);
+        } finally {
+          if (!cancelled) {
+            setIdentityReady(true);
+          }
+        }
+      };
+
+      resolveIdentity();
+      return () => {
+        cancelled = true;
+      };
+    }, []);
+
     // Initialize session
     useEffect(() => {
+      if (!identityReady || !activePlayerId) return;
+
       const initSession = async () => {
         try {
           const { session: newSession } = await callKioskHandler({
@@ -73,7 +147,7 @@ function App() {
       };
 
       initSession();
-    }, []);
+    }, [identityReady, activePlayerId, PLAYER_ID]);
 
     // Keep refs in sync so the async serial reader always has current session + settings
     useEffect(() => { sessionRef.current = session; }, [session]);
@@ -84,6 +158,7 @@ function App() {
     // Replace polling with realtime subscription: when any kiosk_sessions row for the player
     // changes, re-fetch the aggregated total credits and update local session state.
     useEffect(() => {
+      if (!identityReady || !activePlayerId) return;
       if (!session) return;
 
       const sub = subscribeToKioskSession(session.session_id, (s) => {
@@ -103,13 +178,14 @@ function App() {
         sub.unsubscribe();
         tableSub.unsubscribe();
       };
-    }, [session?.session_id]);
+    }, [identityReady, activePlayerId, PLAYER_ID, session?.session_id]);
 
     // Subscribe to player settings
     useEffect(() => {
+      if (!identityReady || !activePlayerId) return;
       const sub = subscribeToPlayerSettings(PLAYER_ID, setSettings);
       return () => sub.unsubscribe();
-    }, []);
+    }, [identityReady, activePlayerId, PLAYER_ID]);
 
     // Coin acceptor: auto-connect when enabled, disconnect when disabled
     useEffect(() => {
@@ -148,12 +224,14 @@ function App() {
 
     // Subscribe to player status (now playing)
     useEffect(() => {
+      if (!identityReady || !activePlayerId) return;
       const sub = subscribeToPlayerStatus(PLAYER_ID, (s) => setPlayerStatus(s));
       return () => sub.unsubscribe();
-    }, []);
+    }, [identityReady, activePlayerId, PLAYER_ID]);
 
     // Subscribe to queue for marquee / upcoming list
     useEffect(() => {
+      if (!identityReady || !activePlayerId) return;
       const sub = subscribeToQueue(PLAYER_ID, (items) => {
         console.log('[Queue Callback] ===== START QUEUE PROCESSING =====');
         console.log('[Queue Callback] Received items from subscription:', items.length);
@@ -195,7 +273,7 @@ function App() {
         setQueue(displayItems);
       });
       return () => sub.unsubscribe();
-    }, []);
+    }, [identityReady, activePlayerId, PLAYER_ID]);
 
     // Debounced search
     useEffect(() => {
@@ -414,6 +492,41 @@ function App() {
     };
 
     // Render UI (simplified, balanced JSX)
+    if (!identityReady) {
+      return (
+        <div className="min-h-screen bg-black text-white flex items-center justify-center">
+          <div className="text-center">
+            <div className="text-2xl font-semibold mb-3">Resolving Jukebox...</div>
+            <div className="text-gray-400">Please wait.</div>
+          </div>
+        </div>
+      );
+    }
+
+    if (!activePlayerId) {
+      return (
+        <div className="min-h-screen bg-black text-white flex items-center justify-center">
+          <div className="text-center max-w-md px-6">
+            <div className="text-3xl font-bold mb-4">Jukebox Name Required</div>
+            <div className="text-gray-300 mb-6">Open this page with a path like /OBIE, or set one now.</div>
+            <button
+              onClick={() => {
+                const entered = window.prompt('Enter Jukebox Name (e.g. OBIE):');
+                const slug = normalizeJukeboxSlug(entered);
+                if (!slug) return;
+                localStorage.setItem(KIOSK_JUKEBOX_STORAGE_KEY, slug);
+                window.location.assign(`/${slug}`);
+              }}
+              className="px-5 py-3 rounded-lg bg-yellow-400 text-black font-semibold hover:bg-yellow-300"
+            >
+              Enter Jukebox Name
+            </button>
+            {activeJukeboxSlug && <div className="text-gray-500 mt-4 text-sm">Current: {activeJukeboxSlug}</div>}
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-screen bg-black text-white relative">
         {/* Background Playlist */}

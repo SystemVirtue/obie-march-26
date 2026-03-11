@@ -10,11 +10,21 @@ import { createClient, SupabaseClient, RealtimeChannel } from '@supabase/supabas
 export interface Player {
   id: string;
   name: string;
+  display_name?: string | null;
+  jukebox_slug?: string | null;
   status: 'offline' | 'online' | 'error';
   last_heartbeat: string;
   active_playlist_id: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface JukeboxSummary {
+  player_id: string;
+  jukebox_slug: string;
+  display_name: string;
+  role: 'owner' | 'admin' | 'operator' | 'viewer';
+  is_owner: boolean;
 }
 
 export interface Playlist {
@@ -143,6 +153,15 @@ export interface Database {
   public: {
     Tables: {
       players: { Row: Player };
+      player_memberships: {
+        Row: {
+          player_id: string;
+          user_id: string;
+          role: 'owner' | 'admin' | 'operator' | 'viewer';
+          created_at: string;
+          updated_at: string;
+        };
+      };
       playlists: { Row: Playlist };
       playlist_items: { Row: PlaylistItem };
       media_items: { Row: MediaItem };
@@ -165,6 +184,26 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
 export const supabase: SupabaseClient<Database> = createClient(supabaseUrl, supabaseAnonKey);
 
+// supabase-js v2 only calls setAuth() on the internal functions/realtime clients
+// for SIGNED_IN and TOKEN_REFRESHED events — NOT for INITIAL_SESSION (the event
+// that fires when the session is restored from localStorage on page load).
+// This patch closes that gap so functions.invoke() always sends the user JWT
+// rather than falling back to the anon key until the first token refresh.
+supabase.auth.onAuthStateChange((event, session) => {
+  const token = session?.access_token;
+  if (
+    (event === 'INITIAL_SESSION' ||
+      event === 'SIGNED_IN' ||
+      event === 'TOKEN_REFRESHED' ||
+      event === 'USER_UPDATED') &&
+    token
+  ) {
+    supabase.functions.setAuth(token);
+  } else if (event === 'SIGNED_OUT') {
+    supabase.functions.setAuth(supabaseAnonKey);
+  }
+});
+
 // =============================================================================
 // REALTIME HELPERS
 // =============================================================================
@@ -173,6 +212,80 @@ export const supabase: SupabaseClient<Database> = createClient(supabaseUrl, supa
 export interface RealtimeSubscription<T = any> {
   channel: RealtimeChannel;
   unsubscribe: () => void;
+}
+
+async function getEdgeFunctionAuthToken(preferSession = true): Promise<string> {
+  if (preferSession) {
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (token) return token;
+    } catch {
+      // Fall back to the anon key when there is no session yet.
+    }
+  }
+
+  return supabaseAnonKey;
+}
+
+async function invokeEdgeFunction<TResponse = any>(
+  functionName: string,
+  body: unknown,
+  options?: { preferSession?: boolean }
+): Promise<TResponse> {
+  const preferSession = options?.preferSession ?? true;
+
+  const callWithToken = async (token: string) => {
+    const response = await fetch(`${supabaseUrl}/functions/v1/${functionName}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': supabaseAnonKey,
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    const responseText = await response.text();
+    let payload: any = null;
+
+    if (responseText) {
+      try {
+        payload = JSON.parse(responseText);
+      } catch {
+        payload = responseText;
+      }
+    }
+
+    return { response, responseText, payload };
+  };
+
+  const firstToken = await getEdgeFunctionAuthToken(preferSession);
+  let { response, responseText, payload } = await callWithToken(firstToken);
+
+  const firstMessage = typeof payload === 'object' && payload
+    ? payload.error || payload.message || JSON.stringify(payload)
+    : responseText || `HTTP ${response.status}: ${response.statusText}`;
+
+  // Some deployed functions reject user session JWTs (e.g. ES256 tokens)
+  // but still accept project anon JWTs. Retry once with anon to avoid false failures.
+  if (
+    preferSession &&
+    !response.ok &&
+    (response.status === 401 || /invalid jwt/i.test(String(firstMessage))) &&
+    firstToken !== supabaseAnonKey
+  ) {
+    ({ response, responseText, payload } = await callWithToken(supabaseAnonKey));
+  }
+
+  if (!response.ok) {
+    const message = typeof payload === 'object' && payload
+      ? payload.error || payload.message || JSON.stringify(payload)
+      : responseText || `HTTP ${response.status}: ${response.statusText}`;
+    throw new Error(message);
+  }
+
+  return payload as TResponse;
 }
 
 /**
@@ -461,16 +574,7 @@ export async function callQueueManager(params: {
       return { success: true } as any;
     }
 
-    const { data, error } = await supabase.functions.invoke('queue-manager', {
-      body: params
-    });
-
-    if (error) {
-      // Normalize error to a real Error so callers receive a message string
-      throw new Error(error.message || JSON.stringify(error));
-    }
-
-    return data;
+    return await invokeEdgeFunction('queue-manager', params, { preferSession: false });
   } catch (err: any) {
     // If the caught error is a Postgres error object, normalize it so UI logs
     // show readable information (code/message/detail).
@@ -493,16 +597,7 @@ export async function callPlayerControl(params: {
   stored_player_id?: string;
   current_media_id?: string;
 }) {
-  const { data, error } = await supabase.functions.invoke('player-control', {
-    body: params
-  });
-
-  if (error) {
-    // Normalize error to a real Error so callers receive a message string
-    throw new Error(error.message || JSON.stringify(error));
-  }
-
-  return data;
+  return await invokeEdgeFunction('player-control', params, { preferSession: false });
 }
 
 /**
@@ -548,11 +643,15 @@ export async function callKioskHandler(params: {
   r2_file_id?: string;
 }) {
   try {
+    if (!supabaseAnonKey) {
+      throw new Error('Missing VITE_SUPABASE_ANON_KEY for kiosk-handler call');
+    }
     // Call Edge Function directly to bypass authentication requirements for public kiosk
     const response = await fetch(`${supabaseUrl}/functions/v1/kiosk-handler`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'apikey': supabaseAnonKey,
         'Authorization': `Bearer ${supabaseAnonKey}`,
       },
       body: JSON.stringify(params),
@@ -591,12 +690,13 @@ export async function callPlaylistManager(params: {
   url?: string;
   current_index?: number;
 }) {
-  const { data, error } = await supabase.functions.invoke('playlist-manager', {
-    body: params
-  });
+  // Playlist manager deployment currently rejects user session JWTs and accepts
+  // project anon JWTs. Use anon auth directly to avoid a noisy 401->retry cycle.
+  return await invokeEdgeFunction('playlist-manager', params, { preferSession: false });
+}
 
-  if (error) throw error;
-  return data;
+export async function callYouTubeScraper(params: { url: string }) {
+  return await invokeEdgeFunction('youtube-scraper', params, { preferSession: false });
 }
 
 /**
@@ -873,16 +973,72 @@ export async function signIn(email: string, password: string) {
 export async function getUserPlayerId(): Promise<string | null> {
   const { data, error } = await supabase.rpc('get_my_player_id' as any);
   if (error) {
-    console.warn('[getUserPlayerId] RPC error, falling back to direct query:', error);
-    // Fallback: direct query (works if RLS grants read access)
-    const { data: rows } = await supabase
-      .from('players')
-      .select('id')
-      .limit(1)
-      .single();
-    return (rows as any)?.id ?? null;
+    console.warn('[getUserPlayerId] RPC error, falling back to get_my_jukeboxes:', error);
+    const jukeboxes = await getMyJukeboxes();
+    return jukeboxes[0]?.player_id ?? null;
   }
   return (data as string) ?? null;
+}
+
+/**
+ * Return all jukeboxes the signed-in user can access.
+ */
+export async function getMyJukeboxes(): Promise<JukeboxSummary[]> {
+  const { data, error } = await supabase.rpc('get_my_jukeboxes' as any);
+  if (error) throw error;
+  return ((data as JukeboxSummary[] | null) ?? []).map((row) => ({
+    ...row,
+    jukebox_slug: String(row.jukebox_slug || '').toUpperCase(),
+    display_name: row.display_name || row.jukebox_slug,
+  }));
+}
+
+/**
+ * Create a new jukebox owned by the current user.
+ */
+export async function createJukebox(slug: string, displayName?: string): Promise<JukeboxSummary> {
+  const normalizedSlug = slug.trim().toUpperCase();
+  const { data, error } = await supabase.rpc('create_jukebox' as any, {
+    p_slug: normalizedSlug,
+    p_display_name: displayName?.trim() || null,
+  });
+  if (error) throw error;
+
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.player_id) {
+    throw new Error('create_jukebox returned no player_id');
+  }
+
+  return {
+    player_id: row.player_id,
+    jukebox_slug: row.jukebox_slug,
+    display_name: row.display_name,
+    role: 'owner',
+    is_owner: true,
+  };
+}
+
+/**
+ * Resolve a public jukebox slug to internal player_id.
+ * Available to anon/authenticated callers.
+ */
+export async function resolveJukeboxSlug(slug: string): Promise<{ player_id: string; jukebox_slug: string; display_name: string } | null> {
+  const normalizedSlug = slug.trim().toUpperCase();
+  if (!normalizedSlug) return null;
+
+  const { data, error } = await supabase.rpc('resolve_jukebox_slug' as any, {
+    p_slug: normalizedSlug,
+  });
+  if (error) throw error;
+
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.player_id) return null;
+
+  return {
+    player_id: row.player_id,
+    jukebox_slug: row.jukebox_slug,
+    display_name: row.display_name,
+  };
 }
 
 /**

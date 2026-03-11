@@ -11,12 +11,30 @@ import {
   callQueueManager,
   callPlaylistManager,
   initializePlayerPlaylist,
+  resolveJukeboxSlug,
   type PlayerStatus,
   type MediaItem,
   type PlayerSettings,
 } from '@shared/supabase-client';
 
-const PLAYER_ID = '00000000-0000-0000-0000-000000000001';
+const DEFAULT_PLAYER_ID = import.meta.env.VITE_PLAYER_ID || '00000000-0000-0000-0000-000000000001';
+const PLAYER_JUKEBOX_STORAGE_KEY = 'obie_player_jukebox_slug';
+
+function normalizeJukeboxSlug(raw: string | null | undefined): string {
+  return (raw || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^A-Z0-9_-]/g, '')
+    .replace(/_+/g, '_')
+    .replace(/-+/g, '-')
+    .replace(/^[_-]+|[_-]+$/g, '');
+}
+
+function getPathJukeboxSlug(): string {
+  const firstPathPart = window.location.pathname.split('/').filter(Boolean)[0] || '';
+  return normalizeJukeboxSlug(firstPathPart);
+}
 
 // ── YTM Desktop Companion ────────────────────────────────────────────────────
 const YTM_BASE = 'http://localhost:9863';
@@ -43,6 +61,9 @@ declare global {
 }
 
 function App() {
+  const [activePlayerId, setActivePlayerId] = useState<string | null>(null);
+  const [identityReady, setIdentityReady] = useState(false);
+  const PLAYER_ID = activePlayerId || DEFAULT_PLAYER_ID;
   const [status, setStatus] = useState<PlayerStatus | null>(null);
   const [currentMedia, setCurrentMedia] = useState<MediaItem | null>(null);
   const [settings, setSettings] = useState<PlayerSettings | null>(null);
@@ -87,6 +108,54 @@ function App() {
   const playerModeRef = useRef<'iframe' | 'ytm_desktop'>('iframe');
   const [ytmTestResult, setYtmTestResult] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle');
   const [ytmTestMsg, setYtmTestMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const resolveIdentity = async () => {
+      try {
+        const pathSlug = getPathJukeboxSlug();
+        const rememberedSlug = normalizeJukeboxSlug(localStorage.getItem(PLAYER_JUKEBOX_STORAGE_KEY));
+        let candidateSlug = pathSlug || rememberedSlug;
+
+        if (!candidateSlug) {
+          const entered = window.prompt('Enter Jukebox Name (e.g. OBIE):');
+          candidateSlug = normalizeJukeboxSlug(entered);
+        }
+
+        if (!candidateSlug) {
+          return;
+        }
+
+        const resolved = await resolveJukeboxSlug(candidateSlug);
+        if (!resolved) {
+          alert(`Jukebox "${candidateSlug}" was not found.`);
+          localStorage.removeItem(PLAYER_JUKEBOX_STORAGE_KEY);
+          return;
+        }
+
+        if (!cancelled) {
+          setActivePlayerId(resolved.player_id);
+        }
+
+        localStorage.setItem(PLAYER_JUKEBOX_STORAGE_KEY, resolved.jukebox_slug);
+        if (pathSlug !== resolved.jukebox_slug) {
+          window.history.replaceState({}, '', `/${resolved.jukebox_slug}`);
+        }
+      } catch (error) {
+        console.error('Failed to resolve player jukebox identity:', error);
+      } finally {
+        if (!cancelled) {
+          setIdentityReady(true);
+        }
+      }
+    };
+
+    resolveIdentity();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Fade out audio and opacity over 2 seconds
   const fadeOut = useCallback((): Promise<void> => {
@@ -505,6 +574,8 @@ function App() {
 
   // Initialize player with default playlist
   useEffect(() => {
+    if (!identityReady || !activePlayerId) return;
+
     const initPlayer = async () => {
       if (hasInitialized.current) return;
       hasInitialized.current = true;
@@ -558,7 +629,7 @@ function App() {
     };
 
     initPlayer();
-  }, []);
+  }, [identityReady, activePlayerId, PLAYER_ID]);
 
   // NOTE: Shuffle-on-load is handled entirely by the load_playlist RPC (migration 0028).
   // When a playlist is loaded, load_playlist reads player_settings.shuffle and, if enabled,
@@ -568,6 +639,8 @@ function App() {
 
   // Subscribe to player_status updates from Supabase
   useEffect(() => {
+    if (!identityReady || !activePlayerId) return;
+
     console.log('[Player] Subscribing to player status...');
     const prevStateRef = { current: status?.state };
     
@@ -667,13 +740,14 @@ function App() {
       console.log('[Player] Unsubscribing from player status');
       subscription.unsubscribe();
     };
-  }, [fadeIn, fadeOut, reportEndedAndNext]);
+  }, [identityReady, activePlayerId, PLAYER_ID, fadeIn, fadeOut, reportEndedAndNext]);
 
   // Subscribe to player settings (to watch karaoke_mode)
   useEffect(() => {
+    if (!identityReady || !activePlayerId) return;
     const settingsSub = subscribeToPlayerSettings(PLAYER_ID, setSettings);
     return () => settingsSub.unsubscribe();
-  }, []);
+  }, [identityReady, activePlayerId, PLAYER_ID]);
 
   // Derive current player mode; keep a ref in sync for use inside subscription callbacks
   const playerMode = settings?.player_mode ?? 'iframe';
@@ -1261,6 +1335,40 @@ function App() {
       player.pauseVideo();
     }
   }, [status?.state, localPlaybackUrl]);
+
+  if (!identityReady) {
+    return (
+      <div className="relative w-screen h-screen bg-black flex items-center justify-center text-white">
+        <div className="text-center">
+          <div className="text-2xl font-semibold mb-2">Resolving Jukebox...</div>
+          <div className="text-gray-400">Please wait.</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!activePlayerId) {
+    return (
+      <div className="relative w-screen h-screen bg-black flex items-center justify-center text-white">
+        <div className="text-center max-w-md px-6">
+          <div className="text-3xl font-bold mb-4">Jukebox Name Required</div>
+          <div className="text-gray-300 mb-6">Open this page with a path like /OBIE, or set one now.</div>
+          <button
+            onClick={() => {
+              const entered = window.prompt('Enter Jukebox Name (e.g. OBIE):');
+              const slug = normalizeJukeboxSlug(entered);
+              if (!slug) return;
+              localStorage.setItem(PLAYER_JUKEBOX_STORAGE_KEY, slug);
+              window.location.assign(`/${slug}`);
+            }}
+            className="px-5 py-3 rounded-lg bg-white text-black font-semibold hover:bg-gray-200"
+          >
+            Enter Jukebox Name
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative w-screen h-screen bg-black">

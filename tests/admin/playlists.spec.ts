@@ -124,7 +124,7 @@ test('playlist-05: Import Playlist view renders URL input', async ({ page, conso
   if (!isLoggedIn) { test.skip(true, 'No auth'); return; }
   await goToImportPlaylist(page);
 
-  await expect(page.getByText('Import Playlist')).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole('heading', { name: 'Import Playlist' })).toBeVisible({ timeout: 10_000 });
 
   // Should have a text input for URL / playlist ID
   const input = page.locator('input[type="text"], input[type="url"], input[placeholder]').first();

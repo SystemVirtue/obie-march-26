@@ -10,6 +10,7 @@ Deno.serve(async (req)=>{
     });
   }
   try {
+    const functionJwt = Deno.env.get('SERVICE_ROLE_JWT') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
     // Initialize Supabase client with service role key
     const supabase = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '');
     // Parse request body
@@ -19,14 +20,22 @@ Deno.serve(async (req)=>{
     // Handle session initialization
     if (action === 'init') {
       console.log('Creating new kiosk session');
-      // Get the default player (first player in the system)
-      const { data: player, error: playerError } = await supabase.from('players').select('id').limit(1).single();
+      const requestedPlayerId = typeof body.player_id === 'string' && body.player_id.trim()
+        ? body.player_id.trim()
+        : null;
+
+      // Use explicit player_id when provided, otherwise fall back to the first configured player.
+      const playerQuery = requestedPlayerId
+        ? supabase.from('players').select('id').eq('id', requestedPlayerId)
+        : supabase.from('players').select('id').limit(1);
+
+      const { data: player, error: playerError } = await playerQuery.single();
       if (playerError || !player) {
         console.error('No player found:', playerError);
         return new Response(JSON.stringify({
-          error: 'No player configured'
+          error: requestedPlayerId ? `Invalid player_id: ${requestedPlayerId}` : 'No player configured'
         }), {
-          status: 500,
+          status: requestedPlayerId ? 400 : 500,
           headers: {
             ...corsHeaders,
             'Content-Type': 'application/json'
@@ -70,7 +79,7 @@ Deno.serve(async (req)=>{
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
+            'Authorization': `Bearer ${functionJwt}`
           },
           body: JSON.stringify({
             query,
@@ -124,7 +133,7 @@ Deno.serve(async (req)=>{
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${Deno.env.get('SUPABASE_ANON_KEY')}`,
+              'Authorization': `Bearer ${functionJwt}`,
             },
             body: JSON.stringify({ url, type: 'auto' }),
           });
