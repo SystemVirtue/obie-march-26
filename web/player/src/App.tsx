@@ -304,6 +304,21 @@ function App() {
         await fadeOutYtm();
         await ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'pause' }) }).catch(() => {});
         ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'setVolume', data: 100 }) }).catch(() => {});
+      } else if (localPlaybackUrlRef.current) {
+        // Local/Cloudflare playback uses an HTMLVideoElement, so explicitly stop it.
+        // Without this, admin skip can advance queue state while the old video keeps playing.
+        const localVideo = localVideoRef.current;
+        if (localVideo) {
+          try {
+            localVideo.pause();
+            localVideo.currentTime = 0;
+            localVideo.removeAttribute('src');
+            localVideo.load();
+          } catch (error) {
+            console.warn('[Player] Failed to fully stop local/Cloudflare video on skip:', error);
+          }
+        }
+        setLocalPlaybackUrl(null);
       } else {
         await fadeOut();
       }
