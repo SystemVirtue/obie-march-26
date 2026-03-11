@@ -32,8 +32,7 @@ export function QueueMarquee({ queue }: QueueMarqueeProps) {
 }
 
 function QueueEntry({ item }: { item: QueueItem }) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const media = item.media_item as any;
+  const media = item.media_item;
   return (
     <div className="px-6 flex items-center gap-2">
       {item.type === 'priority' && <span className="text-red-400 drop-shadow-lg">★</span>}

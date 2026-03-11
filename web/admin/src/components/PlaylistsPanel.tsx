@@ -106,10 +106,8 @@ export function PlaylistsPanel({ view, playerId }: { view: ViewId; playerId: str
   );
 
   // playlists-all
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const active = playlists.find(p => (p as any).is_active);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sorted = [...playlists].sort((a, b) => ((b as any).is_active ? 1 : 0) - ((a as any).is_active ? 1 : 0));
+  const active = playlists.find(p => p.is_active);
+  const sorted = [...playlists].sort((a, b) => (b.is_active ? 1 : 0) - (a.is_active ? 1 : 0));
   const totalSongs = playlists.reduce((a, p) => a + (p.item_count ?? 0), 0);
 
   return (
@@ -127,8 +125,7 @@ export function PlaylistsPanel({ view, playerId }: { view: ViewId; playerId: str
       )}
       <div style={{ flex: 1, overflowY: 'auto', padding: '12px 24px' }}>
         {sorted.map(playlist => {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const isActive   = (playlist as any).is_active;
+          const isActive   = playlist.is_active;
           const isExpanded = expandedId === playlist.id;
           return (
             <div key={playlist.id} style={{ marginBottom: 6, borderRadius: 13,
@@ -159,10 +156,8 @@ export function PlaylistsPanel({ view, playerId }: { view: ViewId; playerId: str
                         <div key={item.id} style={{ display: 'flex', gap: 9, padding: '5px 0', borderBottom: '1px solid rgba(255,255,255,0.04)', alignItems: 'center' }}>
                           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.2)', width: 28 }}>{i + 1}</span>
                           <div style={{ fontFamily: 'var(--font-display)', fontSize: 12, color: 'rgba(255,255,255,0.7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                            {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                            {cleanDisplayText((item.media_item as any)?.title) || 'Unknown'}
-                            {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                            {(item.media_item as any)?.artist ? ` · ${cleanDisplayText((item.media_item as any).artist)}` : ''}
+                            {cleanDisplayText(item.media_item?.title) || 'Unknown'}
+                            {item.media_item?.artist ? ` · ${cleanDisplayText(item.media_item.artist)}` : ''}
                           </div>
                         </div>
                       ))

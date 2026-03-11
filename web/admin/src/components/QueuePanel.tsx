@@ -20,8 +20,7 @@ import { Spinner, PanelHeader, Btn } from './ui';
 
 function SortableQueueItem({ item, onRemove }: { item: QueueItem; onRemove: (id: string) => void }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const m = (item as any).media_item as any;
+  const m = item.media_item;
   return (
     <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, borderRadius: 11, padding: '9px 11px',
@@ -71,8 +70,7 @@ export function QueuePanel({ queue, status, onRemove, onReorder, onShuffle, isSh
               Empty
             </div>
           ) : (
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            priorityQ.map(item => { const m = (item as any).media_item as any; return (
+            priorityQ.map(item => { const m = item.media_item; return (
               <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 10, borderRadius: 12, padding: '10px 12px', marginBottom: 6, background: 'rgba(59,130,246,0.07)', border: '1px solid rgba(59,130,246,0.15)' }}>
                 {m?.thumbnail && <img src={m.thumbnail} alt="" style={{ width: 36, height: 36, borderRadius: 7, objectFit: 'cover', flexShrink: 0 }} />}
                 <div style={{ flex: 1, minWidth: 0 }}>

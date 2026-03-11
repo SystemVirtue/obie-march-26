@@ -9,8 +9,7 @@ export function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, 
   onPlayPause: () => void; onSkip: () => void; isSkipping: boolean; onRemove: (id: string) => void;
 }) {
   const [showPauseConfirm, setShowPauseConfirm] = useState(false);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const cm = (status as any)?.current_media as any;
+  const cm = status?.current_media;
   const thumb  = cm?.thumbnail || '';
   const title  = cleanDisplayText(cm?.title) || 'Nothing playing';
   const artist = cleanDisplayText(cm?.artist) || '—';
@@ -23,8 +22,7 @@ export function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, 
     if (isPlaying) { setShowPauseConfirm(true); } else { onPlayPause(); }
   };
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const upNext   = queue.filter(q => q.media_item_id !== (status as any)?.current_media_id).slice(0, 3);
+  const upNext   = queue.filter(q => q.media_item_id !== status?.current_media_id).slice(0, 3);
   const priority = queue.filter(q => q.type === 'priority');
 
   return (
@@ -79,8 +77,7 @@ export function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, 
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.1em', color: 'rgba(255,255,255,0.28)', textTransform: 'uppercase', marginBottom: 2 }}>Up Next</div>
             {upNext.length === 0
               ? <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.2)' }}>Queue empty</div>
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              : upNext.map((item, i) => { const m = (item as any).media_item as any; return (
+              : upNext.map((item, i) => { const m = item.media_item; return (
                 <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 8, borderRadius: 9, padding: '5px 9px', background: 'rgba(255,255,255,0.06)' }}>
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.22)', width: 12 }}>{i + 1}</span>
                   {m?.thumbnail && <img src={m.thumbnail} alt="" style={{ width: 28, height: 28, borderRadius: 5, objectFit: 'cover', flexShrink: 0 }} />}
