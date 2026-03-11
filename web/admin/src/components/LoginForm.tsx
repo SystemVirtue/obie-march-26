@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { signIn, createJukebox, type AuthUser } from '@shared/supabase-client';
 import { normalizeJukeboxSlug } from '@shared/jukebox-utils';
+import { navigateClient } from '../types';
 import { Spinner } from './ui';
 
-export function LoginForm({ onSignIn, navigateClient }: { onSignIn: (user: AuthUser) => void; navigateClient: (path: string, replace?: boolean) => void }) {
+export function LoginForm({ onSignIn }: { onSignIn: (user: AuthUser) => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
