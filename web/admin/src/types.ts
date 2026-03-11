@@ -5,7 +5,7 @@ export type { QueueItem, PlayerStatus, PlayerSettings, SystemLog, Playlist, Play
 
 export type ViewId =
   | 'queue'
-  | 'playlists-all' | 'playlists-import'
+  | 'playlists-all' | 'playlists-import' | 'playlists-channel'
   | 'settings-playback' | 'settings-kiosk' | 'settings-branding' | 'settings-scripts' | 'settings-prefs'
   | 'logs';
 

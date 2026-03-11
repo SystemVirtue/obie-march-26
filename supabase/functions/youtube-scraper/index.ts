@@ -19,6 +19,13 @@ interface Video {
   embeddable?: boolean;
 }
 
+interface ChannelPlaylist {
+  id: string;
+  title: string;
+  itemCount: number;
+  thumbnail: string;
+}
+
 // API Key rotation — reads from YOUTUBE_API_KEY_1..8 Supabase secrets
 // These must be configured in your Supabase project settings
 const API_KEYS: ApiKey[] = Array.from({ length: 8 }, (_, i) => {
@@ -90,11 +97,20 @@ Deno.serve(async (req: Request): Promise<Response> => {
     }
 
     let videos: Video[] = [];
+    let channelPlaylists: ChannelPlaylist[] = [];
     let lastError: Error | null = null;
     const maxRetries = API_KEYS.length; // Try all keys if needed
     const body = await req.json();
-    const { url, query, type = 'auto' } = body;
-    if (type !== 'search' && !url) {
+    const { url, query, type = 'auto', channel_id } = body;
+    if (type === 'channel_playlists' && !channel_id) {
+      return new Response(JSON.stringify({
+        error: 'channel_id is required for channel_playlists'
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+    if (type !== 'search' && type !== 'channel_playlists' && !url) {
       return new Response(JSON.stringify({
         error: 'url is required'
       }), {
@@ -116,10 +132,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
         }
       });
     }
-    // Extract video or playlist ID from URL (only for non-search requests)
+    // Extract video or playlist ID from URL (only for non-search/non-channel requests)
     let videoId = null;
     let playlistId = null;
-    if (type !== 'search') {
+    if (type !== 'search' && type !== 'channel_playlists') {
       videoId = extractVideoId(url);
       playlistId = extractPlaylistId(url);
     }
@@ -128,7 +144,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
       try {
         const apiKey = getNextApiKey();
         // Determine what to fetch
-        if (type === 'search') {
+        if (type === 'channel_playlists') {
+          channelPlaylists = await fetchChannelPlaylists(channel_id, apiKey);
+        } else if (type === 'search') {
           videos = await fetchSearch(query, apiKey);
         } else if (type === 'auto' && playlistId || type === 'playlist') {
           if (!playlistId) {
@@ -182,6 +200,21 @@ Deno.serve(async (req: Request): Promise<Response> => {
         throw lastError;
       }
     }
+
+    // Channel playlists response
+    if (type === 'channel_playlists') {
+      if (channelPlaylists.length === 0 && lastError) {
+        throw new Error(`All API keys exhausted: ${lastError.message}`);
+      }
+      return new Response(JSON.stringify({
+        playlists: channelPlaylists,
+        count: channelPlaylists.length
+      }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
     // If we exhausted all retries
     if (videos.length === 0 && lastError) {
       throw new Error(`All API keys exhausted: ${lastError.message}`);
@@ -393,6 +426,51 @@ function parseVideoItem(item: unknown): Video {
     embeddable: status?.embeddable ?? true  // Default to true if not specified
   };
 }
+// Fetch all playlists for a YouTube channel
+async function fetchChannelPlaylists(channelId: string, apiKey: string): Promise<ChannelPlaylist[]> {
+  const playlists: ChannelPlaylist[] = [];
+  let pageToken: string | null = null;
+
+  do {
+    const url = `https://www.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&channelId=${encodeURIComponent(channelId)}&maxResults=50${pageToken ? `&pageToken=${pageToken}` : ''}&key=${apiKey}`;
+    const response = await fetch(url);
+
+    if (response.status === 403) {
+      const errorData = await response.json();
+      if (errorData.error?.errors?.[0]?.reason === 'quotaExceeded') {
+        markKeyAsFailed(apiKey);
+        throw new Error('Quota exceeded - key marked as failed');
+      }
+    }
+    if (!response.ok) {
+      throw new Error(`YouTube API error: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    for (const item of data.items || []) {
+      playlists.push({
+        id: item.id,
+        title: item.snippet?.title || 'Untitled Playlist',
+        itemCount: item.contentDetails?.itemCount || 0,
+        thumbnail: item.snippet?.thumbnails?.high?.url || item.snippet?.thumbnails?.default?.url || '',
+      });
+    }
+    pageToken = data.nextPageToken || null;
+  } while (pageToken);
+
+  return playlists;
+}
+
+// Extract YouTube channel ID from URL or raw ID
+function extractChannelId(input: string): string | null {
+  // Direct channel ID (starts with UC)
+  if (/^UC[a-zA-Z0-9_-]{22}$/.test(input)) return input;
+  // Channel URL: /channel/UCxxxxxx
+  const channelMatch = input.match(/youtube\.com\/channel\/(UC[a-zA-Z0-9_-]{22})/);
+  if (channelMatch) return channelMatch[1];
+  return null;
+}
+
 // Parse ISO 8601 duration to seconds
 function parseDuration(duration: string): number {
   const match = duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);

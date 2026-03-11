@@ -74,7 +74,8 @@ for playlist_info in "${PLAYLISTS[@]}"; do
     -d "{
       \"action\": \"create\",
       \"player_id\": \"${DEFAULT_PLAYER_ID}\",
-      \"name\": \"${PLAYLIST_NAME}\"
+      \"name\": \"${PLAYLIST_NAME}\",
+      \"replace_existing\": true
     }")
   
   # Check for errors in create

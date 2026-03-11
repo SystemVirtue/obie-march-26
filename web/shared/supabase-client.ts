@@ -680,7 +680,7 @@ export async function callKioskHandler(params: {
  * Call playlist-manager Edge Function
  */
 export async function callPlaylistManager(params: {
-  action: 'create' | 'update' | 'delete' | 'add_item' | 'remove_item' | 'reorder' | 'scrape' | 'set_active' | 'clear_queue' | 'import_queue' | 'load_playlist' | 'remove_media_globally';
+  action: 'create' | 'update' | 'delete' | 'add_item' | 'remove_item' | 'reorder' | 'scrape' | 'set_active' | 'clear_queue' | 'import_queue' | 'load_playlist' | 'remove_media_globally' | 'sync_channel';
   player_id?: string;
   playlist_id?: string;
   name?: string;
@@ -689,6 +689,8 @@ export async function callPlaylistManager(params: {
   item_ids?: string[];
   url?: string;
   current_index?: number;
+  channel_id?: string;
+  replace_existing?: boolean;
 }) {
   // Playlist manager deployment currently rejects user session JWTs and accepts
   // project anon JWTs. Use anon auth directly to avoid a noisy 401->retry cycle.

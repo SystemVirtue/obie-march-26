@@ -4,8 +4,9 @@ import type { ViewId, QueueItem, AuthUser, JukeboxSummary } from '../types';
 const NAV = [
   { id: 'queue',     icon: '🎵', label: 'Queue',     children: [] as { id: ViewId; label: string }[] },
   { id: 'playlists', icon: '📋', label: 'Playlists', children: [
-    { id: 'playlists-all'    as ViewId, label: 'All Playlists' },
-    { id: 'playlists-import' as ViewId, label: 'Import Playlist' },
+    { id: 'playlists-all'     as ViewId, label: 'All Playlists' },
+    { id: 'playlists-import'  as ViewId, label: 'Import Playlist' },
+    { id: 'playlists-channel' as ViewId, label: 'Sync from Channel' },
   ]},
   { id: 'settings',  icon: '⚙️', label: 'Settings',  children: [
     { id: 'settings-playback' as ViewId, label: 'Playback' },

@@ -22,6 +22,9 @@ export function PlaylistsPanel({ view, playerId }: { view: ViewId; playerId: str
   const [importName, setImportName] = useState('');
   const [importing, setImporting]   = useState(false);
   const [importResult, setImportResult] = useState<{ text: string; ok: boolean } | null>(null);
+  const [channelId, setChannelId] = useState('');
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<{ text: string; ok: boolean } | null>(null);
 
   const loadPlaylists = useCallback(async () => {
     try { const data = await getPlaylists(playerId); setPlaylists(data as typeof playlists); }
@@ -64,7 +67,7 @@ export function PlaylistsPanel({ view, playerId }: { view: ViewId; playerId: str
     setImporting(true); setImportResult(null);
     try {
       const name = importName.trim() || `Imported ${importYtId.trim().slice(0, 12)}`;
-      const created = await callPlaylistManager({ action: 'create', player_id: playerId, name }) as { playlist?: { id: string } };
+      const created = await callPlaylistManager({ action: 'create', player_id: playerId, name, replace_existing: true }) as { playlist?: { id: string } };
       const playlistId = created?.playlist?.id;
       if (!playlistId) throw new Error('Failed to create playlist record');
       const ytUrl = `https://www.youtube.com/playlist?list=${importYtId.trim()}`;
@@ -76,6 +79,61 @@ export function PlaylistsPanel({ view, playerId }: { view: ViewId; playerId: str
       setImportResult({ text: `❌ ${e instanceof Error ? e.message : 'Import failed'}`, ok: false });
     } finally { setImporting(false); }
   };
+
+  const handleChannelSync = async () => {
+    if (!channelId.trim()) return;
+    setSyncing(true); setSyncResult(null);
+    try {
+      // Extract channel ID from URL or use raw ID
+      let chId = channelId.trim();
+      const channelMatch = chId.match(/youtube\.com\/channel\/(UC[a-zA-Z0-9_-]{22})/);
+      if (channelMatch) chId = channelMatch[1];
+      if (!/^UC[a-zA-Z0-9_-]{22}$/.test(chId)) throw new Error('Invalid channel ID. Must start with UC and be 24 characters, or a full channel URL.');
+      const result = await callPlaylistManager({ action: 'sync_channel', player_id: playerId, channel_id: chId }) as {
+        playlists_found?: number;
+        results?: { name: string; success: boolean; video_count?: number; error?: string }[];
+      };
+      const imported = result?.results?.filter(r => r.success).length ?? 0;
+      const totalVideos = result?.results?.reduce((sum, r) => sum + (r.video_count ?? 0), 0) ?? 0;
+      setSyncResult({ text: `✓ Synced ${imported}/${result?.playlists_found ?? 0} playlists (${totalVideos} total videos)`, ok: true });
+      setChannelId('');
+      await loadPlaylists();
+    } catch (e: unknown) {
+      setSyncResult({ text: `❌ ${e instanceof Error ? e.message : 'Sync failed'}`, ok: false });
+    } finally { setSyncing(false); }
+  };
+
+  if (view === 'playlists-channel') return (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <PanelHeader title="Sync from Channel" subtitle="Import all playlists from a YouTube channel" />
+      <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
+        <div style={{ maxWidth: 480, background: 'rgba(255,255,255,0.025)', border: '1px solid var(--border)', borderRadius: 16, padding: 24 }}>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: 'block', fontFamily: 'var(--font-display)', fontSize: 13, color: 'var(--muted)', marginBottom: 6 }}>YouTube Channel ID *</label>
+            <input value={channelId} onChange={e => setChannelId(e.target.value)}
+              placeholder="UCxxxxxxxxxxxxxxxxxxxxxx  or  https://www.youtube.com/channel/UCxxxxxxxxxxxxxxxxxxxxxx"
+              style={{ width: '100%', padding: '10px 14px', borderRadius: 10, background: '#0d0d0d', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none' }} />
+            <div style={{ marginTop: 6, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.25)' }}>
+              Channel IDs start with "UC" — find yours at youtube.com/channel/UCxxxxxx
+            </div>
+          </div>
+          <button onClick={handleChannelSync} disabled={syncing || !channelId.trim()}
+            style={{ width: '100%', padding: '12px', borderRadius: 12, border: 'none', cursor: syncing || !channelId.trim() ? 'default' : 'pointer',
+              background: 'var(--accent)', color: '#000', fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 700,
+              opacity: syncing || !channelId.trim() ? 0.5 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+            {syncing ? <><Spinner size={16} /> Syncing channel…</> : '📡 Sync All Playlists'}
+          </button>
+          <div style={{ marginTop: 10, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.3)', lineHeight: 1.5 }}>
+            This will import every playlist from the channel. Existing playlists with the same name will be replaced.
+          </div>
+          {syncResult && <div style={{ marginTop: 14, padding: '10px 14px', borderRadius: 9,
+            background: syncResult.ok ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+            border: `1px solid ${syncResult.ok ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)'}`,
+            color: syncResult.ok ? '#4ade80' : '#f87171', fontFamily: 'var(--font-mono)', fontSize: 12 }}>{syncResult.text}</div>}
+        </div>
+      </div>
+    </div>
+  );
 
   if (view === 'playlists-import') return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>

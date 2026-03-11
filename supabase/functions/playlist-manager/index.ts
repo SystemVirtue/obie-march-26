@@ -18,7 +18,7 @@ Deno.serve(async (req)=>{
     const supabase = createServiceClient();
     // Parse request body
     const body = await req.json();
-    const { action, player_id, playlist_id, name, description, media_item_id, item_ids, url, current_index } = body;
+    const { action, player_id, playlist_id, name, description, media_item_id, item_ids, url, current_index, channel_id, replace_existing } = body;
     // Handle playlist creation
     if (action === 'create') {
       if (!player_id || !name) {
@@ -32,6 +32,22 @@ Deno.serve(async (req)=>{
           }
         });
       }
+
+      // Duplicate check: if replace_existing is true, delete any playlist with the same name for this player
+      if (replace_existing) {
+        const { data: existing } = await supabase.from('playlists')
+          .select('id')
+          .eq('player_id', player_id)
+          .eq('name', name);
+        if (existing && existing.length > 0) {
+          for (const dup of existing) {
+            await supabase.from('playlist_items').delete().eq('playlist_id', dup.id);
+            await supabase.from('playlists').delete().eq('id', dup.id);
+          }
+          console.log(`Replaced ${existing.length} existing playlist(s) named "${name}"`);
+        }
+      }
+
       const { data: playlist, error: createError } = await supabase.from('playlists').insert({
         player_id,
         name,
@@ -511,6 +527,127 @@ Deno.serve(async (req)=>{
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
+    // Handle syncing all playlists from a YouTube channel
+    if (action === 'sync_channel') {
+      if (!player_id || !channel_id) {
+        return new Response(JSON.stringify({
+          error: 'player_id and channel_id are required'
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Step 1: Fetch all playlists from the channel via youtube-scraper
+      const channelResponse = await callYouTubeScraperWithFallback({
+        supabaseUrl,
+        payload: { type: 'channel_playlists', channel_id: channel_id },
+        incomingAuthorization: req.headers.get('Authorization'),
+        serviceRoleToken,
+        anonJwt,
+      });
+
+      if (!channelResponse.ok) {
+        const errText = await channelResponse.text();
+        let errMsg = 'Failed to fetch channel playlists';
+        try { const d = JSON.parse(errText); errMsg = d.error || errMsg; } catch { errMsg = errText || errMsg; }
+        throw new Error(errMsg);
+      }
+
+      const { playlists: channelPlaylists } = await channelResponse.json();
+      if (!channelPlaylists || channelPlaylists.length === 0) {
+        return new Response(JSON.stringify({ error: 'No playlists found for this channel' }), {
+          status: 404,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Step 2: For each playlist, create (with dedup) and scrape
+      const results = [];
+      for (const cp of channelPlaylists) {
+        const playlistName = cp.title || `Playlist ${cp.id}`;
+
+        // Delete existing playlist with same name (dedup)
+        const { data: existing } = await supabase.from('playlists')
+          .select('id')
+          .eq('player_id', player_id)
+          .eq('name', playlistName);
+        if (existing && existing.length > 0) {
+          for (const dup of existing) {
+            await supabase.from('playlist_items').delete().eq('playlist_id', dup.id);
+            await supabase.from('playlists').delete().eq('id', dup.id);
+          }
+        }
+
+        // Create new playlist
+        const { data: newPlaylist, error: createErr } = await supabase.from('playlists').insert({
+          player_id,
+          name: playlistName,
+          description: `Imported from YouTube channel`
+        }).select().maybeSingle();
+
+        if (createErr || !newPlaylist) {
+          results.push({ name: playlistName, success: false, error: createErr?.message || 'Create failed' });
+          continue;
+        }
+
+        // Scrape the playlist's videos
+        const ytUrl = `https://www.youtube.com/playlist?list=${cp.id}`;
+        const scrapeResponse = await callYouTubeScraperWithFallback({
+          supabaseUrl,
+          payload: { url: ytUrl },
+          incomingAuthorization: req.headers.get('Authorization'),
+          serviceRoleToken,
+          anonJwt,
+        });
+
+        if (!scrapeResponse.ok) {
+          results.push({ name: playlistName, playlist_id: newPlaylist.id, success: false, error: 'Scrape failed' });
+          continue;
+        }
+
+        const { videos } = await scrapeResponse.json();
+        let addedCount = 0;
+
+        if (videos && videos.length > 0) {
+          let position = 0;
+          for (const video of videos) {
+            const sourceId = `youtube:${video.id}`;
+            const { data: mediaId } = await supabase.rpc('create_or_get_media_item', {
+              p_source_id:   sourceId,
+              p_source_type: 'youtube',
+              p_title:       video.title,
+              p_artist:      video.artist || null,
+              p_url:         video.url,
+              p_duration:    video.duration || null,
+              p_thumbnail:   video.thumbnail || null,
+              p_metadata:    {},
+            });
+            if (mediaId) {
+              await supabase.from('playlist_items').insert({
+                playlist_id: newPlaylist.id,
+                media_item_id: mediaId,
+                position: position++
+              });
+              addedCount++;
+            }
+          }
+        }
+
+        results.push({ name: playlistName, playlist_id: newPlaylist.id, success: true, video_count: addedCount });
+      }
+
+      return new Response(JSON.stringify({
+        success: true,
+        channel_id,
+        playlists_found: channelPlaylists.length,
+        results
+      }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
     return new Response(JSON.stringify({
       error: `Unknown action: ${action}`
     }), {
