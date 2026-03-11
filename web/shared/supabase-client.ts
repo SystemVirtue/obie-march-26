@@ -1001,10 +1001,14 @@ export async function createJukebox(slug: string, displayName?: string): Promise
   const { data, error } = await supabase.rpc('create_jukebox' as any, {
     p_slug: normalizedSlug,
     p_display_name: displayName?.trim() || null,
-  });
+  } as any);
   if (error) throw error;
 
-  const row = Array.isArray(data) ? data[0] : data;
+  const row = (Array.isArray(data) ? data[0] : data) as {
+    player_id: string;
+    jukebox_slug: string;
+    display_name: string | null;
+  } | null;
   if (!row?.player_id) {
     throw new Error('create_jukebox returned no player_id');
   }
@@ -1012,7 +1016,7 @@ export async function createJukebox(slug: string, displayName?: string): Promise
   return {
     player_id: row.player_id,
     jukebox_slug: row.jukebox_slug,
-    display_name: row.display_name,
+    display_name: row.display_name || row.jukebox_slug,
     role: 'owner',
     is_owner: true,
   };
@@ -1028,16 +1032,20 @@ export async function resolveJukeboxSlug(slug: string): Promise<{ player_id: str
 
   const { data, error } = await supabase.rpc('resolve_jukebox_slug' as any, {
     p_slug: normalizedSlug,
-  });
+  } as any);
   if (error) throw error;
 
-  const row = Array.isArray(data) ? data[0] : data;
+  const row = (Array.isArray(data) ? data[0] : data) as {
+    player_id: string;
+    jukebox_slug: string;
+    display_name: string | null;
+  } | null;
   if (!row?.player_id) return null;
 
   return {
     player_id: row.player_id,
     jukebox_slug: row.jukebox_slug,
-    display_name: row.display_name,
+    display_name: row.display_name || row.jukebox_slug,
   };
 }
 
