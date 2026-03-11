@@ -12,14 +12,10 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "strict": true,
+    "ignoreDeprecations": "5.0",
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true,
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["./src/*"],
-      "@shared/*": ["../shared/*"]
-    }
+    "noFallthroughCasesInSwitch": true
   },
   "include": ["src", "../shared"],
   "references": [{ "path": "./tsconfig.node.json" }]

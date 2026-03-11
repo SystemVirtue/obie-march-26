@@ -305,7 +305,7 @@ function App() {
     } catch (error) {
       console.error('[Player] Failed to report status:', error);
     }
-  }, [isSlavePlayer]);
+  }, [isSlavePlayer, PLAYER_ID]);
 
   // Report video ended and trigger queue_next (disabled for slave players)
   const reportEndedAndNext = useCallback(async (isSkip = false) => {
@@ -345,30 +345,23 @@ function App() {
     }
 
     try {
-      const result = await callPlayerControl({
-        player_id: PLAYER_ID,
-        state: 'idle',
-        progress: 1,
-        action: 'ended', // Always use 'ended' after fade completes to trigger queue_next
-        current_media_id: currentMediaIdRef.current || undefined, // Idempotency: server skips if already advanced
-      });
-      console.log('[Player] Queue_next full result:', JSON.stringify(result, null, 2));
-      
-      // Load the next video immediately from the result
-      if (result?.next_item) {
+      const expectedMediaId = currentMediaIdRef.current || null;
+      const applyNextItem = (candidate: any): boolean => {
+        if (!candidate?.next_item) return false;
+
         console.log('[Player] Next item data:', {
-          media_item_id: result.next_item.media_item_id,
-          title: result.next_item.title,
-          url: result.next_item.url,
-          duration: result.next_item.duration
+          media_item_id: candidate.next_item.media_item_id,
+          title: candidate.next_item.title,
+          url: candidate.next_item.url,
+          duration: candidate.next_item.duration
         });
-        
+
         const nextMedia: MediaItem = {
-          id: result.next_item.media_item_id,
-          title: result.next_item.title || 'Unknown',
+          id: candidate.next_item.media_item_id,
+          title: candidate.next_item.title || 'Unknown',
           artist: 'Unknown',
-          url: result.next_item.url,
-          duration: result.next_item.duration || 0,
+          url: candidate.next_item.url,
+          duration: candidate.next_item.duration || 0,
           source_id: '',
           source_type: 'youtube',
           thumbnail: null,
@@ -376,29 +369,74 @@ function App() {
           metadata: {},
         };
         console.log('[Player] Loading next media from queue_next result:', nextMedia);
-        
+
         // If this was a skip, mark it so we can fade in when video starts
         if (isSkip) {
           isSkipLoadingRef.current = true;
         }
-        
+
         setCurrentMedia(nextMedia);
-        
+
         // Mark that video was recently loaded and should auto-play if it pauses unexpectedly
         recentlyLoadedRef.current = true;
         // Clear the flag after 5 seconds
         setTimeout(() => {
           recentlyLoadedRef.current = false;
         }, 5000);
-        
+
         // For normal end: restore opacity immediately
         if (!isSkip && playerDivRef.current) {
           playerDivRef.current.style.opacity = '1';
         }
-      } else {
-        console.log('[Player] No more items in queue - result:', result);
-        setCurrentMedia(null);
+
+        return true;
+      };
+
+      const result = await callPlayerControl({
+        player_id: PLAYER_ID,
+        state: 'idle',
+        progress: 1,
+        action: 'ended', // Always use 'ended' after fade completes to trigger queue_next
+        current_media_id: expectedMediaId || undefined, // Idempotency: server skips if already advanced
+      });
+      console.log('[Player] Queue_next full result:', JSON.stringify(result, null, 2));
+
+      if (applyNextItem(result)) {
+        return;
       }
+
+      // If queue_next returned empty but DB is still stuck on the same media in idle,
+      // perform one retry without expected_media_id to recover from stale-id races.
+      const { data: latestStatusRaw, error: latestStatusError } = await supabase
+        .from('player_status')
+        .select('state,current_media_id')
+        .eq('player_id', PLAYER_ID)
+        .maybeSingle();
+      const latestStatus = latestStatusRaw as { state: string | null; current_media_id: string | null } | null;
+
+      if (!latestStatusError) {
+        const stillIdleOnSameMedia =
+          latestStatus?.state === 'idle' &&
+          (!expectedMediaId || latestStatus.current_media_id === expectedMediaId);
+
+        if (stillIdleOnSameMedia) {
+          console.warn('[Player] queue_next returned empty while still idle on same media - retrying once without idempotency key');
+          const retryResult = await callPlayerControl({
+            player_id: PLAYER_ID,
+            state: 'idle',
+            progress: 1,
+            action: 'ended',
+          });
+          console.log('[Player] queue_next retry result:', JSON.stringify(retryResult, null, 2));
+
+          if (applyNextItem(retryResult)) {
+            return;
+          }
+        }
+      }
+
+      console.log('[Player] No more items in queue - result:', result);
+      setCurrentMedia(null);
     } catch (error) {
       console.error('[Player] Failed to call queue_next:', error);
     } finally {
@@ -417,7 +455,7 @@ function App() {
         }
       }, 10000);
     }
-  }, [fadeOut, fadeOutYtm]);
+  }, [fadeOut, fadeOutYtm, isSlavePlayer, PLAYER_ID]);
 
   // YouTube Player event handlers
   const onPlayerReady = useCallback((_event: any) => {
@@ -471,17 +509,36 @@ function App() {
     } else if (event.data === 2) {
       // PAUSED
       console.log('[Player] Video PAUSED');
-      reportStatus('paused');
 
-      // If video was recently loaded and paused unexpectedly, attempt to auto-play
-      if (recentlyLoadedRef.current && playerRef.current && typeof playerRef.current.playVideo === 'function') {
-        console.log('[Player] Video paused unexpectedly after load, attempting auto-play...');
-        try {
-          playerRef.current.playVideo();
-          // Clear the flag since we're attempting to play
-          recentlyLoadedRef.current = false;
-        } catch (error) {
-          console.error('[Player] Error auto-playing video:', error);
+      // If the video hasn't played yet, this is a transient loading pause (YouTube
+      // fires PAUSED right after loadVideoById before playVideo() has been called).
+      // Don't write 'paused' to the DB — it would trigger the unexpected-pause
+      // guard in the status-watch effect and cause a double-advance after a skip.
+      // Instead, just ensure playback starts.
+      if (!videoHasPlayedRef.current) {
+        console.log('[Player] PAUSED before first play — treating as loading pause, attempting playVideo()');
+        if (recentlyLoadedRef.current && playerRef.current && typeof playerRef.current.playVideo === 'function') {
+          try {
+            playerRef.current.playVideo();
+            recentlyLoadedRef.current = false;
+          } catch (error) {
+            console.error('[Player] Error auto-playing video:', error);
+          }
+        }
+      } else {
+        // Video has played before — this is a genuine pause (user or admin).
+        reportStatus('paused');
+
+        // If video was recently loaded and paused unexpectedly, attempt to auto-play
+        if (recentlyLoadedRef.current && playerRef.current && typeof playerRef.current.playVideo === 'function') {
+          console.log('[Player] Video paused unexpectedly after load, attempting auto-play...');
+          try {
+            playerRef.current.playVideo();
+            // Clear the flag since we're attempting to play
+            recentlyLoadedRef.current = false;
+          } catch (error) {
+            console.error('[Player] Error auto-playing video:', error);
+          }
         }
       }
     } else if (event.data === 0) {
@@ -1284,11 +1341,19 @@ function App() {
       // player to land in 'paused' rather than 'loading'. Since the video has
       // never entered 'playing' state, this is not a user-initiated pause —
       // auto-advance after 3 seconds.
-      console.warn('[Player] Video paused before it ever played — unexpected pause, will auto-advance in 3s');
-      unexpectedPauseTimeoutRef.current = window.setTimeout(() => {
-        unexpectedPauseTimeoutRef.current = null;
-        advanceToNext('Video paused before playing (unexpected pause)');
-      }, 3000);
+      //
+      // Guard: if a queue advance is already in-flight (e.g. this is the initial
+      // loading pause right after a skip/end advances the queue), skip the timer.
+      // The normal PLAYING event will clear isEndingRef once the video starts.
+      if (isEndingRef.current) {
+        console.log('[Player] Unexpected pause while queue advance in-flight — suppressing guard (skip/end in progress)');
+      } else {
+        console.warn('[Player] Video paused before it ever played — unexpected pause, will auto-advance in 3s');
+        unexpectedPauseTimeoutRef.current = window.setTimeout(() => {
+          unexpectedPauseTimeoutRef.current = null;
+          advanceToNext('Video paused before playing (unexpected pause)');
+        }, 3000);
+      }
 
     } else if (status.state !== 'paused') {
       // Status changed to something other than paused/loading — log the transition

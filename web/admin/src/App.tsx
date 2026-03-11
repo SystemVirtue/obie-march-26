@@ -76,6 +76,16 @@ function getPathJukeboxSlug(): string {
   return normalizeJukeboxSlug(firstPathPart);
 }
 
+function navigateClient(path: string, replace: boolean = false): void {
+  const target = path.startsWith('/') ? path : `/${path}`;
+  if (replace) {
+    window.history.replaceState({}, '', target);
+  } else {
+    window.history.pushState({}, '', target);
+  }
+  window.dispatchEvent(new Event('popstate'));
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // PREFERENCES  (localStorage-backed font size + accent colour)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -293,7 +303,7 @@ function LoginForm({ onSignIn }: { onSignIn: (user: AuthUser) => void }) {
         role: auth.user.user_metadata?.role || auth.user.app_metadata?.role,
       });
 
-      window.location.assign(`/${created.jukebox_slug}`);
+      navigateClient(`/${created.jukebox_slug}`);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to create jukebox');
     } finally {
@@ -578,18 +588,18 @@ const NAV = [
   { id: 'logs',      icon: '📄', label: 'Logs',      children: [] as { id: ViewId; label: string }[] },
 ];
 
-function Sidebar({ view, setView, queue, user, onSignOut, jukeboxes, activeJukeboxSlug, onSwitchJukebox }: {
+function Sidebar({ view, setView, queue, user, onSignOut, jukeboxes, activeJukeboxSlug, onSwitchJukebox, onCreateJukebox }: {
   view: ViewId; setView: (v: ViewId) => void;
   queue: QueueItem[]; user: AuthUser; onSignOut: () => void;
   jukeboxes: JukeboxSummary[];
   activeJukeboxSlug: string | null;
   onSwitchJukebox: (slug: string) => void;
+  onCreateJukebox: () => void;
 }) {
   const [expanded, setExpanded] = useState(true);
   const [openGroup, setOpenGroup] = useState<string>('queue');
   const [showJukeboxPicker, setShowJukeboxPicker] = useState(false);
   const priorityCount = queue.filter(q => q.type === 'priority').length;
-  const canSwitchJukebox = jukeboxes.length > 1;
   const currentJukebox = jukeboxes.find((j) => j.jukebox_slug === activeJukeboxSlug) || jukeboxes[0] || null;
 
   const handleGroup = (group: typeof NAV[0]) => {
@@ -663,16 +673,13 @@ function Sidebar({ view, setView, queue, user, onSignOut, jukeboxes, activeJukeb
         <div style={{ padding: '10px 13px', borderTop: '1px solid rgba(255,255,255,0.05)', flexShrink: 0, position: 'relative' }}>
           <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.25)', marginBottom: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.email}</div>
           <button
-            onClick={() => {
-              if (!canSwitchJukebox) return;
-              setShowJukeboxPicker((v) => !v);
-            }}
-            style={{ width: '100%', padding: '6px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.16)', background: 'rgba(255,255,255,0.06)', color: '#e5e7eb', cursor: canSwitchJukebox ? 'pointer' : 'default', fontFamily: 'var(--font-display)', fontSize: 11, marginBottom: 6, opacity: canSwitchJukebox ? 1 : 0.7 }}
-            title={canSwitchJukebox ? 'Select a Jukebox' : 'Only one jukebox is associated with this account'}
+            onClick={() => setShowJukeboxPicker((v) => !v)}
+            style={{ width: '100%', padding: '6px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.16)', background: 'rgba(255,255,255,0.06)', color: '#e5e7eb', cursor: 'pointer', fontFamily: 'var(--font-display)', fontSize: 11, marginBottom: 6 }}
+            title='Switch Jukebox'
           >
             Jukebox : {currentJukebox?.jukebox_slug || activeJukeboxSlug || 'N/A'}
           </button>
-          {showJukeboxPicker && canSwitchJukebox && (
+          {showJukeboxPicker && (
             <div style={{ position: 'absolute', left: 13, right: 13, bottom: 76, borderRadius: 10, border: '1px solid rgba(255,255,255,0.15)', background: '#111', boxShadow: '0 10px 30px rgba(0,0,0,0.4)', overflow: 'hidden', zIndex: 30 }}>
               <div style={{ padding: '8px 10px', fontFamily: 'var(--font-display)', fontSize: 11, color: 'rgba(255,255,255,0.6)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
                 Select a Jukebox
@@ -689,6 +696,12 @@ function Sidebar({ view, setView, queue, user, onSignOut, jukeboxes, activeJukeb
                   {j.jukebox_slug}
                 </button>
               ))}
+              <button
+                onClick={() => { setShowJukeboxPicker(false); onCreateJukebox(); }}
+                style={{ width: '100%', textAlign: 'left', padding: '8px 10px', border: 'none', borderBottom: '1px solid rgba(255,255,255,0.05)', background: 'transparent', color: '#34d399', cursor: 'pointer', fontFamily: 'var(--font-display)', fontSize: 11 }}
+              >
+                + Create New Jukebox
+              </button>
               <button
                 onClick={() => setShowJukeboxPicker(false)}
                 style={{ width: '100%', textAlign: 'center', padding: '8px 10px', border: 'none', background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.7)', cursor: 'pointer', fontFamily: 'var(--font-display)', fontSize: 11 }}
@@ -1685,6 +1698,7 @@ function LogsPanel() {
 function App() {
   const [user, setUser]         = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [routeSlug, setRouteSlug] = useState<string>(() => getPathJukeboxSlug());
   const [resolvedPlayerId, setResolvedPlayerId] = useState<string | null>(null);
   const [resolvedJukeboxSlug, setResolvedJukeboxSlug] = useState<string | null>(null);
   const [availableJukeboxes, setAvailableJukeboxes] = useState<JukeboxSummary[]>([]);
@@ -1713,6 +1727,12 @@ function App() {
     return () => sub.unsubscribe();
   }, []);
 
+  useEffect(() => {
+    const handlePopState = () => setRouteSlug(getPathJukeboxSlug());
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
   // Resolve player_id for the authenticated user using URL slug when present.
   useEffect(() => {
     if (!user) {
@@ -1726,7 +1746,7 @@ function App() {
     let cancelled = false;
     const resolve = async () => {
       try {
-        const pathSlug = getPathJukeboxSlug();
+        const pathSlug = routeSlug;
         const myJukeboxes = await getMyJukeboxes();
         if (!cancelled) setAvailableJukeboxes(myJukeboxes);
 
@@ -1748,7 +1768,7 @@ function App() {
           }
 
           if (pathSlug !== resolved.jukebox_slug) {
-            window.history.replaceState({}, '', `/${resolved.jukebox_slug}`);
+            navigateClient(`/${resolved.jukebox_slug}`, true);
           }
           return;
         }
@@ -1760,7 +1780,7 @@ function App() {
             setResolvedJukeboxSlug(first.jukebox_slug);
             setResolveError(null);
           }
-          window.history.replaceState({}, '', `/${first.jukebox_slug}`);
+          navigateClient(`/${first.jukebox_slug}`, true);
           return;
         }
 
@@ -1796,14 +1816,28 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [user]);
+  }, [user, routeSlug]);
 
   const activePlayerId = resolvedPlayerId;
 
   const handleSwitchJukebox = (slug: string) => {
     const normalized = normalizeJukeboxSlug(slug);
     if (!normalized) return;
-    window.location.assign(`/${normalized}`);
+    navigateClient(`/${normalized}`);
+  };
+
+  const handleCreateJukebox = async () => {
+    const entered = window.prompt('Enter new jukebox name (A-Z, 0-9, underscore, dash):');
+    const slug = normalizeJukeboxSlug(entered);
+    if (!slug) return;
+    try {
+      const created = await createJukebox(slug, slug);
+      const refreshed = await getMyJukeboxes();
+      setAvailableJukeboxes(refreshed);
+      navigateClient(`/${created.jukebox_slug}`);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to create jukebox');
+    }
   };
 
   // Realtime subscriptions — deps intentionally omit isSkipping; use ref to avoid subscription churn
@@ -1888,7 +1922,7 @@ function App() {
     <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, padding: 24 }}>
       <div style={{ maxWidth: 560, textAlign: 'center', color: '#fca5a5', fontFamily: 'var(--font-display)', fontSize: 18 }}>{resolveError}</div>
       <button
-        onClick={() => { window.location.assign('/'); }}
+        onClick={() => { navigateClient('/'); }}
         style={{ padding: '10px 16px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.06)', color: '#fff', cursor: 'pointer' }}
       >
         Choose Another Jukebox
@@ -1932,6 +1966,7 @@ function App() {
           jukeboxes={availableJukeboxes}
           activeJukeboxSlug={resolvedJukeboxSlug}
           onSwitchJukebox={handleSwitchJukebox}
+          onCreateJukebox={handleCreateJukebox}
         />
 
         <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>

@@ -219,9 +219,14 @@ Deno.serve(async (req)=>{
           });
         }
 
-        if (preUpdateState === 'idle') {
-          // Player was already idle — no video playing, skip the fade and advance queue now.
-          console.log('[player-control] Skip while idle - calling queue_next directly (no fade needed)');
+        const shouldAdvanceServerSide = preUpdateState !== 'playing' && preUpdateState !== 'paused';
+
+        if (shouldAdvanceServerSide) {
+          // Nothing is actively playing (idle/loading/error/unknown), so the player-side
+          // fade callback may never fire. Advance queue immediately on the server.
+          console.log('[player-control] Skip while not actively playing - calling queue_next directly', {
+            pre_update_state: preUpdateState
+          });
           const { data: nextItem, error: nextError } = await supabase.rpc('queue_next', {
             p_player_id: player_id,
             p_expected_media_id: current_media_id || null
@@ -234,7 +239,8 @@ Deno.serve(async (req)=>{
           return new Response(JSON.stringify({
             success: true,
             next_item: nextItem?.[0] || null,
-            action: 'skip_idle'
+            action: 'skip_server_advance',
+            pre_update_state: preUpdateState
           }), {
             status: 200,
             headers: {

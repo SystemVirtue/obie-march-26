@@ -16,7 +16,7 @@ import {
   type PlayerSettings,
   type QueueItem,
   type PlayerStatus,
-} from '@shared/supabase-client';
+} from '../../shared/supabase-client';
 import { Coins } from 'lucide-react';
 import { SearchInterface } from './components/SearchInterface';
 import { SearchResult } from '../../shared/types';

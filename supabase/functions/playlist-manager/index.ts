@@ -2,6 +2,57 @@
 // Handles playlist CRUD operations and media scraping
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
+
+function isLikelyJwt(token: string | null | undefined): token is string {
+  if (!token) return false;
+  return token.split('.').length === 3;
+}
+
+async function callYouTubeScraperWithFallback(params: {
+  supabaseUrl: string;
+  url: string;
+  incomingAuthorization: string | null;
+  serviceRoleToken: string | null;
+  anonJwt: string | null;
+}): Promise<Response> {
+  const { supabaseUrl, url, incomingAuthorization, serviceRoleToken, anonJwt } = params;
+  const endpoint = `${supabaseUrl}/functions/v1/youtube-scraper`;
+
+  const authCandidates: (string | null)[] = [
+    incomingAuthorization,
+    isLikelyJwt(serviceRoleToken) ? `Bearer ${serviceRoleToken}` : null,
+    isLikelyJwt(anonJwt) ? `Bearer ${anonJwt}` : null,
+  ];
+
+  const uniqueCandidates = Array.from(new Set(authCandidates.filter((v): v is string => Boolean(v))));
+
+  // Final fallback with no Authorization header in case target function runs verify_jwt=false.
+  uniqueCandidates.push('');
+
+  let lastResponse: Response | null = null;
+  for (const authHeader of uniqueCandidates) {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (anonJwt) headers['apikey'] = anonJwt;
+    if (authHeader) headers['Authorization'] = authHeader;
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ url }),
+    });
+
+    if (response.status !== 401) {
+      return response;
+    }
+
+    lastResponse = response;
+  }
+
+  return lastResponse ?? new Response(JSON.stringify({ error: 'youtube-scraper auth failed' }), { status: 401 });
+}
+
 Deno.serve(async (req)=>{
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -10,9 +61,11 @@ Deno.serve(async (req)=>{
     });
   }
   try {
-      const functionJwt = Deno.env.get('SERVICE_ROLE_JWT') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+    const serviceRoleToken = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? Deno.env.get('SERVICE_ROLE_JWT');
+    const anonJwt = Deno.env.get('SUPABASE_ANON_KEY');
+    const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
     // Create Supabase client (uses service role for admin operations)
-    const supabase = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '', {
+    const supabase = createClient(supabaseUrl, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '', {
       auth: {
         persistSession: false,
         autoRefreshToken: false
@@ -249,19 +302,23 @@ Deno.serve(async (req)=>{
         });
       }
       // Call youtube-scraper function
-      const scrapeResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/youtube-scraper`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-            'Authorization': `Bearer ${functionJwt}`
-        },
-        body: JSON.stringify({
-          url
-        })
+      const scrapeResponse = await callYouTubeScraperWithFallback({
+        supabaseUrl,
+        url,
+        incomingAuthorization: req.headers.get('Authorization'),
+        serviceRoleToken,
+        anonJwt,
       });
       if (!scrapeResponse.ok) {
-        const errorData = await scrapeResponse.json();
-        throw new Error(errorData.error || 'YouTube scraper failed');
+        const errorText = await scrapeResponse.text();
+        let errorMessage = 'YouTube scraper failed';
+        try {
+          const errorData = JSON.parse(errorText);
+          errorMessage = errorData.error || errorData.message || errorMessage;
+        } catch {
+          errorMessage = errorText || errorMessage;
+        }
+        throw new Error(errorMessage);
       }
       const { videos } = await scrapeResponse.json();
       if (!videos || videos.length === 0) {
@@ -277,9 +334,12 @@ Deno.serve(async (req)=>{
       }
       // Insert media items — canonical deduplication via create_or_get_media_item RPC
       const mediaItems = [];
+      let mediaInsertErrors = 0;
+      let firstMediaInsertError: string | null = null;
       for (const video of videos){
-        const { data: mediaId } = await supabase.rpc('create_or_get_media_item', {
-          p_source_id:   video.id,
+        const sourceId = `youtube:${video.id}`;
+        const { data: mediaId, error: mediaInsertError } = await supabase.rpc('create_or_get_media_item', {
+          p_source_id:   sourceId,
           p_source_type: 'youtube',
           p_title:       video.title,
           p_artist:      video.artist || null,
@@ -288,10 +348,19 @@ Deno.serve(async (req)=>{
           p_thumbnail:   video.thumbnail || null,
           p_metadata:    {},
         });
+        if (mediaInsertError) {
+          mediaInsertErrors++;
+          if (!firstMediaInsertError) firstMediaInsertError = mediaInsertError.message || JSON.stringify(mediaInsertError);
+          continue;
+        }
         if (mediaId) {
           const { data: fullItem } = await supabase.from('media_items').select('*').eq('id', mediaId).maybeSingle();
           if (fullItem) mediaItems.push(fullItem);
         }
+      }
+
+      if (mediaItems.length === 0) {
+        throw new Error(firstMediaInsertError || `Scraped ${videos.length} videos but failed to create media rows`);
       }
       // If playlist_id provided, add items to playlist
       if (playlist_id) {
@@ -311,6 +380,7 @@ Deno.serve(async (req)=>{
       return new Response(JSON.stringify({
         media_items: mediaItems,
         count: mediaItems.length,
+        media_insert_errors: mediaInsertErrors,
         playlist_id: playlist_id || null
       }), {
         status: 200,
