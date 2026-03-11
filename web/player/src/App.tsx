@@ -16,25 +16,10 @@ import {
   type MediaItem,
   type PlayerSettings,
 } from '@shared/supabase-client';
+import { normalizeJukeboxSlug, getPathJukeboxSlug } from '@shared/jukebox-utils';
 
 const DEFAULT_PLAYER_ID = import.meta.env.VITE_PLAYER_ID || '00000000-0000-0000-0000-000000000001';
 const PLAYER_JUKEBOX_STORAGE_KEY = 'obie_player_jukebox_slug';
-
-function normalizeJukeboxSlug(raw: string | null | undefined): string {
-  return (raw || '')
-    .trim()
-    .toUpperCase()
-    .replace(/\s+/g, '_')
-    .replace(/[^A-Z0-9_-]/g, '')
-    .replace(/_+/g, '_')
-    .replace(/-+/g, '-')
-    .replace(/^[_-]+|[_-]+$/g, '');
-}
-
-function getPathJukeboxSlug(): string {
-  const firstPathPart = window.location.pathname.split('/').filter(Boolean)[0] || '';
-  return normalizeJukeboxSlug(firstPathPart);
-}
 
 // ── YTM Desktop Companion ────────────────────────────────────────────────────
 const YTM_BASE = 'http://localhost:9863';
@@ -569,8 +554,10 @@ function App() {
 
     if (isSlavePlayer) return;
 
-    if (event.data === 100) {
-      // Video is gone — remove it from the queue and all playlists so it never comes up again.
+    // Error codes that mean the video can never play (deleted, private, or embedding blocked).
+    // Remove from queue and all playlists so they never come up again.
+    const UNPLAYABLE_ERROR_CODES = [100, 101, 150];
+    if (UNPLAYABLE_ERROR_CODES.includes(event.data)) {
       const unavailableMediaId = currentMediaIdRef.current;
       if (unavailableMediaId) {
         try {
@@ -594,9 +581,9 @@ function App() {
             player_id: PLAYER_ID,
             media_item_id: unavailableMediaId,
           });
-          console.log('[Player] Removed unavailable video from queue and playlists');
+          console.log(`[Player] Removed unplayable video (error ${event.data}) from queue and playlists`);
         } catch (removeErr) {
-          console.error('[Player] Failed to remove unavailable video:', removeErr);
+          console.error('[Player] Failed to remove unplayable video:', removeErr);
         }
       }
     }
@@ -606,6 +593,12 @@ function App() {
     // fires just before the error, causing the server status to land in 'paused'
     // (via an async race between reportStatus calls), which cancels the timeout
     // and leaves the player stuck indefinitely.
+    //
+    // Also clear isEndingRef before calling reportEndedAndNext. An errored video
+    // will never reach PLAYING state (which is the normal isEndingRef clear point),
+    // so without this reset the guard stays true for the full 10-second fallback
+    // window and silently drops the skip, leaving the player stuck in Loading.
+    isEndingRef.current = false;
     console.error(`[Player] Skipping video due to playback error (${event.data})`);
     reportEndedAndNext(false);
   }, [isSlavePlayer, reportEndedAndNext]);

@@ -53,28 +53,13 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { normalizeJukeboxSlug, getPathJukeboxSlug } from '@shared/jukebox-utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONSTANTS
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PLAYER_ID = '00000000-0000-0000-0000-000000000001';
-
-function normalizeJukeboxSlug(raw: string | null | undefined): string {
-  return (raw || '')
-    .trim()
-    .toUpperCase()
-    .replace(/\s+/g, '_')
-    .replace(/[^A-Z0-9_-]/g, '')
-    .replace(/_+/g, '_')
-    .replace(/-+/g, '-')
-    .replace(/^[_-]+|[_-]+$/g, '');
-}
-
-function getPathJukeboxSlug(): string {
-  const firstPathPart = window.location.pathname.split('/').filter(Boolean)[0] || '';
-  return normalizeJukeboxSlug(firstPathPart);
-}
 
 function navigateClient(path: string, replace: boolean = false): void {
   const target = path.startsWith('/') ? path : `/${path}`;
