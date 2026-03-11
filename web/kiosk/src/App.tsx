@@ -50,6 +50,8 @@ function App() {
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [includeKaraoke, setIncludeKaraoke] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
+  const [showInsertCoinMsg, setShowInsertCoinMsg] = useState(false);
+  const insertCoinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Serial connection refs
   const serialPortRef = useRef<any>(null);
@@ -571,13 +573,24 @@ function App() {
             mode={settings?.freeplay ? "FREEPLAY" : "PAID"}
             credits={session?.credits ?? 0}
             onInsufficientCredits={() => {
-              // TODO: show a user-facing insufficient credits message
+              if (insertCoinTimerRef.current) clearTimeout(insertCoinTimerRef.current);
+              setShowInsertCoinMsg(true);
+              insertCoinTimerRef.current = setTimeout(() => setShowInsertCoinMsg(false), 3000);
             }}
             includeKaraoke={includeKaraoke}
             onIncludeKaraokeChange={setIncludeKaraoke}
             bypassCreditCheck={settings?.freeplay}
             cloudflareEnabled={false}
           />
+
+          {/* Insufficient credits popover */}
+          {showInsertCoinMsg && (
+            <div className="fixed inset-0 flex items-center justify-center z-50 pointer-events-none">
+              <div className="bg-black/90 border border-yellow-500 text-yellow-400 text-2xl font-bold px-10 py-6 rounded-2xl shadow-2xl animate-pulse">
+                💰 Please insert coin to make requests
+              </div>
+            </div>
+          )}
 
           {/* Bottom marquee of upcoming songs */}
           <QueueMarquee queue={queue} />
