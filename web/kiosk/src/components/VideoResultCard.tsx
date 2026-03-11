@@ -76,6 +76,11 @@ export const VideoResultCard: React.FC<VideoResultCardProps> = ({
           {cleanDisplayText(video.title)}
         </h3>
         <p className="text-slate-400 text-xs">{cleanDisplayText(video.artist || video.channelTitle)}</p>
+        {video.source === 'cloudflare' && (
+          <span className="inline-block mt-1 px-2 py-0.5 text-xs font-bold rounded bg-orange-500/80 text-white">
+            📁 Library
+          </span>
+        )}
       </div>
     </div>
   );

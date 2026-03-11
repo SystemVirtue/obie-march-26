@@ -17,25 +17,12 @@ import {
   type PlayerSettings,
 } from '@shared/supabase-client';
 import { normalizeJukeboxSlug, getPathJukeboxSlug } from '@shared/jukebox-utils';
+import { YTM_BASE, YTM_APP_ID, getYtmToken, saveYtmToken, ytmFetch } from './utils/ytm';
+import { extractYouTubeId, escapeHtml } from './utils/youtube';
+import { ResolvingScreen, JukeboxNamePrompt, StatusOverlays } from './components/IdentityScreens';
 
 const DEFAULT_PLAYER_ID = import.meta.env.VITE_PLAYER_ID || '00000000-0000-0000-0000-000000000001';
 const PLAYER_JUKEBOX_STORAGE_KEY = 'obie_player_jukebox_slug';
-
-// ── YTM Desktop Companion ────────────────────────────────────────────────────
-const YTM_BASE = 'http://localhost:9863';
-const YTM_APP_ID = 'obie-jukebox';
-const getYtmToken = () => localStorage.getItem('ytm_auth_token');
-const saveYtmToken = (token: string) => localStorage.setItem('ytm_auth_token', token);
-
-async function ytmFetch(path: string, init: RequestInit = {}): Promise<Response> {
-  const token = getYtmToken();
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token) headers['Authorization'] = token; // YTM hashes the raw token — no "Bearer" prefix
-  return fetch(`${YTM_BASE}${path}`, {
-    ...init,
-    headers: { ...headers, ...(init.headers as Record<string, string> ?? {}) },
-  });
-}
 
 // YouTube Player API types
 declare global {
@@ -264,12 +251,6 @@ function App() {
       }, stepDuration);
     });
   }, []);
-
-  // Extract YouTube video ID from URL
-  const extractYouTubeId = (url: string): string | null => {
-    const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\s]+)/);
-    return match ? match[1] : null;
-  };
 
   // Report playback events to server (disabled for slave players)
   const reportStatus = useCallback(async (state: PlayerStatus['state'], progress?: number) => {
@@ -1041,11 +1022,6 @@ function App() {
     lyricsDataRef.current = null;
   }
 
-  // Escape HTML content to avoid XSS when inserting lyrics
-  function escapeHtml(s: string) {
-    return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
-  }
-
   // Start lyrics when karaoke mode enabled and media available
   useEffect(() => {
     const karaokeOn = !!settings?.karaoke_mode;
@@ -1456,39 +1432,9 @@ function App() {
     }
   }, [status?.state, localPlaybackUrl]);
 
-  if (!identityReady) {
-    return (
-      <div className="relative w-screen h-screen bg-black flex items-center justify-center text-white">
-        <div className="text-center">
-          <div className="text-2xl font-semibold mb-2">Resolving Jukebox...</div>
-          <div className="text-gray-400">Please wait.</div>
-        </div>
-      </div>
-    );
-  }
+  if (!identityReady) return <ResolvingScreen />;
 
-  if (!activePlayerId) {
-    return (
-      <div className="relative w-screen h-screen bg-black flex items-center justify-center text-white">
-        <div className="text-center max-w-md px-6">
-          <div className="text-3xl font-bold mb-4">Jukebox Name Required</div>
-          <div className="text-gray-300 mb-6">Open this page with a path like /OBIE, or set one now.</div>
-          <button
-            onClick={() => {
-              const entered = window.prompt('Enter Jukebox Name (e.g. OBIE):');
-              const slug = normalizeJukeboxSlug(entered);
-              if (!slug) return;
-              localStorage.setItem(PLAYER_JUKEBOX_STORAGE_KEY, slug);
-              window.location.assign(`/${slug}`);
-            }}
-            className="px-5 py-3 rounded-lg bg-white text-black font-semibold hover:bg-gray-200"
-          >
-            Enter Jukebox Name
-          </button>
-        </div>
-      </div>
-    );
-  }
+  if (!activePlayerId) return <JukeboxNamePrompt />;
 
   return (
     <div className="relative w-screen h-screen bg-black">
@@ -1716,47 +1662,8 @@ function App() {
       </div>
       */}
 
-      {/* Idle State */}
-      {status?.state === 'idle' && !currentMedia && (
-        <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-gray-900 to-black">
-          <div className="text-center">
-            <div className="text-6xl font-bold text-white mb-4">Obie Jukebox</div>
-            <div className="text-xl text-gray-400">Waiting for next song...</div>
-            <div className="mt-8">
-              <div className="inline-block w-12 h-12 border-4 border-white border-t-transparent rounded-full animate-spin"></div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Loading State */}
-      {(status?.state === 'loading' && !playerReady) && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-90">
-          <div className="text-center">
-            <div className="inline-block w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-            <div className="text-2xl text-white">Loading...</div>
-          </div>
-        </div>
-      )}
-
-      {/* Error State */}
-      {status?.state === 'error' && (
-        <div className="absolute inset-0 flex items-center justify-center bg-red-900 bg-opacity-50">
-          <div className="text-center">
-            <div className="text-4xl font-bold text-white mb-4">⚠️ Playback Error</div>
-            <div className="text-lg text-gray-200">Check logs for details</div>
-          </div>
-        </div>
-      )}
-
-      {/* Slave Player Debug Overlay */}
-      {isSlavePlayer && (
-        <div className="absolute bottom-0 left-0 right-0 flex justify-center items-end pb-4 pointer-events-none">
-          <div className="text-5xl font-bold text-white opacity-50" style={{ fontFamily: 'Arial, sans-serif' }}>
-            SLAVE
-          </div>
-        </div>
-      )}
+      <StatusOverlays state={status?.state} playerReady={playerReady}
+        currentMedia={currentMedia} isSlavePlayer={isSlavePlayer} />
     </div>
   );
 }

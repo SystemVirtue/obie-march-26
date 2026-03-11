@@ -54,7 +54,6 @@ function App() {
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [includeKaraoke, setIncludeKaraoke] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
-  const [searchSource, setSearchSource] = useState<'youtube' | 'cloudflare'>('youtube');
 
   // Serial connection refs
   const serialPortRef = useRef<any>(null);
@@ -272,28 +271,28 @@ function App() {
       return () => clearTimeout(timer);
     }, [searchQuery]);
 
-    // Perform search — routes through kiosk-handler for consistent single entry point
+    // Perform search — runs YouTube and Cloudflare R2 in parallel and merges results.
+    // R2 (local library) results appear first; YouTube results follow.
     const performSearch = async (query: string) => {
       try {
         setIsSearching(true);
         setSearchResults([]);
 
-        if (searchSource === 'cloudflare') {
-          // Search R2 files via kiosk-handler
-          const result = await callKioskHandler({ action: 'search_r2', query }) as { videos?: any[] };
-          const videos = result?.videos || [];
-          setSearchResults(videos);
-        } else {
-          // YouTube search
-          let searchQuery = query;
-          if (includeKaraoke) {
-            searchQuery = query + ' Lyric Video Karaoke';
-          }
-          const result = await callKioskHandler({ action: 'search', query: searchQuery }) as { videos?: any[] };
-          const videos = result?.videos || [];
-          setSearchResults(videos);
+        let ytQuery = query;
+        if (includeKaraoke) {
+          ytQuery = query + ' Lyric Video Karaoke';
         }
 
+        const [ytSettled, r2Settled] = await Promise.allSettled([
+          callKioskHandler({ action: 'search', query: ytQuery }) as Promise<{ videos?: any[] }>,
+          callKioskHandler({ action: 'search_r2', query }) as Promise<{ videos?: any[] }>,
+        ]);
+
+        const ytVideos = ytSettled.status === 'fulfilled' ? (ytSettled.value?.videos || []) : [];
+        const r2Videos = r2Settled.status === 'fulfilled' ? (r2Settled.value?.videos || []) : [];
+
+        // Cloudflare library results first, then YouTube results
+        setSearchResults([...r2Videos, ...ytVideos]);
         setShowSearchResults(true);
         setShowKeyboard(false);
       } catch (error) {
@@ -611,9 +610,7 @@ function App() {
             includeKaraoke={includeKaraoke}
             onIncludeKaraokeChange={setIncludeKaraoke}
             bypassCreditCheck={settings?.freeplay}
-            searchSource={searchSource}
-            onSearchSourceChange={setSearchSource}
-            cloudflareEnabled={settings?.cloudflare_enabled ?? false}
+            cloudflareEnabled={false}
           />
 
           {/* Bottom marquee of upcoming songs */}
