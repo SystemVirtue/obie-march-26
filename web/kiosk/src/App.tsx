@@ -23,6 +23,8 @@ import { SearchResult } from '../../shared/types';
 import { BackgroundPlaylist, DEFAULT_BACKGROUND_ASSETS } from './components/BackgroundPlaylist';
 import { cleanDisplayText } from '../../shared/media-utils';
 import { normalizeJukeboxSlug, getPathJukeboxSlug } from '../../shared/jukebox-utils';
+import { ConfirmationDialog } from './components/ConfirmationDialog';
+import { QueueMarquee } from './components/QueueMarquee';
 
 const DEFAULT_PLAYER_ID = import.meta.env.VITE_PLAYER_ID || '00000000-0000-0000-0000-000000000001';
 const KIOSK_JUKEBOX_STORAGE_KEY = 'obie_kiosk_jukebox_slug';
@@ -37,13 +39,7 @@ function App() {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const PLAYER_ID = activePlayerId || DEFAULT_PLAYER_ID;
 
-  // Log queue state changes
-  useEffect(() => {
-    console.log('[Queue State] Queue state updated to:', queue.length, 'items');
-    if (queue.length > 5) {
-      console.warn('[Queue State] ⚠️ WARNING: Queue has more than 5 items!', queue.length);
-    }
-  }, [queue]);
+
   const [playerStatus, setPlayerStatus] = useState<PlayerStatus | null>(null);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [selectedResult, setSelectedResult] = useState<SearchResult | null>(null);
@@ -217,59 +213,30 @@ function App() {
     useEffect(() => {
       if (!identityReady || !activePlayerId) return;
       const sub = subscribeToQueue(PLAYER_ID, (items) => {
-        console.log('[Queue Callback] ===== START QUEUE PROCESSING =====');
-        console.log('[Queue Callback] Received items from subscription:', items.length);
-
         // Use ref to get latest playerStatus (avoids stale closure)
         const currentPlayerStatus = playerStatusRef.current;
         const currentMediaId = currentPlayerStatus?.current_media_id || currentPlayerStatus?.current_media?.id || null;
-        console.log('[Queue Callback] Current media ID:', currentMediaId);
-        console.log('[Queue Callback] PlayerStatus exists:', !!currentPlayerStatus);
 
         // Filter to only upcoming items (not currently playing)
         let upcomingItems = items;
         if (currentMediaId) {
-          upcomingItems = items.filter(item => {
-            const matches = item.media_item_id === currentMediaId;
-            if (matches) console.log('[Queue Callback] Filtering out current item:', item.id);
-            return !matches;
-          });
+          upcomingItems = items.filter(item => item.media_item_id !== currentMediaId);
         }
-        console.log('[Queue Callback] After filtering current item:', upcomingItems.length);
 
         // Separate priority and normal items
         const priorityItems = upcomingItems.filter(item => item.type === 'priority');
         const normalItems = upcomingItems.filter(item => item.type === 'normal');
-        console.log('[Queue Callback] Priority items:', priorityItems.length, 'Normal items:', normalItems.length);
 
         // Limit to max 5 total items: all priority items + remaining slots filled with normal items
         const maxMarqueeItems = 5;
         const prioritySliced = priorityItems.slice(0, maxMarqueeItems);
         const remainingSlots = Math.max(0, maxMarqueeItems - prioritySliced.length);
         const normalSliced = normalItems.slice(0, remainingSlots);
-        const displayItems = [...prioritySliced, ...normalSliced];
 
-        console.log('[Queue Callback] Priority sliced:', prioritySliced.length, 'Normal sliced:', normalSliced.length);
-        console.log('[Queue Callback] After limiting to 5 items:', displayItems.length);
-        console.log('[Queue Callback] Display item IDs:', displayItems.map(item => item.id));
-        console.log('[Queue Callback] ===== END QUEUE PROCESSING =====');
-
-        setQueue(displayItems);
+        setQueue([...prioritySliced, ...normalSliced]);
       });
       return () => sub.unsubscribe();
     }, [identityReady, activePlayerId, PLAYER_ID]);
-
-    // Debounced search
-    useEffect(() => {
-      const timer = setTimeout(() => {
-        if (searchQuery.length >= 2) {
-          // perform a lightweight search preview (do not auto-open results)
-          // We'll only perform a search when user presses SEARCH on the keyboard
-        }
-      }, 500);
-
-      return () => clearTimeout(timer);
-    }, [searchQuery]);
 
     // Perform search — runs YouTube and Cloudflare R2 in parallel and merges results.
     // R2 (local library) results appear first; YouTube results follow.
@@ -604,8 +571,7 @@ function App() {
             mode={settings?.freeplay ? "FREEPLAY" : "PAID"}
             credits={session?.credits ?? 0}
             onInsufficientCredits={() => {
-              // Handle insufficient credits - could show a message
-              console.log('Insufficient credits');
+              // TODO: show a user-facing insufficient credits message
             }}
             includeKaraoke={includeKaraoke}
             onIncludeKaraokeChange={setIncludeKaraoke}
@@ -614,66 +580,17 @@ function App() {
           />
 
           {/* Bottom marquee of upcoming songs */}
-          <div className="fixed bottom-0 left-0 right-0 bg-black/90 border-t border-yellow-400/50 py-3 backdrop-blur-sm">
-            <div className="mx-auto max-w-full overflow-hidden">
-              <div className="marquee">
-                <div className="marquee-track flex items-center whitespace-nowrap gap-8 text-yellow-400 font-semibold text-sm drop-shadow-lg">
-                  {queue.length > 0 ? (
-                    <>
-                      {queue.map((q, index) => (
-                        <div key={`${q.id}-1`} className="px-6 flex items-center gap-2">
-                          {q.type === 'priority' && <span className="text-red-400 drop-shadow-lg">★</span>}
-                          <span>{cleanDisplayText((q.media_item as any)?.title) || 'Untitled'} - <span className="text-gray-300 drop-shadow-lg">{cleanDisplayText((q.media_item as any)?.artist) || 'Unknown'}</span></span>
-                          {q.type === 'priority' && index === queue.filter(item => item.type === 'priority').length - 1 && queue.some(item => item.type === 'normal') && <span className="text-gray-400 mx-4 drop-shadow-lg">•</span>}
-                        </div>
-                      ))}
-                      {/* Duplicate content for seamless loop */}
-                      {queue.map((q, index) => (
-                        <div key={`${q.id}-2`} className="px-6 flex items-center gap-2">
-                          {q.type === 'priority' && <span className="text-red-400 drop-shadow-lg">★</span>}
-                          <span>{cleanDisplayText((q.media_item as any)?.title) || 'Untitled'} - <span className="text-gray-300 drop-shadow-lg">{cleanDisplayText((q.media_item as any)?.artist) || 'Unknown'}</span></span>
-                          {q.type === 'priority' && index === queue.filter(item => item.type === 'priority').length - 1 && queue.some(item => item.type === 'normal') && <span className="text-gray-400 mx-4 drop-shadow-lg">•</span>}
-                        </div>
-                      ))}
-                    </>
-                  ) : (
-                    <div className="px-6 drop-shadow-lg">Coming Up: No items</div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
+          <QueueMarquee queue={queue} />
 
           {/* Confirmation Dialog */}
           {showConfirm && selectedResult && (
-              <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60">
-                <div className="bg-yellow-50 text-black rounded-lg p-6 w-[520px]">
-                  <div className="text-lg font-bold mb-2">Add song to Playlist?</div>
-                  <div className="text-sm text-gray-700 mb-4">Confirm adding this song to your playlist for playback.</div>
-                  <div className="flex gap-4 items-center">
-                    {selectedResult.thumbnail ? (
-                      <img src={selectedResult.thumbnail} className="w-20 h-20 object-cover rounded" />
-                    ) : (
-                      <div className="w-20 h-20 rounded bg-black flex-shrink-0" />
-                    )}
-                    <div>
-                      <div className="font-semibold">{cleanDisplayText(selectedResult.title)}</div>
-                      <div className="text-sm text-gray-700">{cleanDisplayText(selectedResult.artist)}</div>
-                      <div className="text-sm text-gray-700 mt-2">{settings?.freeplay ? 'Cost: FREE' : 'Cost: 1 Credit'}</div>
-                    </div>
-                  </div>
-                  <div className="flex justify-end gap-3 mt-6">
-                    <button onClick={() => setShowConfirm(false)} className="px-4 py-2 bg-red-100 rounded">No</button>
-                    <button
-                      onClick={handleConfirmAdd}
-                      disabled={isConfirming}
-                      className={`px-4 py-2 rounded ${isConfirming ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'} text-white`}
-                    >
-                      {isConfirming ? 'Adding...' : 'Yes'}
-                    </button>
-                  </div>
-                </div>
-              </div>
+            <ConfirmationDialog
+              selectedResult={selectedResult}
+              freeplay={!!settings?.freeplay}
+              isConfirming={isConfirming}
+              onConfirm={handleConfirmAdd}
+              onCancel={() => setShowConfirm(false)}
+            />
           )}
 
           {/* Insert coin dev button (moved to avoid conflict with search button) */}
