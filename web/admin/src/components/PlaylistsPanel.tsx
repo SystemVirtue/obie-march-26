@@ -25,6 +25,9 @@ export function PlaylistsPanel({ view, playerId }: { view: ViewId; playerId: str
   const [channelId, setChannelId] = useState('');
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<{ text: string; ok: boolean } | null>(null);
+  const [renamingPlaylist, setRenamingPlaylist] = useState<Playlist | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [renaming, setRenaming] = useState(false);
 
   const loadPlaylists = useCallback(async () => {
     try { const data = await getPlaylists(playerId); setPlaylists(data as typeof playlists); }
@@ -47,6 +50,17 @@ export function PlaylistsPanel({ view, playerId }: { view: ViewId; playerId: str
       await loadPlaylists();
     } catch (e) { console.error(e); setMsg({ text: '❌ Failed to load playlist', ok: false }); }
     finally { setLoadingId(null); isLoadingPlaylistRef.current = false; }
+  };
+
+  const handleRename = async () => {
+    if (!renamingPlaylist || !renameValue.trim() || renameValue.trim() === renamingPlaylist.name) { setRenamingPlaylist(null); return; }
+    setRenaming(true);
+    try {
+      await callPlaylistManager({ action: 'update', playlist_id: renamingPlaylist.id, name: renameValue.trim() });
+      setMsg({ text: `✓ Renamed to "${renameValue.trim()}"`, ok: true });
+      await loadPlaylists();
+    } catch (e) { console.error(e); setMsg({ text: '❌ Failed to rename playlist', ok: false }); }
+    finally { setRenaming(false); setRenamingPlaylist(null); }
   };
 
   const handleDelete = async (playlist: Playlist) => {
@@ -200,6 +214,7 @@ export function PlaylistsPanel({ view, playerId }: { view: ViewId; playerId: str
                   <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 2 }}>{(playlist.item_count ?? 0).toLocaleString()} songs</div>
                 </div>
                 <div style={{ display: 'flex', gap: 6, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                  <Btn variant="ghost" onClick={() => { setRenamingPlaylist(playlist); setRenameValue(playlist.name); }}>✏️ Edit Name</Btn>
                   <Btn variant="accent" onClick={e => handleLoad(e, playlist)} disabled={loadingId !== null}>
                     {loadingId === playlist.id ? <Spinner size={12} /> : '▶ Load Queue'}
                   </Btn>
@@ -226,6 +241,30 @@ export function PlaylistsPanel({ view, playerId }: { view: ViewId; playerId: str
           );
         })}
       </div>
+
+      {/* Rename Modal */}
+      {renamingPlaylist && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+          onClick={() => !renaming && setRenamingPlaylist(null)}>
+          <div style={{ background: '#1a1a1a', border: '1px solid var(--border)', borderRadius: 16, padding: 24, width: 400, maxWidth: '90vw' }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700, color: '#fff', marginBottom: 16 }}>Edit Playlist Name</div>
+            <input
+              autoFocus
+              value={renameValue}
+              onChange={e => setRenameValue(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleRename(); if (e.key === 'Escape') setRenamingPlaylist(null); }}
+              style={{ width: '100%', padding: '10px 14px', borderRadius: 10, background: '#0d0d0d', border: '1px solid rgba(255,255,255,0.15)', color: '#fff', fontFamily: 'var(--font-display)', fontSize: 14, outline: 'none', boxSizing: 'border-box' }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
+              <Btn variant="ghost" onClick={() => setRenamingPlaylist(null)} disabled={renaming}>Cancel</Btn>
+              <Btn variant="accent" onClick={handleRename} disabled={renaming || !renameValue.trim()}>
+                {renaming ? <Spinner size={12} /> : 'Apply'}
+              </Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
