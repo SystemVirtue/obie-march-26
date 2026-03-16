@@ -3,6 +3,7 @@
 import { corsHeaders } from '../_shared/cors.ts';
 import { createServiceClient } from '../_shared/supabase-client.ts';
 import { callYouTubeScraperWithFallback } from '../_shared/youtube-scraper-caller.ts';
+import { validateYouTubeUrl } from '../_shared/validation.ts';
 
 Deno.serve(async (req)=>{
   // Handle CORS preflight
@@ -128,18 +129,10 @@ Deno.serve(async (req)=>{
 
       // If URL provided, scrape it first to get/create media item
       if (url && !mediaItemId) {
-        // Validate YouTube URL format
-        try {
-          const parsed = new URL(url);
-          const allowedHosts = ['www.youtube.com', 'youtube.com', 'youtu.be', 'music.youtube.com'];
-          if (!allowedHosts.includes(parsed.hostname)) {
-            return new Response(JSON.stringify({ error: 'Invalid YouTube URL' }), {
-              status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            });
-          }
-        } catch {
-          return new Response(JSON.stringify({ error: 'Invalid URL format' }), {
-            status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        if (!validateYouTubeUrl(url)) {
+          return new Response(JSON.stringify({ error: 'Invalid YouTube URL' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
         }
         try {

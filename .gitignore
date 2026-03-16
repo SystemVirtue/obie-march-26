@@ -54,6 +54,7 @@ test-results/
 # Temporary files
 *.tmp
 *.temp
+import-log.txt
 
 # Audit output
 audit-playlists-vs-cloudflare.txt
