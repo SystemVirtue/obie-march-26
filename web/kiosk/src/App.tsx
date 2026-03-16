@@ -1,46 +1,41 @@
 // Obie Kiosk - Public Search & Request Interface
 // Server-driven credit system and priority queue
 
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import {
-  subscribeToKioskSession,
-  subscribeToPlayerSettings,
-  subscribeToQueue,
-  subscribeToPlayerStatus,
-  subscribeToTable,
   callKioskHandler,
-  getTotalCredits,
-  resolveJukeboxSlug,
-  supabase,
-  type KioskSession,
-  type PlayerSettings,
-  type QueueItem,
-  type PlayerStatus,
 } from '../../shared/supabase-client';
 import { Coins } from 'lucide-react';
 import { SearchInterface } from './components/SearchInterface';
 import { SearchResult } from '../../shared/types';
 import { BackgroundPlaylist, DEFAULT_BACKGROUND_ASSETS } from './components/BackgroundPlaylist';
 import { cleanDisplayText } from '../../shared/media-utils';
-import { normalizeJukeboxSlug, getPathJukeboxSlug } from '../../shared/jukebox-utils';
+import { normalizeJukeboxSlug } from '../../shared/jukebox-utils';
 import { ConfirmationDialog } from './components/ConfirmationDialog';
 import { QueueMarquee } from './components/QueueMarquee';
+import { useKioskSession } from './hooks/useKioskSession';
+import { useCoinAcceptor } from './hooks/useCoinAcceptor';
 
 const DEFAULT_PLAYER_ID = import.meta.env.VITE_PLAYER_ID || '00000000-0000-0000-0000-000000000001';
 const KIOSK_JUKEBOX_STORAGE_KEY = 'obie_kiosk_jukebox_slug';
 
 function App() {
-  const [activePlayerId, setActivePlayerId] = useState<string | null>(null);
-  const [activeJukeboxSlug, setActiveJukeboxSlug] = useState<string | null>(null);
-  const [identityReady, setIdentityReady] = useState(false);
-  const [session, setSession] = useState<KioskSession | null>(null);
-  const [settings, setSettings] = useState<PlayerSettings | null>(null);
+  const {
+    activePlayerId,
+    activeJukeboxSlug,
+    identityReady,
+    playerId: PLAYER_ID,
+    session,
+    settings,
+    playerStatus,
+    queue,
+    setSession,
+  } = useKioskSession({
+    defaultPlayerId: DEFAULT_PLAYER_ID,
+    storageKey: KIOSK_JUKEBOX_STORAGE_KEY,
+  });
+
   const [searchQuery, setSearchQuery] = useState('');
-  const [queue, setQueue] = useState<QueueItem[]>([]);
-  const PLAYER_ID = activePlayerId || DEFAULT_PLAYER_ID;
-
-
-  const [playerStatus, setPlayerStatus] = useState<PlayerStatus | null>(null);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [selectedResult, setSelectedResult] = useState<SearchResult | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
@@ -53,192 +48,15 @@ function App() {
   const [showInsertCoinMsg, setShowInsertCoinMsg] = useState(false);
   const insertCoinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Serial connection refs
-  const serialPortRef = useRef<any>(null);
-  const serialReaderRef = useRef<any>(null);
-  // These refs avoid stale closures in the async serial reader loop
-  const sessionRef = useRef<KioskSession | null>(null);
-  const settingsRef = useRef<PlayerSettings | null>(null);
-  const playerStatusRef = useRef<PlayerStatus | null>(null);
-
-    // Resolve player identity from URL slug, remembered slug, or prompt.
-    useEffect(() => {
-      let cancelled = false;
-
-      const resolveIdentity = async () => {
-        try {
-          const pathSlug = getPathJukeboxSlug();
-          const rememberedSlug = normalizeJukeboxSlug(localStorage.getItem(KIOSK_JUKEBOX_STORAGE_KEY));
-          let candidateSlug = pathSlug || rememberedSlug;
-
-          if (!candidateSlug) {
-            const entered = window.prompt('Enter Jukebox Name (e.g. OBIE):');
-            candidateSlug = normalizeJukeboxSlug(entered);
-          }
-
-          if (!candidateSlug) {
-            return;
-          }
-
-          const resolved = await resolveJukeboxSlug(candidateSlug);
-          if (!resolved) {
-            alert(`Jukebox "${candidateSlug}" was not found.`);
-            localStorage.removeItem(KIOSK_JUKEBOX_STORAGE_KEY);
-            return;
-          }
-
-          if (!cancelled) {
-            setActivePlayerId(resolved.player_id);
-            setActiveJukeboxSlug(resolved.jukebox_slug);
-          }
-
-          localStorage.setItem(KIOSK_JUKEBOX_STORAGE_KEY, resolved.jukebox_slug);
-          if (pathSlug !== resolved.jukebox_slug) {
-            window.history.replaceState({}, '', `/${resolved.jukebox_slug}`);
-          }
-        } catch (error) {
-          console.error('Failed to resolve kiosk jukebox identity:', error);
-        } finally {
-          if (!cancelled) {
-            setIdentityReady(true);
-          }
-        }
-      };
-
-      resolveIdentity();
-      return () => {
-        cancelled = true;
-      };
-    }, []);
-
-    // Initialize session
-    useEffect(() => {
-      if (!identityReady || !activePlayerId) return;
-
-      const initSession = async () => {
-        try {
-          const { session: newSession } = await callKioskHandler({
-            player_id: PLAYER_ID,
-            action: 'init',
-          });
-          setSession(newSession);
-          setShowSearchModal(true); // Open search modal after session init
-        } catch (error) {
-          console.error('Failed to initialize session:', error);
-        }
-      };
-
-      initSession();
-    }, [identityReady, activePlayerId, PLAYER_ID]);
-
-    // Keep refs in sync so the async serial reader always has current session + settings
-    useEffect(() => { sessionRef.current = session; }, [session]);
-    useEffect(() => { settingsRef.current = settings; }, [settings]);
-    useEffect(() => { playerStatusRef.current = playerStatus; }, [playerStatus]);
-
-    // Subscribe to session updates (for credits) and to any kiosk_sessions changes for this player
-    // Replace polling with realtime subscription: when any kiosk_sessions row for the player
-    // changes, re-fetch the aggregated total credits and update local session state.
-    useEffect(() => {
-      if (!identityReady || !activePlayerId) return;
-      if (!session) return;
-
-      const sub = subscribeToKioskSession(session.session_id, (s) => {
-        setSession(s);
-      });
-
-      const tableSub = subscribeToTable('kiosk_sessions', { column: 'player_id', value: PLAYER_ID }, async () => {
-        try {
-          const total = await getTotalCredits(PLAYER_ID);
-          setSession(prev => prev ? { ...prev, credits: total } : prev);
-        } catch (err) {
-          console.error('Failed to fetch total credits after realtime event:', err);
-        }
-      });
-
-      return () => {
-        sub.unsubscribe();
-        tableSub.unsubscribe();
-      };
-    }, [identityReady, activePlayerId, PLAYER_ID, session?.session_id]);
-
-    // Subscribe to player settings
-    useEffect(() => {
-      if (!identityReady || !activePlayerId) return;
-      const sub = subscribeToPlayerSettings(PLAYER_ID, setSettings);
-      return () => sub.unsubscribe();
-    }, [identityReady, activePlayerId, PLAYER_ID]);
-
-    // Coin acceptor: auto-connect when enabled, disconnect when disabled
-    useEffect(() => {
-      if (!settings?.kiosk_coin_acceptor_enabled) {
-        disconnectCoinAcceptor();
-        return;
-      }
-      autoConnectCoinAcceptor();
-    }, [settings?.kiosk_coin_acceptor_enabled]);
-
-    // Listen for Web Serial hot-plug events (device plugged in / removed)
-    useEffect(() => {
-      if (!('serial' in navigator)) return;
-      const serial = (navigator as any).serial;
-
-      const onConnect = (e: any) => {
-        if (settings?.kiosk_coin_acceptor_enabled) {
-          console.log('Serial device plugged in, connecting...');
-          openCoinAcceptorPort(e.target);
-        }
-      };
-      const onDisconnect = (e: any) => {
-        if (serialPortRef.current === e.target) {
-          console.log('Serial device unplugged');
-          serialPortRef.current = null;
-        }
-      };
-
-      serial.addEventListener('connect', onConnect);
-      serial.addEventListener('disconnect', onDisconnect);
-      return () => {
-        serial.removeEventListener('connect', onConnect);
-        serial.removeEventListener('disconnect', onDisconnect);
-      };
-    }, [settings?.kiosk_coin_acceptor_enabled]);
-
-    // Subscribe to player status (now playing)
-    useEffect(() => {
-      if (!identityReady || !activePlayerId) return;
-      const sub = subscribeToPlayerStatus(PLAYER_ID, (s) => setPlayerStatus(s));
-      return () => sub.unsubscribe();
-    }, [identityReady, activePlayerId, PLAYER_ID]);
-
-    // Subscribe to queue for marquee / upcoming list
-    useEffect(() => {
-      if (!identityReady || !activePlayerId) return;
-      const sub = subscribeToQueue(PLAYER_ID, (items) => {
-        // Use ref to get latest playerStatus (avoids stale closure)
-        const currentPlayerStatus = playerStatusRef.current;
-        const currentMediaId = currentPlayerStatus?.current_media_id || currentPlayerStatus?.current_media?.id || null;
-
-        // Filter to only upcoming items (not currently playing)
-        let upcomingItems = items;
-        if (currentMediaId) {
-          upcomingItems = items.filter(item => item.media_item_id !== currentMediaId);
-        }
-
-        // Separate priority and normal items
-        const priorityItems = upcomingItems.filter(item => item.type === 'priority');
-        const normalItems = upcomingItems.filter(item => item.type === 'normal');
-
-        // Limit to max 5 total items: all priority items + remaining slots filled with normal items
-        const maxMarqueeItems = 5;
-        const prioritySliced = priorityItems.slice(0, maxMarqueeItems);
-        const remainingSlots = Math.max(0, maxMarqueeItems - prioritySliced.length);
-        const normalSliced = normalItems.slice(0, remainingSlots);
-
-        setQueue([...prioritySliced, ...normalSliced]);
-      });
-      return () => sub.unsubscribe();
-    }, [identityReady, activePlayerId, PLAYER_ID]);
+  useCoinAcceptor({
+    enabled: !!settings?.kiosk_coin_acceptor_enabled,
+    freeplay: !!settings?.freeplay,
+    playerId: PLAYER_ID,
+    session,
+    onCreditsUpdated: (credits) => {
+      setSession((prev) => (prev ? { ...prev, credits } : prev));
+    },
+  });
 
     // Perform search — runs YouTube and Cloudflare R2 in parallel and merges results.
     // R2 (local library) results appear first; YouTube results follow.
@@ -316,7 +134,7 @@ function App() {
       }
     };
 
-    // Simulate coin insertion (for testing - replace with WebSerial API)
+    // Simulate coin insertion (for testing)
     const handleCoinInsert = async () => {
       if (!session) return;
 
@@ -329,118 +147,6 @@ function App() {
         setSession({ ...session, credits });
       } catch (error) {
         console.error('Failed to add credit:', error);
-      }
-    };
-    
-    // --- Coin acceptor serial functions ---
-
-    // Auto-connect using previously-granted ports (no user gesture required).
-    // Called automatically when kiosk_coin_acceptor_enabled is true.
-    const autoConnectCoinAcceptor = async () => {
-      if (!('serial' in navigator)) {
-        console.warn('Web Serial API not supported in this browser');
-        return;
-      }
-      try {
-        const ports = await (navigator as any).serial.getPorts();
-        if (ports.length > 0) {
-          console.log(`Found ${ports.length} previously-granted serial port(s), connecting...`);
-          await openCoinAcceptorPort(ports[0]);
-        } else {
-          console.log('No previously-granted serial ports. Connect via admin or grant permission first.');
-        }
-      } catch (err) {
-        console.error('Auto-connect failed:', err);
-      }
-    };
-
-    // Open a specific port and start the reader loop.
-    const openCoinAcceptorPort = async (port: any) => {
-      if (serialPortRef.current === port && port.readable) return; // already open
-      try {
-        serialPortRef.current = port;
-        if (!port.readable) {
-          await port.open({ baudRate: 9600 });
-        }
-        console.log('Coin acceptor connected');
-        await (supabase as any)
-          .from('player_settings')
-          .update({ kiosk_coin_acceptor_connected: true, kiosk_coin_acceptor_device_id: 'usbserial-1420' })
-          .eq('player_id', PLAYER_ID);
-        const reader = port.readable.getReader();
-        serialReaderRef.current = reader;
-        readCoinAcceptorData(reader);
-      } catch (err) {
-        console.error('Failed to open coin acceptor port:', err);
-        serialPortRef.current = null;
-      }
-    };
-
-    const disconnectCoinAcceptor = async () => {
-      try {
-        if (serialReaderRef.current) {
-          await serialReaderRef.current.cancel();
-          serialReaderRef.current = null;
-        }
-        if (serialPortRef.current) {
-          await serialPortRef.current.close();
-          serialPortRef.current = null;
-        }
-        console.log('Coin acceptor disconnected');
-      } catch (error) {
-        console.error('Failed to disconnect coin acceptor:', error);
-      }
-    };
-
-    // Read serial data and map coin signals to credits:
-    //   'a' = $2 coin = 3 credits
-    //   'b' = $1 coin = 1 credit
-    const readCoinAcceptorData = async (reader: any) => {
-      const decoder = new TextDecoder();
-      try {
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-
-          const data = decoder.decode(value, { stream: true });
-          for (const char of data) {
-            let amount = 0;
-            if (char === 'a') amount = 3;       // $2 coin
-            else if (char === 'b') amount = 1;  // $1 coin
-
-            if (amount > 0) {
-              // In freeplay mode, drain the serial data but don't add credits
-              if (settingsRef.current?.freeplay) {
-                console.log(`Coin accepted: '${char}' (freeplay — credit ignored)`);
-                continue;
-              }
-              const currentSession = sessionRef.current;
-              if (!currentSession) continue;
-              console.log(`Coin accepted: '${char}' → +${amount} credit(s)`);
-              const result = await callKioskHandler({
-                session_id: currentSession.session_id,
-                action: 'credit',
-                amount,
-              }) as { credits?: number };
-              if (result?.credits !== undefined) {
-                setSession(prev => prev ? { ...prev, credits: result.credits! } : prev);
-              }
-            }
-          }
-        }
-      } catch (err: any) {
-        if (err?.name !== 'AbortError') {
-          console.error('Coin acceptor read error:', err);
-        }
-      } finally {
-        try { reader.releaseLock(); } catch (_) { /* already released */ }
-        serialReaderRef.current = null;
-        // Mark disconnected in DB
-        await (supabase as any)
-          .from('player_settings')
-          .update({ kiosk_coin_acceptor_connected: false, kiosk_coin_acceptor_device_id: null })
-          .eq('player_id', PLAYER_ID);
-        console.log('Coin acceptor reader closed');
       }
     };
 
