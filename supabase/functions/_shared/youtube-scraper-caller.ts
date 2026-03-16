@@ -1,8 +1,10 @@
 // Shared YouTube scraper caller with JWT fallback for inter-function calls
 
-function isLikelyJwt(token: string | null | undefined): token is string {
-  if (!token) return false;
-  return token.split('.').length === 3;
+function normalizeAuthHeader(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return /^Bearer\s+/i.test(trimmed) ? trimmed : `Bearer ${trimmed}`;
 }
 
 /**
@@ -19,11 +21,12 @@ export async function callYouTubeScraperWithFallback(params: {
 }): Promise<Response> {
   const { supabaseUrl, payload, incomingAuthorization, serviceRoleToken, anonJwt } = params;
   const endpoint = `${supabaseUrl}/functions/v1/youtube-scraper`;
+  const gatewayApiKey = anonJwt ?? serviceRoleToken ?? null;
 
   const authCandidates: (string | null)[] = [
-    incomingAuthorization,
-    isLikelyJwt(serviceRoleToken) ? `Bearer ${serviceRoleToken}` : null,
-    isLikelyJwt(anonJwt) ? `Bearer ${anonJwt}` : null,
+    normalizeAuthHeader(incomingAuthorization),
+    normalizeAuthHeader(serviceRoleToken),
+    normalizeAuthHeader(anonJwt),
   ];
 
   const uniqueCandidates = Array.from(new Set(authCandidates.filter((v): v is string => Boolean(v))));
@@ -35,7 +38,7 @@ export async function callYouTubeScraperWithFallback(params: {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
-    if (anonJwt) headers['apikey'] = anonJwt;
+    if (gatewayApiKey) headers['apikey'] = gatewayApiKey;
     if (authHeader) headers['Authorization'] = authHeader;
 
     const response = await fetch(endpoint, {

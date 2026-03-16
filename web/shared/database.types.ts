@@ -706,6 +706,10 @@ export type Database = {
           player_id: string
         }[]
       }
+      sync_obie_v5_playlists_to_player: {
+        Args: { p_player_id: string }
+        Returns: undefined
+      }
     }
     Enums: {
       [_ in never]: never

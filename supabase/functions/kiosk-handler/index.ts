@@ -282,6 +282,15 @@ Deno.serve(async (req)=>{
             }
           });
         }
+
+        const { error: trackPlaylistError } = await supabase.rpc('add_media_to_kiosk_requests_playlist', {
+          p_session_id: session_id,
+          p_media_item_id: mediaItemId
+        });
+        if (trackPlaylistError) {
+          console.error('add_media_to_kiosk_requests_playlist error:', trackPlaylistError);
+        }
+
         // Log the successful kiosk request
         const { data: mediaItem } = await supabase
           .from('media_items')
@@ -543,6 +552,15 @@ Deno.serve(async (req)=>{
             status: 400,
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
+        }
+
+        const { error: trackPlaylistError } = await supabase.rpc('add_media_to_kiosk_requests_playlist', {
+          p_session_id: session_id,
+          p_media_item_id: mediaItemId,
+        });
+
+        if (trackPlaylistError) {
+          console.error('add_media_to_kiosk_requests_playlist error:', trackPlaylistError);
         }
 
         // Log the request
