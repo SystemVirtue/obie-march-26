@@ -2,6 +2,8 @@
 # Quick command to import a single YouTube playlist
 # Usage: ./import-single-playlist.sh <PLAYLIST_ID> <PLAYLIST_NAME>
 
+set -e
+
 PLAYLIST_ID="$1"
 PLAYLIST_NAME="$2"
 
@@ -13,8 +15,21 @@ if [ -z "$PLAYLIST_ID" ] || [ -z "$PLAYLIST_NAME" ]; then
   exit 1
 fi
 
-SUPABASE_URL=$(supabase status | grep "API URL" | awk '{print $NF}')
-SERVICE_ROLE_KEY=$(supabase status | grep "Secret key" | awk '{print $NF}')
+SUPABASE_URL="${SUPABASE_URL:-http://localhost:54321}"
+SERVICE_ROLE_KEY="${SERVICE_ROLE_KEY:-${SUPABASE_SERVICE_ROLE_KEY:-${VITE_SUPABASE_SERVICE_KEY:-}}}"
+
+if [ -z "$SERVICE_ROLE_KEY" ]; then
+  if curl -s "${SUPABASE_URL}/health" >/dev/null 2>&1; then
+    SUPABASE_URL=$(supabase status | grep "API URL" | awk '{print $NF}')
+    SERVICE_ROLE_KEY=$(supabase status | grep "Secret key" | awk '{print $NF}')
+  fi
+fi
+
+if [ -z "$SERVICE_ROLE_KEY" ]; then
+  echo "❌ Error: Could not resolve SERVICE_ROLE_KEY"
+  echo "   Set SERVICE_ROLE_KEY / SUPABASE_SERVICE_ROLE_KEY, or run against local Supabase"
+  exit 1
+fi
 
 echo "🎵 Importing playlist: ${PLAYLIST_NAME}"
 echo "   YouTube ID: ${PLAYLIST_ID}"
@@ -25,6 +40,7 @@ echo "📝 Creating playlist in database..."
 CREATE_RESPONSE=$(curl -s -X POST "${SUPABASE_URL}/functions/v1/playlist-manager" \
   -H "Content-Type: application/json" \
   -H "apikey: ${SERVICE_ROLE_KEY}" \
+  -H "Authorization: Bearer ${SERVICE_ROLE_KEY}" \
   -d "{
     \"action\": \"create\",
     \"player_id\": \"00000000-0000-0000-0000-000000000001\",
@@ -49,6 +65,7 @@ YOUTUBE_URL="https://www.youtube.com/playlist?list=${PLAYLIST_ID}"
 SCRAPE_RESPONSE=$(curl -s -X POST "${SUPABASE_URL}/functions/v1/playlist-manager" \
   -H "Content-Type: application/json" \
   -H "apikey: ${SERVICE_ROLE_KEY}" \
+  -H "Authorization: Bearer ${SERVICE_ROLE_KEY}" \
   -d "{
     \"action\": \"scrape\",
     \"playlist_id\": \"${DB_PLAYLIST_ID}\",

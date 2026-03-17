@@ -1,7 +1,7 @@
 // Obie Admin Console v2 — Obsidian Stage Design
 // All data flows through real Supabase subscriptions and Edge Function calls.
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import {
   subscribeToQueue,
   subscribeToPlayerStatus,
@@ -26,7 +26,8 @@ import type { DragEndEvent } from '@dnd-kit/core';
 import { normalizeJukeboxSlug, getPathJukeboxSlug } from '@shared/jukebox-utils';
 
 import type { ViewId } from './types';
-import { PLAYER_ID, FS_SCALES, hexToRgb, darkenHex, navigateClient } from './types';
+import { PLAYER_ID, navigateClient } from './types';
+import { useAdminPrefs } from './hooks/useAdminPrefs';
 import { Spinner } from './components/ui';
 import { LoginForm } from './components/LoginForm';
 import { NowPlayingStage } from './components/NowPlayingStage';
@@ -36,48 +37,6 @@ import { PlaylistsPanel } from './components/PlaylistsPanel';
 import { SettingsPanel } from './components/SettingsPanel';
 import { ScriptsPanel } from './components/ScriptsPanel';
 import { LogsPanel } from './components/LogsPanel';
-
-// ─── Accent CSS helpers (DOM side-effects, not exported) ─────────────────────
-function applyAccentCSS(hex: string) {
-  if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return;
-  const [r, g, b] = hexToRgb(hex);
-  const root = document.documentElement;
-  root.style.setProperty('--accent',        hex);
-  root.style.setProperty('--accent-dark',   darkenHex(hex, 0.12));
-  root.style.setProperty('--accent-dim',    `rgba(${r},${g},${b},0.15)`);
-  root.style.setProperty('--accent-border', `rgba(${r},${g},${b},0.30)`);
-  root.style.setProperty('--accent-glow',   `rgba(${r},${g},${b},0.38)`);
-  root.style.setProperty('--accent-rgb',    `${r},${g},${b}`);
-}
-function applyZoom(zoom: number) {
-  const el = document.getElementById('root');
-  if (el) (el.style as unknown as Record<string,string>).zoom = String(zoom);
-}
-
-// ─── Prefs hook ──────────────────────────────────────────────────────────────
-function usePrefs() {
-  const [accent, setAccentState] = useState(() => {
-    try { return localStorage.getItem('obie_accent') || '#f59e0b'; } catch { return '#f59e0b'; }
-  });
-  const [fsIdx, setFsIdxState] = useState(() => {
-    try { const v = localStorage.getItem('obie_fontsize'); return v !== null ? parseInt(v, 10) : 2; }
-    catch { return 2; }
-  });
-  useEffect(() => { applyAccentCSS(accent); }, [accent]);
-  useEffect(() => { applyZoom(FS_SCALES[fsIdx].zoom); }, [fsIdx]);
-
-  const setAccent = useCallback((hex: string) => {
-    setAccentState(hex); applyAccentCSS(hex);
-    try { localStorage.setItem('obie_accent', hex); } catch { /* noop */ }
-  }, []);
-  const setFsIdx = useCallback((idx: number) => {
-    const c = Math.max(0, Math.min(FS_SCALES.length - 1, idx));
-    setFsIdxState(c); applyZoom(FS_SCALES[c].zoom);
-    try { localStorage.setItem('obie_fontsize', String(c)); } catch { /* noop */ }
-  }, []);
-
-  return { accent, setAccent, fsIdx, setFsIdx, fsScale: FS_SCALES[fsIdx] };
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ROOT APP
@@ -100,7 +59,7 @@ function App() {
   const isSkippingRef = useRef(false);
   useEffect(() => { isSkippingRef.current = isSkipping; }, [isSkipping]);
 
-  const prefs = usePrefs();
+  const prefs = useAdminPrefs();
 
   // Auth
   useEffect(() => {

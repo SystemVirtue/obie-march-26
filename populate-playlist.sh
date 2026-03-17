@@ -42,6 +42,7 @@ echo "   URL: ${YOUTUBE_PLAYLIST_URL}"
 RESPONSE=$(curl -s -X POST "${SUPABASE_URL}/functions/v1/playlist-manager" \
   -H "Content-Type: application/json" \
   -H "apikey: ${ANON_KEY}" \
+  -H "Authorization: Bearer ${ANON_KEY}" \
   -d "{
     \"action\": \"scrape\",
     \"playlist_id\": \"${DEFAULT_PLAYLIST_ID}\",

@@ -294,7 +294,7 @@ Deno.serve(async (req)=>{
         });
       }
       // Insert media items — canonical deduplication via create_or_get_media_item RPC
-      const mediaItems = [];
+      const mediaItemIds: string[] = [];
       let mediaInsertErrors = 0;
       let firstMediaInsertError: string | null = null;
       for (const video of videos){
@@ -314,11 +314,19 @@ Deno.serve(async (req)=>{
           if (!firstMediaInsertError) firstMediaInsertError = mediaInsertError.message || JSON.stringify(mediaInsertError);
           continue;
         }
-        if (mediaId) {
-          const { data: fullItem } = await supabase.from('media_items').select('*').eq('id', mediaId).maybeSingle();
-          if (fullItem) mediaItems.push(fullItem);
-        }
+        if (mediaId) mediaItemIds.push(mediaId);
       }
+
+      const uniqueMediaIds = Array.from(new Set(mediaItemIds));
+      const { data: mediaRows, error: mediaRowsError } = uniqueMediaIds.length === 0
+        ? { data: [], error: null }
+        : await supabase.from('media_items').select('*').in('id', uniqueMediaIds);
+      if (mediaRowsError) throw mediaRowsError;
+
+      const mediaRowById = new Map((mediaRows ?? []).map((row) => [row.id, row]));
+      const mediaItems = mediaItemIds
+        .map((id) => mediaRowById.get(id))
+        .filter(Boolean);
 
       if (mediaItems.length === 0) {
         throw new Error(firstMediaInsertError || `Scraped ${videos.length} videos but failed to create media rows`);
