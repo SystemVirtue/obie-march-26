@@ -104,16 +104,16 @@ export const DEFAULT_BACKGROUND_ASSETS: BackgroundAsset[] = [
     type: 'video',
     src: '/assets/background/Obie_Shield_Crest_Animation.mp4'
   },
-  // {
-  //   id: 'obie-carla-v1',
-  //   type: 'video',
-  //   src: '/assets/background/Obie - Carla v1.mp4'
-  // },
   {
-    id: 'st-patricks-day-2026-slot-a',
+    id: 'obie-carla-v1',
     type: 'video',
-    src: '/assets/background/StPatricksDay_2026.mp4'
+    src: '/assets/background/Obie - Carla v1.mp4'
   },
+  // {
+  //   id: 'st-patricks-day-2026-slot-a',
+  //   type: 'video',
+  //   src: '/assets/background/StPatricksDay_2026.mp4'
+  // },
   {
     id: 'obie-neon2',
     type: 'image',
@@ -125,9 +125,9 @@ export const DEFAULT_BACKGROUND_ASSETS: BackgroundAsset[] = [
     type: 'video',
     src: '/assets/background/Obie_Shield_Crest_Animation2.mp4'
   },
-  {
-    id: 'st-patricks-day-2026-slot-b',
-    type: 'video',
-    src: '/assets/background/StPatricksDay_2026.mp4'
-  }
+  // {
+  //   id: 'st-patricks-day-2026-slot-b',
+  //   type: 'video',
+  //   src: '/assets/background/StPatricksDay_2026.mp4'
+  // }
 ];
