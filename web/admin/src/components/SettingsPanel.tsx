@@ -46,7 +46,7 @@ export function SettingsPanel({ view, settings, prefs, playerId }: { view: ViewI
   };
 
   const handleSavePlayback = () => local ? saveFields({ shuffle: local.shuffle, loop: local.loop, volume: local.volume, karaoke_mode: local.karaoke_mode, player_mode: local.player_mode }) : Promise.resolve();
-  const handleSaveKiosk    = () => local ? saveFields({ freeplay: local.freeplay, coin_per_song: local.coin_per_song, search_enabled: local.search_enabled, max_queue_size: local.max_queue_size, priority_queue_limit: local.priority_queue_limit, local_media_path: (local as any).local_media_path ?? null } as Partial<PlayerSettings>) : Promise.resolve();
+  const handleSaveKiosk    = () => local ? saveFields({ freeplay: local.freeplay, coin_per_song: local.coin_per_song, search_enabled: local.search_enabled, max_queue_size: local.max_queue_size, priority_queue_limit: local.priority_queue_limit, local_media_path: (local as any).local_media_path ?? null, coin_credits_dollar1: (local as any).coin_credits_dollar1 ?? 1, coin_credits_dollar2: (local as any).coin_credits_dollar2 ?? 3 } as Partial<PlayerSettings>) : Promise.resolve();
   const handleSaveBranding = () => local ? saveFields({ branding: local.branding }) : Promise.resolve();
 
   const handleToggle = async (field: keyof PlayerSettings) => {
@@ -224,6 +224,24 @@ export function SettingsPanel({ view, settings, prefs, playerId }: { view: ViewI
                 {local.kiosk_coin_acceptor_enabled ? (local.kiosk_coin_acceptor_connected ? '🟢 Connected' : '🟡 Connecting…') : '🔵 Enable Coin Acceptor'}
               </button>
               {local.kiosk_coin_acceptor_device_id && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 8 }}>Device: {local.kiosk_coin_acceptor_device_id}</div>}
+              <div style={{ marginTop: 14, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                {([
+                  { label: '$1 coin credits', key: 'coin_credits_dollar1', defaultVal: 1 },
+                  { label: '$2 coin credits', key: 'coin_credits_dollar2', defaultVal: 3 },
+                ] as { label: string; key: keyof PlayerSettings; defaultVal: number }[]).map(({ label, key, defaultVal }) => (
+                  <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <label style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.45)' }}>{label}</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={(local as any)[key] ?? defaultVal}
+                      onChange={e => set(key, Number(e.target.value))}
+                      style={{ width: 64, textAlign: 'center', padding: '6px 8px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none' }}
+                    />
+                  </div>
+                ))}
+              </div>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.3)', marginTop: 8 }}>Save Kiosk Settings above to apply denomination changes.</div>
             </div>
           )}
 

@@ -7,6 +7,8 @@ type UseCoinAcceptorArgs = {
   playerId: string;
   session: KioskSession | null;
   onCreditsUpdated: (credits: number) => void;
+  dollar1Credits?: number;
+  dollar2Credits?: number;
 };
 
 export function useCoinAcceptor({
@@ -15,11 +17,15 @@ export function useCoinAcceptor({
   playerId,
   session,
   onCreditsUpdated,
+  dollar1Credits = 1,
+  dollar2Credits = 3,
 }: UseCoinAcceptorArgs) {
   const serialPortRef = useRef<any>(null);
   const serialReaderRef = useRef<any>(null);
   const sessionRef = useRef<KioskSession | null>(null);
   const freeplayRef = useRef<boolean>(false);
+  const dollar1CreditsRef = useRef<number>(dollar1Credits);
+  const dollar2CreditsRef = useRef<number>(dollar2Credits);
   const [showConnectPrompt, setShowConnectPrompt] = useState(false);
 
   useEffect(() => {
@@ -29,6 +35,14 @@ export function useCoinAcceptor({
   useEffect(() => {
     freeplayRef.current = freeplay;
   }, [freeplay]);
+
+  useEffect(() => {
+    dollar1CreditsRef.current = dollar1Credits;
+  }, [dollar1Credits]);
+
+  useEffect(() => {
+    dollar2CreditsRef.current = dollar2Credits;
+  }, [dollar2Credits]);
 
   const readCoinAcceptorData = async (reader: any) => {
     const decoder = new TextDecoder();
@@ -40,8 +54,9 @@ export function useCoinAcceptor({
         const data = decoder.decode(value, { stream: true });
         for (const char of data) {
           let amount = 0;
-          if (char === 'a') amount = 3;
-          else if (char === 'b') amount = 1;
+          // 'b' = $1 coin, 'a' = $2 coin (hardware protocol)
+          if (char === 'a') amount = dollar2CreditsRef.current;
+          else if (char === 'b') amount = dollar1CreditsRef.current;
 
           if (amount <= 0) continue;
 
@@ -53,7 +68,8 @@ export function useCoinAcceptor({
           const currentSession = sessionRef.current;
           if (!currentSession) continue;
 
-          console.log(`Coin accepted: '${char}' -> +${amount} credit(s)`);
+          const denomination = char === 'a' ? '$2' : '$1';
+          console.log(`Coin accepted: ${denomination} ('${char}') -> +${amount} credit(s)`);
           const result = (await callKioskHandler({
             session_id: currentSession.session_id,
             action: 'credit',
