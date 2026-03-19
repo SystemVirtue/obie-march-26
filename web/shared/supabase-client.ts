@@ -106,6 +106,8 @@ export interface PlayerSettings {
   kiosk_coin_acceptor_connected?: boolean;
   kiosk_coin_acceptor_device_id?: string | null;
   kiosk_show_virtual_coin_button?: boolean;
+  coin_credits_dollar1?: number;
+  coin_credits_dollar2?: number;
   player_mode?: 'iframe' | 'ytm_desktop';
   cloudflare_enabled?: boolean;
   cloudflare_r2_public_url?: string | null;

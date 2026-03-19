@@ -57,6 +57,8 @@ function App() {
     onCreditsUpdated: (credits) => {
       setSession((prev) => (prev ? { ...prev, credits } : prev));
     },
+    dollar1Credits: settings?.coin_credits_dollar1 ?? 1,
+    dollar2Credits: settings?.coin_credits_dollar2 ?? 3,
   });
 
     // Perform search — runs YouTube and Cloudflare R2 in parallel and merges results.
