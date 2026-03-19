@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { callKioskHandler, supabase, type KioskSession } from '../../../shared/supabase-client';
 
 type UseCoinAcceptorArgs = {
@@ -20,6 +20,7 @@ export function useCoinAcceptor({
   const serialReaderRef = useRef<any>(null);
   const sessionRef = useRef<KioskSession | null>(null);
   const freeplayRef = useRef<boolean>(false);
+  const [showConnectPrompt, setShowConnectPrompt] = useState(false);
 
   useEffect(() => {
     sessionRef.current = session;
@@ -77,10 +78,14 @@ export function useCoinAcceptor({
 
       serialReaderRef.current = null;
 
-      await (supabase as any)
-        .from('player_settings')
-        .update({ kiosk_coin_acceptor_connected: false, kiosk_coin_acceptor_device_id: null })
-        .eq('player_id', playerId);
+      try {
+        await (supabase as any)
+          .from('player_settings')
+          .update({ kiosk_coin_acceptor_connected: false, kiosk_coin_acceptor_device_id: null })
+          .eq('player_id', playerId);
+      } catch (err) {
+        console.warn('Failed to update coin acceptor disconnect status:', err);
+      }
 
       console.log('Coin acceptor reader closed');
     }
@@ -96,10 +101,16 @@ export function useCoinAcceptor({
       }
 
       console.log('Coin acceptor connected');
-      await (supabase as any)
-        .from('player_settings')
-        .update({ kiosk_coin_acceptor_connected: true, kiosk_coin_acceptor_device_id: 'usbserial-1420' })
-        .eq('player_id', playerId);
+      setShowConnectPrompt(false);
+
+      try {
+        await (supabase as any)
+          .from('player_settings')
+          .update({ kiosk_coin_acceptor_connected: true, kiosk_coin_acceptor_device_id: 'usbserial-1420' })
+          .eq('player_id', playerId);
+      } catch (err) {
+        console.warn('Failed to update coin acceptor connect status:', err);
+      }
 
       const reader = port.readable.getReader();
       serialReaderRef.current = reader;
@@ -138,16 +149,35 @@ export function useCoinAcceptor({
         console.log(`Found ${ports.length} previously-granted serial port(s), connecting...`);
         await openCoinAcceptorPort(ports[0]);
       } else {
-        console.log('No previously-granted serial ports. Connect via admin or grant permission first.');
+        console.log('No previously-granted serial ports found — showing connect prompt.');
+        setShowConnectPrompt(true);
       }
     } catch (err) {
       console.error('Auto-connect failed:', err);
     }
   };
 
+  // Called from UI (requires user gesture for requestPort)
+  const connectCoinAcceptor = async () => {
+    if (!('serial' in navigator)) {
+      console.warn('Web Serial API not supported in this browser');
+      return;
+    }
+    try {
+      const port = await (navigator as any).serial.requestPort();
+      await openCoinAcceptorPort(port);
+    } catch (err: any) {
+      if (err?.name !== 'NotFoundError') {
+        console.error('Failed to request serial port:', err);
+      }
+      // User cancelled — keep prompt visible
+    }
+  };
+
   useEffect(() => {
     if (!enabled) {
       disconnectCoinAcceptor();
+      setShowConnectPrompt(false);
       return;
     }
     autoConnectCoinAcceptor();
@@ -185,4 +215,8 @@ export function useCoinAcceptor({
       disconnectCoinAcceptor();
     };
   }, []);
+
+  const dismissConnectPrompt = () => setShowConnectPrompt(false);
+
+  return { showConnectPrompt, connectCoinAcceptor, dismissConnectPrompt };
 }

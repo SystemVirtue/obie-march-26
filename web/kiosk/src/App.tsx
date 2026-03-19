@@ -13,6 +13,7 @@ import { cleanDisplayText } from '../../shared/media-utils';
 import { normalizeJukeboxSlug } from '../../shared/jukebox-utils';
 import { ConfirmationDialog } from './components/ConfirmationDialog';
 import { QueueMarquee } from './components/QueueMarquee';
+import { Dialog, DialogContent } from './components/Dialog';
 import { useKioskSession } from './hooks/useKioskSession';
 import { useCoinAcceptor } from './hooks/useCoinAcceptor';
 
@@ -48,7 +49,7 @@ function App() {
   const [showInsertCoinMsg, setShowInsertCoinMsg] = useState(false);
   const insertCoinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useCoinAcceptor({
+  const { showConnectPrompt, connectCoinAcceptor, dismissConnectPrompt } = useCoinAcceptor({
     enabled: !!settings?.kiosk_coin_acceptor_enabled,
     freeplay: !!settings?.freeplay,
     playerId: PLAYER_ID,
@@ -311,6 +312,29 @@ function App() {
               onCancel={() => setShowConfirm(false)}
             />
           )}
+
+          {/* Coin Acceptor Connect Prompt */}
+          <Dialog open={showConnectPrompt} onOpenChange={() => {}}>
+            <DialogContent className="p-8 max-w-sm text-center">
+              <div className="text-4xl mb-4">🪙</div>
+              <h2 className="text-white text-2xl font-bold mb-2">Coin Acceptor Detected</h2>
+              <p className="text-gray-300 mb-6 text-sm">
+                A coin acceptor is enabled for this kiosk. Connect it now to start accepting coins.
+              </p>
+              <button
+                onClick={connectCoinAcceptor}
+                className="w-full py-3 px-6 bg-yellow-400 hover:bg-yellow-300 text-black font-bold rounded-lg text-lg transition-colors"
+              >
+                Connect Coin Acceptor
+              </button>
+              <button
+                onClick={dismissConnectPrompt}
+                className="mt-3 w-full py-2 px-6 text-gray-400 hover:text-gray-300 text-sm transition-colors"
+              >
+                Skip for now
+              </button>
+            </DialogContent>
+          </Dialog>
 
           {/* Insert coin dev button — hidden when a physical coin acceptor is connected */}
           {!settings?.freeplay && settings?.kiosk_show_virtual_coin_button && !settings?.kiosk_coin_acceptor_connected && (
