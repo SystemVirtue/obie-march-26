@@ -34,6 +34,7 @@ import { NowPlayingStage } from './components/NowPlayingStage';
 import { Sidebar } from './components/Sidebar';
 import { QueuePanel } from './components/QueuePanel';
 import { PlaylistsPanel } from './components/PlaylistsPanel';
+import { SearchPanel } from './components/SearchPanel';
 import { SettingsPanel } from './components/SettingsPanel';
 import { ScriptsPanel } from './components/ScriptsPanel';
 import { LogsPanel } from './components/LogsPanel';
@@ -280,6 +281,7 @@ function App() {
           onSwitchJukebox={handleSwitchJukebox} onCreateJukebox={handleCreateJukebox} />
 
         <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
+          {view === 'search' && <SearchPanel playerId={activePlayerId} />}
           {isQueueView && (
             <QueuePanel queue={queue} status={status}
               onRemove={handleRemove} onReorder={handleReorder}
