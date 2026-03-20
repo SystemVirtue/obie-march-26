@@ -6,6 +6,7 @@ import {
   subscribeToQueue,
   subscribeToPlayerStatus,
   subscribeToPlayerSettings,
+  subscribeToTable,
   callQueueManager,
   callPlayerControl,
   signOut,
@@ -15,11 +16,17 @@ import {
   createJukebox,
   resolveJukeboxSlug,
   subscribeToAuth,
+  getPlayer,
+  getKioskSessions,
+  subscribeToPlayer,
+  getPlaylistById,
+  type Player,
   type PlayerStatus,
   type PlayerSettings,
   type QueueItem,
   type AuthUser,
   type JukeboxSummary,
+  type KioskSession,
 } from '@shared/supabase-client';
 import { arrayMove } from '@dnd-kit/sortable';
 import type { DragEndEvent } from '@dnd-kit/core';
@@ -59,6 +66,10 @@ function App() {
   const [isSkipping,  setIsSkipping]  = useState(false);
   const isSkippingRef = useRef(false);
   useEffect(() => { isSkippingRef.current = isSkipping; }, [isSkipping]);
+
+  const [player, setPlayer] = useState<Player | null>(null);
+  const [kioskSessions, setKioskSessions] = useState<KioskSession[]>([]);
+  const [activePlaylistName, setActivePlaylistName] = useState<string | null>(null);
 
   const prefs = useAdminPrefs();
 
@@ -189,6 +200,28 @@ function App() {
     return () => { q.unsubscribe(); s.unsubscribe(); ps.unsubscribe(); };
   }, [user, activePlayerId]);
 
+  // Player record + kiosk sessions
+  useEffect(() => {
+    if (!user || !activePlayerId) return;
+    getPlayer(activePlayerId).then(p => { if (p) setPlayer(p); }).catch(console.error);
+    getKioskSessions(activePlayerId).then(setKioskSessions).catch(console.error);
+    const pSub = subscribeToPlayer(activePlayerId, setPlayer);
+    const kSub = subscribeToTable<KioskSession>(
+      'kiosk_sessions',
+      { column: 'player_id', value: activePlayerId },
+      () => getKioskSessions(activePlayerId).then(setKioskSessions).catch(console.error)
+    );
+    return () => { pSub.unsubscribe(); kSub.unsubscribe(); };
+  }, [user, activePlayerId]);
+
+  // Derive active playlist name from player.active_playlist_id
+  useEffect(() => {
+    if (!player?.active_playlist_id) { setActivePlaylistName(null); return; }
+    getPlaylistById(player.active_playlist_id)
+      .then(pl => setActivePlaylistName(pl?.name ?? null))
+      .catch(() => setActivePlaylistName(null));
+  }, [player?.active_playlist_id]);
+
   // ── Queue handlers ────────────────────────────────────────────────────────
   const handleRemove = async (queueId: string) => {
     setQueue(prev => prev.filter(item => item.id !== queueId));
@@ -272,6 +305,7 @@ function App() {
   return (
     <div style={{ width: '100%', height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg)' }}>
       <NowPlayingStage status={status} queue={queue} settings={settings}
+        player={player} kioskSessions={kioskSessions} activePlaylistName={activePlaylistName}
         onPlayPause={handlePlayPause} onSkip={handleSkip} isSkipping={isSkipping} onRemove={handleRemove} />
 
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
@@ -287,7 +321,7 @@ function App() {
               onRemove={handleRemove} onReorder={handleReorder}
               onShuffle={handleShuffle} isShuffling={isShuffling} />
           )}
-          {isPlaylistView && <PlaylistsPanel view={view} playerId={activePlayerId} />}
+          {isPlaylistView && <PlaylistsPanel view={view} playerId={activePlayerId} activePlaylistId={player?.active_playlist_id ?? undefined} />}
           {isScriptsView  && <ScriptsPanel playerId={activePlayerId} />}
           {isSettingsView && !isScriptsView && <SettingsPanel view={view} settings={settings} prefs={prefs} playerId={activePlayerId} />}
           {view === 'logs' && <LogsPanel />}

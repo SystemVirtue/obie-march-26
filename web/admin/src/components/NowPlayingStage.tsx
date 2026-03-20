@@ -3,9 +3,23 @@ import { cleanDisplayText } from '../../../shared/media-utils';
 import type { PlayerStatus, QueueItem, PlayerSettings } from '../types';
 import { fmtDuration } from '../types';
 import { Spinner } from './ui';
+import type { Player, KioskSession } from '@shared/supabase-client';
 
-export function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipping, onRemove }: {
+function getKioskStatus(session: KioskSession): { label: string; color: string } {
+  const now = Date.now();
+  const lastActive = new Date(session.last_active).getTime();
+  if (now - lastActive > 10 * 60 * 1000) return { label: 'Offline', color: '#6b7280' };
+  const ip = session.ip_address ?? '';
+  const isLocal = /^(10\.|192\.168\.|127\.|172\.(1[6-9]|2\d|3[01])\.)/.test(ip);
+  return {
+    label: isLocal ? 'Online - Local' : 'Online - Network',
+    color: '#22c55e',
+  };
+}
+
+export function NowPlayingStage({ status, queue, settings, player, kioskSessions, activePlaylistName, onPlayPause, onSkip, isSkipping, onRemove }: {
   status: PlayerStatus | null; queue: QueueItem[]; settings: PlayerSettings | null;
+  player?: Player | null; kioskSessions?: KioskSession[]; activePlaylistName?: string | null;
   onPlayPause: () => void; onSkip: () => void; isSkipping: boolean; onRemove: (id: string) => void;
 }) {
   const [showPauseConfirm, setShowPauseConfirm] = useState(false);
@@ -70,6 +84,97 @@ export function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, 
               textShadow: isPlaying ? '0 0 40px rgba(255,255,255,0.15)' : 'none' }}>{title}</h2>
             <p style={{ fontFamily: 'var(--font-display)', fontSize: 15, color: 'rgba(255,255,255,0.55)', marginTop: 4,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: '-0.01em' }}>{artist}</p>
+            {activePlaylistName && (
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.32)',
+                marginTop: 5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                letterSpacing: '0.08em' }}>
+                ▶ {activePlaylistName}
+              </div>
+            )}
+          </div>
+
+          {/* Connected Devices */}
+          <div style={{ width: 200, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.1em',
+              color: 'rgba(255,255,255,0.28)', textTransform: 'uppercase', marginBottom: 2 }}>
+              Connected Devices
+            </div>
+
+            {/* Player row */}
+            {player && (() => {
+              const isOnline = player.status === 'online';
+              const isError  = player.status === 'error';
+              const dotColor = isOnline ? '#22c55e' : isError ? '#ef4444' : '#6b7280';
+              const stateText = status?.state === 'playing' ? 'Playing'
+                              : status?.state === 'paused'   ? 'Paused'
+                              : status?.state === 'idle'      ? 'Idle'
+                              : status?.state ?? '';
+              return (
+                <div style={{ padding: '5px 8px', borderRadius: 8, background: 'rgba(255,255,255,0.05)', marginBottom: 2 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 2 }}>
+                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: dotColor, flexShrink: 0 }} />
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.5)',
+                      textTransform: 'uppercase', letterSpacing: '0.06em' }}>Player</span>
+                  </div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.32)', paddingLeft: 11 }}>
+                    <span>{player.jukebox_slug || player.name}</span>
+                    <span style={{ marginLeft: 6, color: dotColor }}>
+                      {isOnline ? 'Online' : isError ? 'Error' : 'Offline'}
+                    </span>
+                    {stateText && <span style={{ marginLeft: 6, color: 'rgba(255,255,255,0.22)' }}>{stateText}</span>}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Kiosk rows */}
+            {(kioskSessions ?? []).length > 0 && (() => {
+              const sessions = kioskSessions!;
+              return (
+                <div style={{ padding: '5px 8px', borderRadius: 8, background: 'rgba(255,255,255,0.05)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
+                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#3b82f6', flexShrink: 0 }} />
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.5)',
+                      textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                      Kiosk{sessions.length > 1 ? ` ×${sessions.length}` : ''}
+                    </span>
+                  </div>
+                  {sessions.slice(0, 3).map(session => {
+                    const { label, color } = getKioskStatus(session);
+                    return (
+                      <div key={session.session_id} style={{ display: 'flex', alignItems: 'center', gap: 4,
+                        paddingLeft: 11, marginBottom: 2 }}>
+                        <div style={{ width: 5, height: 5, borderRadius: '50%', background: color, flexShrink: 0 }} />
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.28)' }}>
+                          {session.session_id.slice(0, 8)}
+                        </span>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color, marginLeft: 2 }}>{label}</span>
+                      </div>
+                    );
+                  })}
+                  {(settings?.kiosk_coin_acceptor_connected != null) && (
+                    <div style={{ paddingLeft: 11, marginTop: 3, fontFamily: 'var(--font-mono)', fontSize: 9,
+                      color: 'rgba(255,255,255,0.28)' }}>
+                      Coin:{' '}
+                      <span style={{ color: settings?.kiosk_coin_acceptor_connected
+                        ? (settings?.kiosk_coin_acceptor_enabled ? '#22c55e' : '#fbbf24')
+                        : '#6b7280' }}>
+                        {settings?.kiosk_coin_acceptor_connected
+                          ? (settings?.kiosk_coin_acceptor_enabled ? 'Connected' : 'Disabled')
+                          : 'Disconnected'}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* No-devices fallback */}
+            {!player && (kioskSessions ?? []).length === 0 && (
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.18)' }}>
+                No devices
+              </div>
+            )}
           </div>
 
           {/* Up Next */}
