@@ -89,6 +89,9 @@ export function SearchPanel({ playerId }: { playerId: string }) {
         params.r2_file_id = result.id;
       } else {
         params.url = result.url;
+        params.title = result.title;
+        if (result.artist) params.artist = result.artist;
+        params.thumbnail = result.thumbnailUrl || result.thumbnail;
       }
       const res = await callKioskHandler(params) as { queue_id?: string; error?: string };
       if ((res as any)?.error) throw new Error((res as any).error);
@@ -115,6 +118,9 @@ export function SearchPanel({ playerId }: { playerId: string }) {
         reqParams.r2_file_id = result.id;
       } else {
         reqParams.url = result.url;
+        reqParams.title = result.title;
+        if (result.artist) reqParams.artist = result.artist;
+        reqParams.thumbnail = result.thumbnailUrl || result.thumbnail;
       }
       const res = await callKioskHandler(reqParams) as { media_item_id?: string; error?: string };
       if ((res as any)?.error) throw new Error((res as any).error);

@@ -593,7 +593,7 @@ Deno.serve(async (req)=>{
 
     // Handle admin video request — bypasses credit system, adds directly to priority queue
     if (action === 'admin_request') {
-      const { player_id, url, r2_file_id, add_to_queue } = body;
+      const { player_id, url, r2_file_id, add_to_queue, title, artist, thumbnail, duration } = body;
       if (!player_id || (!url && !r2_file_id)) {
         return new Response(JSON.stringify({
           error: 'player_id and either url or r2_file_id are required for admin_request action'
@@ -642,7 +642,7 @@ Deno.serve(async (req)=>{
           }
           mediaItemId = resolvedId;
         } else {
-          // YouTube URL — scrape and create/get media item
+          // YouTube URL — use pre-scraped metadata if provided, otherwise scrape
           if (!validateYouTubeUrl(url)) {
             return new Response(JSON.stringify({ error: 'Invalid YouTube URL' }), {
               status: 400,
@@ -650,45 +650,76 @@ Deno.serve(async (req)=>{
             });
           }
 
-          const scraperResp = await callYouTubeScraperWithFallback({
-            supabaseUrl,
-            payload: { url, type: 'auto' },
-            incomingAuthorization: req.headers.get('Authorization'),
-            serviceRoleToken: serviceRoleToken ?? null,
-            anonJwt: anonJwt ?? null,
-          });
+          let videoTitle = title;
+          let videoArtist = artist || null;
+          let videoThumbnail = thumbnail || null;
+          let videoDuration = duration || null;
+          let videoUrl = url;
 
-          if (!scraperResp.ok) {
-            return new Response(JSON.stringify({ error: 'Failed to scrape YouTube URL' }), {
-              status: 400,
-              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            });
-          }
+          // Extract video ID from URL
+          const videoIdMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/);
+          let videoId = videoIdMatch?.[1] || null;
 
-          const { videos } = await scraperResp.json();
-          if (!videos || videos.length === 0) {
-            return new Response(JSON.stringify({ error: 'No videos found at the provided URL' }), {
-              status: 400,
-              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          // If metadata not provided, fall back to scraping
+          if (!videoTitle || !videoId) {
+            const scraperResp = await callYouTubeScraperWithFallback({
+              supabaseUrl,
+              payload: { url, type: 'auto' },
+              incomingAuthorization: req.headers.get('Authorization'),
+              serviceRoleToken: serviceRoleToken ?? null,
+              anonJwt: anonJwt ?? null,
             });
-          }
 
-          const video = videos[0];
-          if (!video?.id?.trim() || !video?.url?.trim() || !video?.title?.trim()) {
-            return new Response(JSON.stringify({ error: 'Invalid video data from scraper' }), {
-              status: 400,
-              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            });
+            if (!scraperResp.ok) {
+              return new Response(JSON.stringify({ error: 'Failed to scrape YouTube URL' }), {
+                status: 400,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+              });
+            }
+
+            const scraperText = await scraperResp.text();
+            let scraperData: { videos?: any[] };
+            try {
+              scraperData = JSON.parse(scraperText);
+            } catch {
+              return new Response(JSON.stringify({ error: 'Invalid response from YouTube scraper' }), {
+                status: 500,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+              });
+            }
+
+            const { videos } = scraperData;
+            if (!videos || videos.length === 0) {
+              return new Response(JSON.stringify({ error: 'No videos found at the provided URL' }), {
+                status: 400,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+              });
+            }
+
+            const video = videos[0];
+            if (!video?.id?.trim() || !video?.url?.trim() || !video?.title?.trim()) {
+              return new Response(JSON.stringify({ error: 'Invalid video data from scraper' }), {
+                status: 400,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+              });
+            }
+
+            videoId = video.id;
+            videoTitle = video.title;
+            videoArtist = video.artist || null;
+            videoThumbnail = video.thumbnail || null;
+            videoDuration = video.duration || null;
+            videoUrl = video.url;
           }
 
           const { data: resolvedId, error: mediaError } = await supabase.rpc('create_or_get_media_item', {
-            p_source_id: `youtube:${video.id}`,
+            p_source_id: `youtube:${videoId}`,
             p_source_type: 'youtube',
-            p_title: video.title,
-            p_artist: video.artist || null,
-            p_url: video.url,
-            p_duration: video.duration || null,
-            p_thumbnail: video.thumbnail || null,
+            p_title: videoTitle,
+            p_artist: videoArtist,
+            p_url: videoUrl,
+            p_duration: videoDuration,
+            p_thumbnail: videoThumbnail,
             p_metadata: {},
           });
 

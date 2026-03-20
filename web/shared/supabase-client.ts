@@ -644,6 +644,11 @@ export async function callKioskHandler(params: {
   url?: string;
   r2_file_id?: string;
   add_to_queue?: boolean;
+  // Pre-scraped metadata for admin_request (skips youtube-scraper call)
+  title?: string;
+  artist?: string;
+  thumbnail?: string;
+  duration?: number;
 }) {
   try {
     if (!supabaseAnonKey) {
