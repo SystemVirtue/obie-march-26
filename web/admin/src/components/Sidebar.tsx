@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { ViewId, QueueItem, AuthUser, JukeboxSummary } from '../types';
 
 const NAV = [
+  { id: 'search',    icon: '🔍', label: 'Search',    children: [] as { id: ViewId; label: string }[] },
   { id: 'queue',     icon: '🎵', label: 'Queue',     children: [] as { id: ViewId; label: string }[] },
   { id: 'playlists', icon: '📋', label: 'Playlists', children: [
     { id: 'playlists-all'     as ViewId, label: 'All Playlists' },
