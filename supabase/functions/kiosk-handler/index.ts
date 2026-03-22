@@ -789,22 +789,12 @@ Deno.serve(async (req)=>{
         });
       }
       try {
-        const { data: existing, error: fetchErr } = await supabase.from('kiosk_sessions').select('credits').eq('session_id', session_id).single();
-        if (fetchErr || !existing) {
-          return new Response(JSON.stringify({
-            error: 'Session not found'
-          }), {
-            status: 404,
-            headers: {
-              ...corsHeaders,
-              'Content-Type': 'application/json'
-            }
-          });
-        }
-        const newCredits = (existing.credits || 0) + amount;
-        const { data: updated, error: updErr } = await supabase.from('kiosk_sessions').update({
-          credits: newCredits
-        }).eq('session_id', session_id).select().single();
+        // Use atomic increment via RPC to avoid read-then-write race conditions
+        // when multiple coins are inserted rapidly.
+        const { data: updated, error: updErr } = await supabase.rpc('kiosk_increment_credit', {
+          p_session_id: session_id,
+          p_amount: amount,
+        });
         if (updErr) {
           console.error('Failed to update credits:', updErr);
           return new Response(JSON.stringify({
@@ -817,8 +807,9 @@ Deno.serve(async (req)=>{
             }
           });
         }
+        // kiosk_increment_credit returns the new credit total as a plain INT
         return new Response(JSON.stringify({
-          credits: updated.credits
+          credits: updated
         }), {
           status: 200,
           headers: {
