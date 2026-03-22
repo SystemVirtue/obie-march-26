@@ -4,9 +4,7 @@ import {
   subscribeToPlayerSettings,
   subscribeToQueue,
   subscribeToPlayerStatus,
-  subscribeToTable,
   callKioskHandler,
-  getTotalCredits,
   resolveJukeboxSlug,
   type KioskSession,
   type PlayerSettings,
@@ -107,22 +105,14 @@ export function useKioskSession({ defaultPlayerId, storageKey }: UseKioskSession
     if (!identityReady || !activePlayerId) return;
     if (!session) return;
 
+    // Subscribe only to the current session — credits shown must match what
+    // kiosk_request_enqueue checks (per-session, not pooled across all sessions).
     const sub = subscribeToKioskSession(session.session_id, (s) => {
       setSession(s);
     });
 
-    const tableSub = subscribeToTable('kiosk_sessions', { column: 'player_id', value: playerId }, async () => {
-      try {
-        const total = await getTotalCredits(playerId);
-        setSession((prev) => (prev ? { ...prev, credits: total } : prev));
-      } catch (err) {
-        console.error('Failed to fetch total credits after realtime event:', err);
-      }
-    });
-
     return () => {
       sub.unsubscribe();
-      tableSub.unsubscribe();
     };
   }, [identityReady, activePlayerId, playerId, session?.session_id]);
 
