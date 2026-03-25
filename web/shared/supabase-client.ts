@@ -766,6 +766,59 @@ export async function getPlayer(playerId: string): Promise<Player | null> {
 }
 
 /**
+ * Subscribe to real-time changes on a player record
+ */
+export function subscribeToPlayer(
+  playerId: string,
+  callback: (player: Player) => void
+): RealtimeSubscription<Player> {
+  supabase
+    .from('players')
+    .select('*')
+    .eq('id', playerId)
+    .single()
+    .then(({ data }) => { if (data) callback(data as Player); });
+
+  return subscribeToTable<Player>(
+    'players',
+    { column: 'id', value: playerId },
+    (payload) => {
+      if (payload.eventType === 'UPDATE' || payload.eventType === 'INSERT') {
+        callback(payload.new);
+      }
+    }
+  );
+}
+
+/**
+ * Get kiosk sessions for a player (last 24 hours)
+ */
+export async function getKioskSessions(playerId: string): Promise<KioskSession[]> {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await supabase
+    .from('kiosk_sessions')
+    .select('*')
+    .eq('player_id', playerId)
+    .gte('last_active', since)
+    .order('last_active', { ascending: false });
+  if (error) throw error;
+  return data ?? [];
+}
+
+/**
+ * Get a single playlist by ID
+ */
+export async function getPlaylistById(playlistId: string): Promise<Playlist | null> {
+  const { data, error } = await supabase
+    .from('playlists')
+    .select('*')
+    .eq('id', playlistId)
+    .single();
+  if (error) return null;
+  return data as Playlist;
+}
+
+/**
  * Get all playlists for a player
  */
 export async function getPlaylists(playerId: string): Promise<Playlist[]> {
