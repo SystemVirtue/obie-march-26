@@ -15,6 +15,7 @@ export interface Player {
   status: 'offline' | 'online' | 'error';
   last_heartbeat: string;
   active_playlist_id: string | null;
+  priority_player_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -637,7 +638,7 @@ export async function callDownloadVideo(params: {
 export async function callKioskHandler(params: {
   session_id?: string;
   player_id?: string;
-  action: 'init' | 'search' | 'credit' | 'request' | 'check' | 'search_r2' | 'request_r2' | 'admin_request';
+  action: 'init' | 'heartbeat' | 'search' | 'credit' | 'request' | 'check' | 'search_r2' | 'request_r2' | 'admin_request';
   query?: string;
   media_item_id?: string;
   amount?: number;
