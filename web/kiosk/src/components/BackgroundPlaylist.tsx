@@ -100,14 +100,29 @@ export const DEFAULT_BACKGROUND_ASSETS: BackgroundAsset[] = [
     duration: 20
   },
   {
+    id: 'obie-wall-animation-1',
+    type: 'video',
+    src: '/assets/background/Obie-Wall_Animation_1.mp4'
+  },
+  {
     id: 'obie-shield-crest-animation',
     type: 'video',
     src: '/assets/background/Obie_Shield_Crest_Animation.mp4'
   },
   {
+    id: 'obie-wall-animation-2',
+    type: 'video',
+    src: '/assets/background/Obie-Wall_Animation_2.mp4'
+  },
+  {
     id: 'obie-carla-v1',
     type: 'video',
     src: '/assets/background/Obie - Carla v1.mp4'
+  },
+  {
+    id: 'obie-wall-animation-3',
+    type: 'video',
+    src: '/assets/background/Obie-Wall_Animation_3..mp4'
   },
   // {
   //   id: 'st-patricks-day-2026-slot-a',
@@ -119,6 +134,11 @@ export const DEFAULT_BACKGROUND_ASSETS: BackgroundAsset[] = [
     type: 'image',
     src: '/assets/background/Obie_NEON2.png',
     duration: 20
+  },
+  {
+    id: 'obie-wall-animation-4',
+    type: 'video',
+    src: '/assets/background/Obie-Wall_Animation_4..mp4'
   },
   {
     id: 'obie-shield-crest-animation2',
