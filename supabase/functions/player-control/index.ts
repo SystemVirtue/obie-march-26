@@ -262,8 +262,11 @@ Deno.serve(async (req)=>{
           }
         });
       }
-      // If song ended naturally (from Player), trigger queue_next
-      if (action === 'ended' || state === 'idle') {
+      // If song ended naturally (from Player), trigger queue_next.
+      // Only action='ended' should advance the queue — the old '|| state === 'idle''
+      // branch was a latent bug that would fire queue_next for any status update
+      // that happened to include state:'idle' (e.g. a stale heartbeat).
+      if (action === 'ended') {
         // Check if this player is the priority player before allowing queue progression
         const { data: player } = await supabase
           .from('players')

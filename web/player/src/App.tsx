@@ -260,7 +260,15 @@ function App() {
       } else {
         await fadeOut();
       }
-      // Don't set skip loading flag - we'll fade back in immediately after loading
+      // Set skip-loading flag NOW — before the async callPlayerControl — so that
+      // the YouTube loading effect sees it even if the Supabase Realtime event for
+      // state='loading' (fired by queue_next's DB write) arrives before the HTTP
+      // response from callPlayerControl returns.  Without this, the race causes
+      // the new video to load at setVolume(100) instead of 0, silently undoing
+      // the fade-out that just completed.
+      if (isSkip) {
+        isSkipLoadingRef.current = true;
+      }
     }
 
     try {
@@ -288,11 +296,6 @@ function App() {
           metadata: {},
         };
         console.log('[Player] Loading next media from queue_next result:', nextMedia);
-
-        // If this was a skip, mark it so we can fade in when video starts
-        if (isSkip) {
-          isSkipLoadingRef.current = true;
-        }
 
         setCurrentMedia(nextMedia);
 
@@ -355,9 +358,15 @@ function App() {
       }
 
       console.log('[Player] No more items in queue - result:', result);
+      // No video loaded — clear the skip-loading flag so the next natural end
+      // doesn't incorrectly apply a fade-in to a non-skip transition.
+      isSkipLoadingRef.current = false;
       setCurrentMedia(null);
     } catch (error) {
       console.error('[Player] Failed to call queue_next:', error);
+      // On error, clear the skip-loading flag to avoid a stale true value
+      // affecting the next video load.
+      isSkipLoadingRef.current = false;
     } finally {
       // Do NOT reset isEndingRef on a short timer.  Instead, keep the guard active
       // until the next video actually starts PLAYING (reset in onPlayerStateChange
@@ -642,7 +651,12 @@ function App() {
           console.log('[Player] Skip detected from Admin - triggering fade and skip');
           await reportEndedAndNext(true); // Skip with fade
           prevStateRef.current = newState;
-          setStatus(newStatus);
+          // Do NOT call setStatus(newStatus) here with the stale 'idle' snapshot.
+          // By the time reportEndedAndNext returns, queue_next has already run and
+          // the DB is in 'loading' state.  Writing the stale 'idle' into React state
+          // causes recoverFromIdle to evaluate status.state==='idle' and queue up a
+          // redundant second call.  The next Realtime event (state='loading') will
+          // update React state correctly via the normal setStatus path below.
           return; // Exit early, don't process other state changes
         }
         
