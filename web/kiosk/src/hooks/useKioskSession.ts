@@ -101,6 +101,24 @@ export function useKioskSession({ defaultPlayerId, storageKey }: UseKioskSession
     playerStatusRef.current = playerStatus;
   }, [playerStatus]);
 
+  // Heartbeat: keep last_active fresh so the admin panel can detect disconnects.
+  // Fires every 30 s; the admin side marks sessions Offline after 90 s without a heartbeat.
+  useEffect(() => {
+    if (!identityReady || !activePlayerId || !session) return;
+    const interval = setInterval(async () => {
+      try {
+        await callKioskHandler({
+          player_id: playerId,
+          action: 'heartbeat',
+          session_id: session.session_id,
+        });
+      } catch (e) {
+        console.warn('[kiosk] heartbeat failed', e);
+      }
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [identityReady, activePlayerId, playerId, session?.session_id]);
+
   useEffect(() => {
     if (!identityReady || !activePlayerId) return;
     if (!session) return;

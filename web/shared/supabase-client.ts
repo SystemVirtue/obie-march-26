@@ -766,6 +766,19 @@ export async function getPlayer(playerId: string): Promise<Player | null> {
 }
 
 /**
+ * Batch-fetch multiple player records by ID (for multi-player Connected Devices view)
+ */
+export async function getPlayersByIds(playerIds: string[]): Promise<Player[]> {
+  if (!playerIds.length) return [];
+  const { data, error } = await supabase
+    .from('players')
+    .select('*')
+    .in('id', playerIds);
+  if (error) throw error;
+  return (data ?? []) as Player[];
+}
+
+/**
  * Subscribe to real-time changes on a player record
  */
 export function subscribeToPlayer(
@@ -794,7 +807,9 @@ export function subscribeToPlayer(
  * Get kiosk sessions for a player (last 24 hours)
  */
 export async function getKioskSessions(playerId: string): Promise<KioskSession[]> {
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  // 5-minute window: with a 30-second heartbeat, a closed kiosk goes stale within ~90 s
+  // (Offline threshold) and drops off this list within 5 min.
+  const since = new Date(Date.now() - 5 * 60 * 1000).toISOString();
   const { data, error } = await supabase
     .from('kiosk_sessions')
     .select('*')

@@ -21,6 +21,27 @@ Deno.serve(async (req)=>{
     const body = await req.json();
     const { action } = body;
     console.log('Action:', action);
+    // Handle kiosk heartbeat — keeps last_active fresh so the admin Connected Devices panel
+    // can detect disconnects (sessions with stale last_active are shown as Offline/removed).
+    if (action === 'heartbeat') {
+      const { session_id } = body;
+      if (!session_id) {
+        return new Response(JSON.stringify({ error: 'session_id required' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      const { error } = await supabase
+        .from('kiosk_sessions')
+        .update({ last_active: new Date().toISOString() })
+        .eq('session_id', session_id);
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     // Handle session initialization
     if (action === 'init') {
       console.log('Creating new kiosk session');
