@@ -122,7 +122,7 @@ export const DEFAULT_BACKGROUND_ASSETS: BackgroundAsset[] = [
   {
     id: 'obie-wall-animation-3',
     type: 'video',
-    src: '/assets/background/Obie-Wall_Animation_3..mp4'
+    src: '/assets/background/Obie-Wall_Animation_3.mp4'
   },
   // {
   //   id: 'st-patricks-day-2026-slot-a',
@@ -138,7 +138,7 @@ export const DEFAULT_BACKGROUND_ASSETS: BackgroundAsset[] = [
   {
     id: 'obie-wall-animation-4',
     type: 'video',
-    src: '/assets/background/Obie-Wall_Animation_4..mp4'
+    src: '/assets/background/Obie-Wall_Animation_4.mp4'
   },
   {
     id: 'obie-shield-crest-animation2',
