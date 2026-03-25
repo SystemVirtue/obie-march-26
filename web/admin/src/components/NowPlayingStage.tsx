@@ -5,17 +5,17 @@ import { fmtDuration } from '../types';
 import { Spinner } from './ui';
 import type { Player, KioskSession } from '@shared/supabase-client';
 
-function getKioskStatus(session: KioskSession): { label: string; color: string } {
-  const now = Date.now();
-  const lastActive = new Date(session.last_active).getTime();
-  // 90 s = 3 missed heartbeats (heartbeat fires every 30 s from useKioskSession)
-  if (now - lastActive > 90 * 1000) return { label: 'Offline', color: '#6b7280' };
+const HEARTBEAT_TTL = 90_000; // 90 s — 3 missed heartbeats @ 30 s interval
+
+function isStale(timestamp: string): boolean {
+  return Date.now() - new Date(timestamp).getTime() > HEARTBEAT_TTL;
+}
+
+function kioskNetworkLabel(session: KioskSession): string {
   const ip = session.ip_address ?? '';
-  const isLocal = /^(10\.|192\.168\.|127\.|172\.(1[6-9]|2\d|3[01])\.)/.test(ip);
-  return {
-    label: isLocal ? 'Online - Local' : 'Online - Network',
-    color: '#22c55e',
-  };
+  return /^(10\.|192\.168\.|127\.|172\.(1[6-9]|2\d|3[01])\.)/.test(ip)
+    ? 'Online · Local'
+    : 'Online · Network';
 }
 
 export function NowPlayingStage({ status, queue, settings, players, activePlayerId, kioskSessions, activePlaylistName, onPlayPause, onSkip, isSkipping, onRemove }: {
@@ -101,16 +101,13 @@ export function NowPlayingStage({ status, queue, settings, players, activePlayer
               Connected Devices
             </div>
 
-            {/* One row per player device */}
-            {(players ?? []).map(player => {
-              const isActive  = player.id === activePlayerId;
+            {/* One row per player device — hidden once heartbeat goes stale */}
+            {(players ?? []).filter(p => !isStale(p.last_heartbeat)).map(player => {
+              const isActive   = player.id === activePlayerId;
               const isPriority = player.priority_player_id === player.id;
-              const isOnline  = player.status === 'online';
-              const isError   = player.status === 'error';
-              const dotColor  = isOnline ? '#22c55e' : isError ? '#ef4444' : '#6b7280';
-              const roleLabel = isPriority ? 'Priority' : 'Slave';
-              const roleColor = isPriority ? '#a78bfa' : '#f59e0b';
-              const stateText = isActive
+              const roleLabel  = isPriority ? 'Priority' : 'Slave';
+              const roleColor  = isPriority ? '#a78bfa' : '#f59e0b';
+              const stateText  = isActive
                 ? (status?.state === 'playing' ? 'Playing'
                   : status?.state === 'paused'  ? 'Paused'
                   : status?.state === 'idle'    ? 'Idle'
@@ -121,7 +118,7 @@ export function NowPlayingStage({ status, queue, settings, players, activePlayer
                   background: isActive ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.04)',
                   marginBottom: 2 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 2 }}>
-                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: dotColor, flexShrink: 0 }} />
+                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', flexShrink: 0 }} />
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.5)',
                       textTransform: 'uppercase', letterSpacing: '0.06em', flex: 1 }}>
                       {player.jukebox_slug || player.name}
@@ -129,42 +126,41 @@ export function NowPlayingStage({ status, queue, settings, players, activePlayer
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: roleColor,
                       letterSpacing: '0.04em' }}>{roleLabel}</span>
                   </div>
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9,
-                    color: 'rgba(255,255,255,0.32)', paddingLeft: 11 }}>
-                    <span style={{ color: dotColor }}>
-                      {isOnline ? 'Online' : isError ? 'Error' : 'Offline'}
-                    </span>
-                    {stateText && <span style={{ marginLeft: 6, color: 'rgba(255,255,255,0.22)' }}>{stateText}</span>}
-                  </div>
+                  {stateText && (
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9,
+                      color: 'rgba(255,255,255,0.32)', paddingLeft: 11 }}>
+                      {stateText}
+                    </div>
+                  )}
                 </div>
               );
             })}
 
-            {/* Kiosk rows */}
-            {(kioskSessions ?? []).length > 0 && (() => {
-              const sessions = kioskSessions!;
+            {/* Kiosk rows — stale sessions (> 90 s) are filtered out */}
+            {(() => {
+              const liveSessions = (kioskSessions ?? []).filter(s => !isStale(s.last_active));
+              if (!liveSessions.length) return null;
               return (
                 <div style={{ padding: '5px 8px', borderRadius: 8, background: 'rgba(255,255,255,0.05)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
                     <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#3b82f6', flexShrink: 0 }} />
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.5)',
                       textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                      Kiosk{sessions.length > 1 ? ` ×${sessions.length}` : ''}
+                      Kiosk{liveSessions.length > 1 ? ` ×${liveSessions.length}` : ''}
                     </span>
                   </div>
-                  {sessions.slice(0, 3).map(session => {
-                    const { label, color } = getKioskStatus(session);
-                    return (
-                      <div key={session.session_id} style={{ display: 'flex', alignItems: 'center', gap: 4,
-                        paddingLeft: 11, marginBottom: 2 }}>
-                        <div style={{ width: 5, height: 5, borderRadius: '50%', background: color, flexShrink: 0 }} />
-                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.28)' }}>
-                          {session.session_id.slice(0, 8)}
-                        </span>
-                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color, marginLeft: 2 }}>{label}</span>
-                      </div>
-                    );
-                  })}
+                  {liveSessions.slice(0, 3).map(session => (
+                    <div key={session.session_id} style={{ display: 'flex', alignItems: 'center', gap: 4,
+                      paddingLeft: 11, marginBottom: 2 }}>
+                      <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#22c55e', flexShrink: 0 }} />
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.28)' }}>
+                        {session.session_id.slice(0, 8)}
+                      </span>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#22c55e', marginLeft: 2 }}>
+                        {kioskNetworkLabel(session)}
+                      </span>
+                    </div>
+                  ))}
                   {(settings?.kiosk_coin_acceptor_connected != null) && (
                     <div style={{ paddingLeft: 11, marginTop: 3, fontFamily: 'var(--font-mono)', fontSize: 9,
                       color: 'rgba(255,255,255,0.28)' }}>
@@ -183,7 +179,8 @@ export function NowPlayingStage({ status, queue, settings, players, activePlayer
             })()}
 
             {/* No-devices fallback */}
-            {!(players ?? []).length && (kioskSessions ?? []).length === 0 && (
+            {!(players ?? []).filter(p => !isStale(p.last_heartbeat)).length &&
+             !(kioskSessions ?? []).filter(s => !isStale(s.last_active)).length && (
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.18)' }}>
                 No devices
               </div>
