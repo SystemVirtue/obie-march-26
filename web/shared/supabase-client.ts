@@ -638,7 +638,7 @@ export async function callDownloadVideo(params: {
 export async function callKioskHandler(params: {
   session_id?: string;
   player_id?: string;
-  action: 'init' | 'search' | 'credit' | 'request' | 'check' | 'search_r2' | 'request_r2' | 'admin_request';
+  action: 'init' | 'heartbeat' | 'search' | 'credit' | 'request' | 'check' | 'search_r2' | 'request_r2' | 'admin_request';
   query?: string;
   media_item_id?: string;
   amount?: number;
