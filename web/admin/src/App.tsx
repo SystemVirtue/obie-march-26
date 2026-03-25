@@ -218,16 +218,20 @@ function App() {
     return () => subs.forEach(s => s.unsubscribe());
   }, [user, availableJukeboxes]);
 
-  // Kiosk sessions — scoped to the currently-viewed jukebox
+  // Kiosk sessions — scoped to the currently-viewed jukebox.
+  // Realtime fires on any row change; 60 s interval is a fallback in case
+  // the realtime event is missed (e.g. first heartbeat after page load).
   useEffect(() => {
     if (!user || !activePlayerId) return;
-    getKioskSessions(activePlayerId).then(setKioskSessions).catch(console.error);
+    const fetch = () => getKioskSessions(activePlayerId).then(setKioskSessions).catch(console.error);
+    fetch();
     const kSub = subscribeToTable<KioskSession>(
       'kiosk_sessions',
       { column: 'player_id', value: activePlayerId },
-      () => getKioskSessions(activePlayerId).then(setKioskSessions).catch(console.error)
+      fetch
     );
-    return () => kSub.unsubscribe();
+    const poll = setInterval(fetch, 60_000);
+    return () => { kSub.unsubscribe(); clearInterval(poll); };
   }, [user, activePlayerId]);
 
   // Derive active playlist name from the current jukebox's active_playlist_id
