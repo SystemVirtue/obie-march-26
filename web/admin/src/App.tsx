@@ -9,6 +9,7 @@ import {
   subscribeToTable,
   callQueueManager,
   callPlayerControl,
+  callRadioGenerator,
   signOut,
   getCurrentUser,
   getUserPlayerId,
@@ -63,6 +64,7 @@ function App() {
   const [status, setStatus]     = useState<PlayerStatus | null>(null);
   const [settings, setSettings] = useState<PlayerSettings | null>(null);
   const [isShuffling, setIsShuffling] = useState(false);
+  const [isGeneratingRadio, setIsGeneratingRadio] = useState(false);
   const [isSkipping,  setIsSkipping]  = useState(false);
   const isSkippingRef = useRef(false);
   useEffect(() => { isSkippingRef.current = isSkipping; }, [isSkipping]);
@@ -276,6 +278,19 @@ function App() {
     finally { setIsShuffling(false); }
   };
 
+  const handleStartRadio = async (source: 'now_playing' | 'history' | 'playlist') => {
+    setIsGeneratingRadio(true);
+    try {
+      const result = await callRadioGenerator({
+        player_id: activePlayerId ?? PLAYER_ID,
+        action: 'generate',
+        source,
+      });
+      console.log('[Radio] Generated:', result);
+    } catch (e) { console.error('[Radio] Failed:', e); }
+    finally { setIsGeneratingRadio(false); }
+  };
+
   const handlePlayPause = async () => {
     try {
       const newState = status?.state === 'playing' ? 'paused' : 'playing';
@@ -341,7 +356,10 @@ function App() {
           {isQueueView && (
             <QueuePanel queue={queue} status={status}
               onRemove={handleRemove} onReorder={handleReorder}
-              onShuffle={handleShuffle} isShuffling={isShuffling} />
+              onShuffle={handleShuffle} isShuffling={isShuffling}
+              onStartRadio={handleStartRadio} isGeneratingRadio={isGeneratingRadio}
+              hasNowPlaying={!!status?.current_media_id}
+              hasActivePlaylist={!!activePlayer?.active_playlist_id} />
           )}
           {isPlaylistView && <PlaylistsPanel view={view} playerId={activePlayerId} activePlaylistId={activePlayer?.active_playlist_id ?? undefined} />}
           {isScriptsView  && <ScriptsPanel playerId={activePlayerId} />}

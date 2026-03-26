@@ -710,6 +710,14 @@ export async function callYouTubeScraper(params: { url: string }) {
   return await invokeEdgeFunction('youtube-scraper', params, { preferSession: false });
 }
 
+export async function callRadioGenerator(params: {
+  player_id: string;
+  action: 'generate';
+  source: 'now_playing' | 'history' | 'playlist';
+}) {
+  return await invokeEdgeFunction('radio-generator', params, { preferSession: false });
+}
+
 /**
  * Initialize player with default playlist and start auto-play
  */
