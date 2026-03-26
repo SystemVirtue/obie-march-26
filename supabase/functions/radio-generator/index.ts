@@ -8,6 +8,7 @@ import { callYouTubeScraperWithFallback } from '../_shared/youtube-scraper-calle
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const PRIMARY_MODEL = 'meta-llama/llama-3.3-70b-instruct:free';
 const FALLBACK_MODEL = 'openrouter/free';
+const FALLBACK_MODEL_2 = 'google/gemma-2-9b-it:free';
 const MAX_ARTIST_COUNT = 2;
 
 interface SeedTrack {
@@ -84,7 +85,8 @@ function enforceArtistCap(tracks: { title: string; artist: string; mediaId: stri
 // ─── OpenRouter LLM Call ────────────────────────────────────────────────────
 
 async function callLLM(prompt: string, apiKey: string): Promise<string> {
-  const models = [PRIMARY_MODEL, FALLBACK_MODEL];
+  const models = [PRIMARY_MODEL, FALLBACK_MODEL, FALLBACK_MODEL_2];
+  const errors: string[] = [];
 
   for (const model of models) {
     try {
@@ -107,26 +109,32 @@ async function callLLM(prompt: string, apiKey: string): Promise<string> {
 
       if (!response.ok) {
         const errText = await response.text();
-        console.error(`[Radio] OpenRouter ${model} error ${response.status}: ${errText}`);
+        const errMsg = `${model}: HTTP ${response.status} - ${errText.slice(0, 300)}`;
+        console.error(`[Radio] ${errMsg}`);
+        errors.push(errMsg);
         continue;
       }
 
       const data = await response.json();
       const content = data.choices?.[0]?.message?.content;
       if (!content) {
-        console.error(`[Radio] No content in response from ${model}`);
+        const errMsg = `${model}: No content in response - ${JSON.stringify(data).slice(0, 200)}`;
+        console.error(`[Radio] ${errMsg}`);
+        errors.push(errMsg);
         continue;
       }
 
       console.log(`[Radio] Got response from ${model} (${content.length} chars)`);
       return content;
     } catch (err) {
-      console.error(`[Radio] ${model} failed:`, err);
+      const errMsg = `${model}: ${err.message}`;
+      console.error(`[Radio] ${errMsg}`);
+      errors.push(errMsg);
       continue;
     }
   }
 
-  throw new Error('All LLM models failed');
+  throw new Error(`All LLM models failed: ${errors.join(' | ')}`);
 }
 
 // ─── R2 Fuzzy Match ─────────────────────────────────────────────────────────
@@ -222,8 +230,8 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const openrouterApiKey = Deno.env.get('OPENROUTER_API_KEY');
-    if (!openrouterApiKey) throw new Error('OPENROUTER_API_KEY not configured');
+    const openrouterApiKey = Deno.env.get('OPENROUTER_API_KEY') ?? Deno.env.get('DJAMMS_RADIO');
+    if (!openrouterApiKey) throw new Error('OPENROUTER_API_KEY (or DJAMMS_RADIO) not configured');
 
     const serviceRoleToken = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? Deno.env.get('SERVICE_ROLE_JWT');
     const anonJwt = Deno.env.get('SUPABASE_ANON_KEY');
@@ -250,6 +258,31 @@ try {
 }
 
 const { action, player_id, source } = body;
+
+    // Debug action: test OpenRouter connectivity without full pipeline
+    if (action === 'debug') {
+      const testResponse = await fetch(OPENROUTER_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${openrouterApiKey}`,
+          'HTTP-Referer': 'https://djamms.app',
+          'X-Title': 'DJAMMS Radio Generator',
+        },
+        body: JSON.stringify({
+          model: PRIMARY_MODEL,
+          messages: [{ role: 'user', content: 'Say hello in 5 words.' }],
+          max_tokens: 50,
+        }),
+      });
+      const testData = await testResponse.text();
+      return new Response(JSON.stringify({
+        status: testResponse.status,
+        key_prefix: openrouterApiKey.slice(0, 12) + '...',
+        model: PRIMARY_MODEL,
+        response: testData.slice(0, 500),
+      }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
 
     if (action !== 'generate') {
       return new Response(JSON.stringify({ error: `Unknown action: ${action}` }), {
