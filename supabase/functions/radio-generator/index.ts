@@ -125,6 +125,14 @@ async function callLLM(prompt: string, apiKey: string): Promise<string> {
       }
 
       console.log(`[Radio] Got response from ${model} (${content.length} chars)`);
+      try {
+        parseRecommendations(content); // validate before accepting
+      } catch (parseErr) {
+        const errMsg = `${model}: parse failed - ${parseErr.message}`;
+        console.error(`[Radio] ${errMsg}`);
+        errors.push(errMsg);
+        continue;
+      }
       return content;
     } catch (err) {
       const errMsg = `${model}: ${err.message}`;
@@ -238,29 +246,35 @@ Deno.serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
     const supabase = createServiceClient();
 
-const raw = await req.text();
-if (!raw) {
-  return new Response(JSON.stringify({ error: 'Request body is required (JSON).' }), {
-    status: 400,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-  });
-}
+    const raw = await req.text();
+    if (!raw) {
+      return new Response(JSON.stringify({ error: 'Request body is required (JSON).' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
-let body: any;
-try {
-  body = JSON.parse(raw);
-} catch (e) {
-  console.error('[Radio] Invalid JSON body:', raw);
-  return new Response(JSON.stringify({ error: 'Invalid JSON body.' }), {
-    status: 400,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-  });
-}
+    let body: any;
+    try {
+      body = JSON.parse(raw);
+    } catch (e) {
+      console.error('[Radio] Invalid JSON body:', raw);
+      return new Response(JSON.stringify({ error: 'Invalid JSON body.' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
-const { action, player_id, source } = body;
+    const { action, player_id, source } = body;
 
-    // Debug action: test OpenRouter connectivity without full pipeline
+    // Debug action: test OpenRouter connectivity (service role only)
     if (action === 'debug') {
+      const authHeader = req.headers.get('Authorization')?.replace(/^Bearer\s+/i, '');
+      if (!authHeader || authHeader !== serviceRoleToken) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
       const testResponse = await fetch(OPENROUTER_API_URL, {
         method: 'POST',
         headers: {
@@ -275,12 +289,10 @@ const { action, player_id, source } = body;
           max_tokens: 50,
         }),
       });
-      const testData = await testResponse.text();
       return new Response(JSON.stringify({
+        ok: testResponse.ok,
         status: testResponse.status,
-        key_prefix: openrouterApiKey.slice(0, 12) + '...',
         model: PRIMARY_MODEL,
-        response: testData.slice(0, 500),
       }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
