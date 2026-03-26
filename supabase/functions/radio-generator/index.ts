@@ -6,9 +6,9 @@ import { createServiceClient } from '../_shared/supabase-client.ts';
 import { callYouTubeScraperWithFallback } from '../_shared/youtube-scraper-caller.ts';
 
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const PRIMARY_MODEL = 'meta-llama/llama-3.3-70b-instruct:free';
-const FALLBACK_MODEL = 'openrouter/free';
-const FALLBACK_MODEL_2 = 'google/gemma-2-9b-it:free';
+const PRIMARY_MODEL = 'deepseek/deepseek-chat';
+const FALLBACK_MODEL = 'google/gemini-2.0-flash-lite-001';
+const FALLBACK_MODEL_2 = 'meta-llama/llama-3.3-70b-instruct:free';
 const MAX_ARTIST_COUNT = 2;
 
 interface SeedTrack {
