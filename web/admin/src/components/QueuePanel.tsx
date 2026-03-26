@@ -1,3 +1,4 @@
+import { useState, useRef, useEffect } from 'react';
 import {
   DndContext,
   closestCenter,
@@ -38,20 +39,121 @@ function SortableQueueItem({ item, onRemove }: { item: QueueItem; onRemove: (id:
   );
 }
 
-export function QueuePanel({ queue, status, onRemove, onReorder, onShuffle, isShuffling }: {
+type RadioSource = 'now_playing' | 'history' | 'playlist';
+
+function RadioPopover({ onSelect, onClose, hasNowPlaying, hasActivePlaylist, isGenerating }: {
+  onSelect: (source: RadioSource) => void;
+  onClose: () => void;
+  hasNowPlaying: boolean;
+  hasActivePlaylist: boolean;
+  isGenerating: boolean;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [onClose]);
+
+  const optionStyle = (disabled: boolean): React.CSSProperties => ({
+    display: 'block',
+    width: '100%',
+    padding: '10px 14px',
+    background: 'transparent',
+    border: 'none',
+    borderBottom: '1px solid rgba(255,255,255,0.06)',
+    color: disabled ? 'rgba(255,255,255,0.2)' : '#fff',
+    fontFamily: 'var(--font-mono)',
+    fontSize: 12,
+    textAlign: 'left',
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    letterSpacing: '0.04em',
+  });
+
+  return (
+    <div ref={ref} style={{
+      position: 'absolute', top: '100%', right: 0, marginTop: 6, zIndex: 100,
+      background: '#1a1a2e', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 10,
+      boxShadow: '0 8px 32px rgba(0,0,0,0.5)', minWidth: 220, overflow: 'hidden',
+    }}>
+      <div style={{ padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.08)',
+        fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.12em',
+        color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase' }}>
+        Source for new Radio
+      </div>
+      <button style={optionStyle(!hasNowPlaying)} disabled={!hasNowPlaying || isGenerating}
+        onClick={() => onSelect('now_playing')}>
+        NOW PLAYING
+        <span style={{ display: 'block', fontSize: 10, color: 'rgba(255,255,255,0.3)', marginTop: 2 }}>
+          Radio based on current song
+        </span>
+      </button>
+      <button style={optionStyle(false)} disabled={isGenerating}
+        onClick={() => onSelect('history')}>
+        HISTORY
+        <span style={{ display: 'block', fontSize: 10, color: 'rgba(255,255,255,0.3)', marginTop: 2 }}>
+          Based on up to 20 recent songs
+        </span>
+      </button>
+      <button style={optionStyle(!hasActivePlaylist)} disabled={!hasActivePlaylist || isGenerating}
+        onClick={() => onSelect('playlist')}>
+        PLAYLIST
+        <span style={{ display: 'block', fontSize: 10, color: 'rgba(255,255,255,0.3)', marginTop: 2 }}>
+          Based on current playlist
+        </span>
+      </button>
+      <button style={{ ...optionStyle(false), borderBottom: 'none', color: 'rgba(255,255,255,0.4)' }}
+        onClick={onClose}>
+        CANCEL
+      </button>
+    </div>
+  );
+}
+
+export function QueuePanel({ queue, status, onRemove, onReorder, onShuffle, isShuffling,
+  onStartRadio, isGeneratingRadio, hasNowPlaying, hasActivePlaylist }: {
   queue: QueueItem[]; status: PlayerStatus | null;
   onRemove: (id: string) => void; onReorder: (e: DragEndEvent) => void;
   onShuffle: () => void; isShuffling: boolean;
+  onStartRadio: (source: RadioSource) => void; isGeneratingRadio: boolean;
+  hasNowPlaying: boolean; hasActivePlaylist: boolean;
 }) {
+  const [showRadioPopover, setShowRadioPopover] = useState(false);
   const sensors = useSensors(useSensor(PointerSensor), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
   const normalQ   = queue.filter(q => q.type === 'normal'   && q.media_item_id !== status?.current_media_id);
   const priorityQ = queue.filter(q => q.type === 'priority' && q.media_item_id !== status?.current_media_id);
   const totalCount = normalQ.length + priorityQ.length;
 
+  const handleRadioSelect = (source: RadioSource) => {
+    setShowRadioPopover(false);
+    onStartRadio(source);
+  };
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <PanelHeader title="Queue" subtitle={`${totalCount} song${totalCount !== 1 ? 's' : ''}`}
-        actions={<Btn variant="accent" onClick={onShuffle} disabled={isShuffling}>{isShuffling ? <><Spinner size={12} /> Shuffling…</> : '🔀 Shuffle'}</Btn>}
+        actions={
+          <div style={{ display: 'flex', gap: 6, position: 'relative' }}>
+            <Btn variant="accent" onClick={() => setShowRadioPopover(v => !v)} disabled={isGeneratingRadio}>
+              {isGeneratingRadio ? <><Spinner size={12} /> Generating…</> : 'Start Radio'}
+            </Btn>
+            <Btn variant="accent" onClick={onShuffle} disabled={isShuffling}>
+              {isShuffling ? <><Spinner size={12} /> Shuffling…</> : 'Shuffle'}
+            </Btn>
+            {showRadioPopover && (
+              <RadioPopover
+                onSelect={handleRadioSelect}
+                onClose={() => setShowRadioPopover(false)}
+                hasNowPlaying={hasNowPlaying}
+                hasActivePlaylist={hasActivePlaylist}
+                isGenerating={isGeneratingRadio}
+              />
+            )}
+          </div>
+        }
       />
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px' }}>
