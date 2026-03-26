@@ -230,8 +230,26 @@ Deno.serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
     const supabase = createServiceClient();
 
-    const body = await req.json();
-    const { action, player_id, source } = body;
+const raw = await req.text();
+if (!raw) {
+  return new Response(JSON.stringify({ error: 'Request body is required (JSON).' }), {
+    status: 400,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
+
+let body: any;
+try {
+  body = JSON.parse(raw);
+} catch (e) {
+  console.error('[Radio] Invalid JSON body:', raw);
+  return new Response(JSON.stringify({ error: 'Invalid JSON body.' }), {
+    status: 400,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
+
+const { action, player_id, source } = body;
 
     if (action !== 'generate') {
       return new Response(JSON.stringify({ error: `Unknown action: ${action}` }), {
