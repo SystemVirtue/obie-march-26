@@ -93,7 +93,7 @@ async function callLLM(prompt: string, apiKey: string): Promise<string> {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
+          'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
           'HTTP-Referer': 'https://djamms.app',
           'X-Title': 'DJAMMS Radio Generator',
         },
