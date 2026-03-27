@@ -10,6 +10,7 @@ import {
   callPlayerControl,
   callQueueManager,
   callPlaylistManager,
+  callRadioGenerator,
   initializePlayerPlaylist,
   type PlayerStatus,
   type MediaItem,
@@ -52,6 +53,7 @@ function App() {
   const isSkipLoadingRef = useRef(false); // Track if loading after skip
   const recentlyLoadedRef = useRef(false); // Track if video was recently loaded and should auto-play
   const isEndingRef = useRef(false); // In-flight guard: prevents double queue_next from concurrent calls
+  const autoRadioInFlightRef = useRef(false); // Prevents duplicate auto-radio generation
   const loadingTimeoutRef = useRef<number | null>(null); // Timeout to skip if status stays in 'loading' for 6+ seconds
   const videoHasPlayedRef = useRef(false); // true once current video reaches YouTube state PLAYING; reset on new media
   const unexpectedPauseTimeoutRef = useRef<number | null>(null); // Timeout to auto-advance if paused before video ever played
@@ -211,6 +213,39 @@ function App() {
     });
   }, []);
 
+  // Auto-generate radio from history when queue has no remaining items
+  const checkAndTriggerAutoRadio = useCallback(async () => {
+    if (autoRadioInFlightRef.current || !activePlayerId) return;
+
+    try {
+      const { data: remaining, error } = await supabase
+        .from('queue')
+        .select('id')
+        .eq('player_id', PLAYER_ID)
+        .is('played_at', null)
+        .limit(1);
+
+      if (!error && (!remaining || remaining.length === 0)) {
+        console.log('[Player] Queue empty after current song — auto-generating radio from history');
+        autoRadioInFlightRef.current = true;
+        try {
+          await callRadioGenerator({
+            player_id: PLAYER_ID,
+            action: 'generate',
+            source: 'history',
+          });
+          console.log('[Player] Auto-radio generation complete');
+        } catch (radioErr) {
+          console.error('[Player] Auto-radio generation failed:', radioErr);
+        } finally {
+          autoRadioInFlightRef.current = false;
+        }
+      }
+    } catch (err) {
+      console.error('[Player] Failed to check remaining queue:', err);
+    }
+  }, [activePlayerId, PLAYER_ID]);
+
   // Report video ended and trigger queue_next (disabled for slave players)
   const reportEndedAndNext = useCallback(async (isSkip = false) => {
     // Slave players do not trigger queue operations
@@ -243,17 +278,24 @@ function App() {
         await ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'pause' }) }).catch(() => {});
         ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'setVolume', data: 100 }) }).catch(() => {});
       } else if (localPlaybackUrlRef.current) {
-        // Local/Cloudflare playback uses an HTMLVideoElement, so explicitly stop it.
-        // Without this, admin skip can advance queue state while the old video keeps playing.
+        // Local/Cloudflare playback uses an HTMLVideoElement — fade audio then stop.
         const localVideo = localVideoRef.current;
         if (localVideo) {
           try {
+            // Fade out audio over 1 second before stopping
+            const steps = 20;
+            const interval = 1000 / steps;
+            const startVol = localVideo.volume;
+            for (let i = 1; i <= steps; i++) {
+              await new Promise(r => setTimeout(r, interval));
+              localVideo.volume = Math.max(0, startVol * (1 - i / steps));
+            }
             localVideo.pause();
             localVideo.currentTime = 0;
             localVideo.removeAttribute('src');
             localVideo.load();
           } catch (error) {
-            console.warn('[Player] Failed to fully stop local/Cloudflare video on skip:', error);
+            console.warn('[Player] Failed to fade/stop local/Cloudflare video on skip:', error);
           }
         }
         setLocalPlaybackUrl(null);
@@ -422,6 +464,9 @@ function App() {
       }
       reportStatus('playing');
 
+      // Proactively generate radio if this is the last song in queue
+      checkAndTriggerAutoRadio();
+
       // If we're at volume 0 (after skip), fade in
       if (playerRef.current) {
         const currentVol = ((): number => {
@@ -478,7 +523,7 @@ function App() {
       console.log('[Player] Video BUFFERING');
       reportStatus('loading');
     }
-  }, [reportStatus, reportEndedAndNext, fadeIn]);
+  }, [reportStatus, reportEndedAndNext, fadeIn, checkAndTriggerAutoRadio]);
 
   // Handle playback errors — any YouTube player error skips immediately to the next video.
   // Error codes:
