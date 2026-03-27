@@ -57,6 +57,7 @@ function App() {
   const recentlyLoadedRef = useRef(false); // Track if video was recently loaded and should auto-play
   const isEndingRef = useRef(false); // In-flight guard: prevents double queue_next from concurrent calls
   const autoRadioInFlightRef = useRef(false); // Prevents duplicate auto-radio generation
+  const checkAutoRadioRef = useRef<(() => void) | null>(null); // Stable ref for auto-radio check
   const loadingTimeoutRef = useRef<number | null>(null); // Timeout to skip if status stays in 'loading' for 6+ seconds
   const videoHasPlayedRef = useRef(false); // true once current video reaches YouTube state PLAYING; reset on new media
   const unexpectedPauseTimeoutRef = useRef<number | null>(null); // Timeout to auto-advance if paused before video ever played
@@ -248,6 +249,7 @@ function App() {
       console.error('[Player] Failed to check remaining queue:', err);
     }
   }, [activePlayerId, PLAYER_ID]);
+  checkAutoRadioRef.current = checkAndTriggerAutoRadio;
 
   // Report video ended and trigger queue_next (disabled for slave players)
   const reportEndedAndNext = useCallback(async (isSkip = false) => {
@@ -468,7 +470,7 @@ function App() {
       reportStatus('playing');
 
       // Proactively generate radio if this is the last song in queue
-      checkAndTriggerAutoRadio();
+      checkAutoRadioRef.current?.();
 
       // If we're at volume 0 (after skip), fade in
       if (playerRef.current) {
@@ -526,7 +528,7 @@ function App() {
       console.log('[Player] Video BUFFERING');
       reportStatus('loading');
     }
-  }, [reportStatus, reportEndedAndNext, fadeIn, checkAndTriggerAutoRadio]);
+  }, [reportStatus, reportEndedAndNext, fadeIn]);
 
   // Handle playback errors — any YouTube player error skips immediately to the next video.
   // Error codes:
