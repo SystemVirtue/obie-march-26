@@ -1186,3 +1186,53 @@ export function subscribeToAuth(callback: (user: AuthUser | null) => void): { un
     unsubscribe: () => subscription.unsubscribe(),
   };
 }
+
+// ─── App Version Auto-Reload ──────────────────────────────────────────────────
+
+/**
+ * Subscribe to app_config version changes via Realtime.
+ * On first connect, reads the current version from the DB.
+ * When a newer version is detected, calls `onVersionChange` with the new version.
+ * Typical usage: call window.location.reload() in the callback.
+ */
+export function subscribeToAppVersion(onVersionChange: (newVersion: string) => void): { unsubscribe: () => void } {
+  let loadedVersion: string | null = null;
+
+  // Read initial version
+  supabase
+    .from('app_config')
+    .select('value')
+    .eq('key', 'app_version')
+    .maybeSingle()
+    .then(({ data }) => {
+      if (data?.value) {
+        loadedVersion = data.value;
+        console.log(`[AppVersion] Loaded version: ${loadedVersion}`);
+      }
+    });
+
+  // Subscribe to changes
+  const channel = supabase.channel('app_config:app_version');
+  channel
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'app_config',
+        filter: 'key=eq.app_version',
+      },
+      (payload: any) => {
+        const newVersion = payload.new?.value;
+        if (newVersion && loadedVersion && newVersion !== loadedVersion) {
+          console.log(`[AppVersion] Version changed: ${loadedVersion} → ${newVersion}`);
+          onVersionChange(newVersion);
+        }
+      }
+    )
+    .subscribe();
+
+  return {
+    unsubscribe: () => supabase.removeChannel(channel),
+  };
+}
