@@ -24,7 +24,7 @@ interface LLMRecommendation {
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function calculateTargetCount(seedCount: number): number {
-  return Math.min(50, Math.max(10, Math.round(seedCount * 2.5)));
+  return Math.min(40, Math.max(10, Math.round(seedCount * 2.5)));
 }
 
 function formatTimestamp(): string {
@@ -214,20 +214,38 @@ async function loadSeedsPlaylist(supabase: any, playerId: string): Promise<SeedT
     .eq('id', playerId)
     .maybeSingle();
 
-  if (!player?.active_playlist_id) throw new Error('No active playlist');
+  // Try reading playlist_items from the active playlist
+  if (player?.active_playlist_id) {
+    const { data: items } = await supabase
+      .from('playlist_items')
+      .select('media_item:media_items(title, artist)')
+      .eq('playlist_id', player.active_playlist_id)
+      .order('position', { ascending: true })
+      .limit(50);
 
-  const { data: items } = await supabase
-    .from('playlist_items')
+    const seeds = (items || [])
+      .filter((i: any) => i.media_item)
+      .map((i: any) => ({ title: i.media_item.title, artist: i.media_item.artist }));
+
+    if (seeds.length > 0) return seeds;
+  }
+
+  // Fallback: read current queue as seed source
+  console.log('[Radio] Active playlist empty or missing, falling back to current queue');
+  const { data: queueItems } = await supabase
+    .from('queue')
     .select('media_item:media_items(title, artist)')
-    .eq('playlist_id', player.active_playlist_id)
+    .eq('player_id', playerId)
+    .eq('type', 'normal')
     .order('position', { ascending: true })
     .limit(50);
 
-  if (!items || items.length === 0) throw new Error('Active playlist is empty');
+  const seeds = (queueItems || [])
+    .filter((q: any) => q.media_item)
+    .map((q: any) => ({ title: q.media_item.title, artist: q.media_item.artist }));
 
-  return items
-    .filter((i: any) => i.media_item)
-    .map((i: any) => ({ title: i.media_item.title, artist: i.media_item.artist }));
+  if (seeds.length === 0) throw new Error('No active playlist or queue items found');
+  return seeds;
 }
 
 // ─── Main Handler ───────────────────────────────────────────────────────────
