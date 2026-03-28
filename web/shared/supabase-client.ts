@@ -362,7 +362,8 @@ export function subscribeToPlayerStatus(
         });
         callback(data as any);
       }
-    });
+    })
+    .catch((err: unknown) => console.error('[subscribeToPlayerStatus] ❌ Initial fetch failed:', err));
 
   return subscribeToTable<PlayerStatus>(
     'player_status',
@@ -400,7 +401,8 @@ export function subscribeToPlayerStatus(
               });
               callback(data as any);
             }
-          });
+          })
+          .catch((err: unknown) => console.error('[subscribeToPlayerStatus] ❌ Update fetch failed:', err));
       }
     }
   );
@@ -450,9 +452,10 @@ export function subscribeToQueue(
         if (data) {
           callback(data as QueueItem[]);
         }
-      });
+      })
+      .catch((err: unknown) => console.error('[subscribeToQueue] ❌ Fetch failed:', err));
   };
-  
+
   // Fetch initial queue
   fetchQueue();
 
@@ -486,7 +489,8 @@ export function subscribeToPlayerSettings(
     .single()
     .then(({ data }) => {
       if (data) callback(data);
-    });
+    })
+    .catch((err: unknown) => console.error('[subscribeToPlayerSettings] ❌ Initial fetch failed:', err));
 
   return subscribeToTable<PlayerSettings>(
     'player_settings',
@@ -514,7 +518,8 @@ export function subscribeToKioskSession(
     .single()
     .then(({ data }) => {
       if (data) callback(data);
-    });
+    })
+    .catch((err: unknown) => console.error('[subscribeToKioskSession] ❌ Initial fetch failed:', err));
 
   return subscribeToTable<KioskSession>(
     'kiosk_sessions',
@@ -1209,7 +1214,8 @@ export function subscribeToAppVersion(onVersionChange: (newVersion: string) => v
         loadedVersion = data.value;
         console.log(`[AppVersion] Loaded version: ${loadedVersion}`);
       }
-    });
+    })
+    .catch((err: unknown) => console.error('[AppVersion] ❌ Initial fetch failed:', err));
 
   // Subscribe to changes
   const channel = supabase.channel('app_config:app_version');

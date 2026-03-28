@@ -3,7 +3,6 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { io } from 'socket.io-client';
-import { useAppVersionReload } from '@shared/useAppVersionReload';
 import {
   supabase,
   subscribeToPlayerStatus,
@@ -36,8 +35,6 @@ declare global {
 }
 
 function App() {
-  useAppVersionReload(5000); // Auto-reload on deploy (5s delay to avoid interrupting playback)
-
   const { activePlayerId, identityReady, playerId: PLAYER_ID } = usePlayerIdentity({
     defaultPlayerId: DEFAULT_PLAYER_ID,
     storageKey: PLAYER_JUKEBOX_STORAGE_KEY,
