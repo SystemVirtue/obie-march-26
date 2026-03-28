@@ -296,33 +296,7 @@ Deno.serve(async (req)=>{
         if (nextError) {
           console.error('[player-control] ❌ Failed to get next item:', nextError);
         } else {
-          console.log('[player-control] 🎵 Queue_next returned:', {
-            next_item: nextItem,
-            media_id: nextItem?.[0]?.id?.slice(0, 8) || 'none',
-            title: nextItem?.[0]?.title?.slice(0, 30) || 'none',
-            url: nextItem?.[0]?.url?.slice(0, 50) || 'none'
-          });
-          
-          // Also check what's in the queue now
-          const { data: currentQueue } = await supabase
-            .from('queue')
-            .select('id, media_item_id, type, position, played_at, media_items!inner(*)')
-            .eq('player_id', player_id)
-            .is('played_at', null)
-            .order('type', { ascending: false })
-            .order('position', { ascending: true });
-            
-          console.log('[player-control] 📋 Current queue after queue_next:', {
-            total_items: currentQueue?.length || 0,
-            items: currentQueue?.map(item => ({
-              id: item.id.slice(0, 8),
-              media_id: item.media_item_id?.slice(0, 8),
-              type: item.type,
-              position: item.position,
-              title: item.media_items?.title?.slice(0, 30) || 'none',
-              played_at: item.played_at
-            }))
-          });
+          console.log('[player-control] 🎵 Queue_next returned:', nextItem?.[0]?.title?.slice(0, 30) || 'none');
         }
         return new Response(JSON.stringify({
           success: true,

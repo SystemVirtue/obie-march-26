@@ -333,76 +333,61 @@ export function subscribeToTable<T = any>(
 }
 
 /**
- * Subscribe to player status updates
+ * Subscribe to player status updates.
+ * Uses the Realtime payload directly for progress/state updates,
+ * only refetching with media_items join when current_media_id changes.
  */
 export function subscribeToPlayerStatus(
   playerId: string,
   callback: (status: PlayerStatus) => void
 ): RealtimeSubscription<PlayerStatus> {
+  // Track the last known status so we can merge Realtime payloads
+  let lastStatus: PlayerStatus | null = null;
+  let lastMediaId: string | null = null;
+
+  const fetchFullStatus = () => {
+    supabase
+      .from('player_status')
+      .select('*, current_media:media_items(*)')
+      .eq('player_id', playerId)
+      .single()
+      .then(({ data, error }) => {
+        if (error) {
+          console.error('[subscribeToPlayerStatus] ❌ Fetch error:', error);
+          return;
+        }
+        if (data) {
+          lastStatus = data as PlayerStatus;
+          lastMediaId = lastStatus.current_media_id;
+          callback(lastStatus);
+        }
+      })
+      .catch((err: unknown) => console.error('[subscribeToPlayerStatus] ❌ Fetch failed:', err));
+  };
+
   // Fetch initial status with media_item join
-  console.log('[subscribeToPlayerStatus] 🎵 Fetching initial player status...');
-  supabase
-    .from('player_status')
-    .select('*, current_media:media_items(*)')
-    .eq('player_id', playerId)
-    .single()
-    .then(({ data, error }) => {
-      if (error) {
-        console.error('[subscribeToPlayerStatus] ❌ Initial status error:', error);
-        return;
-      }
-      
-      if (data) {
-        console.log('[subscribeToPlayerStatus] 📺 Initial status:', {
-          state: (data as any).state,
-          current_media_id: (data as any).current_media_id?.slice(0, 8) || 'none',
-          title: (data as any).current_media?.title?.slice(0, 30) || 'none',
-          progress: (data as any).progress,
-          last_updated: (data as any).last_updated
-        });
-        callback(data as any);
-      }
-    })
-    .catch((err: unknown) => console.error('[subscribeToPlayerStatus] ❌ Initial fetch failed:', err));
+  fetchFullStatus();
 
   return subscribeToTable<PlayerStatus>(
     'player_status',
     { column: 'player_id', value: playerId },
     (payload) => {
-      console.log('[subscribeToPlayerStatus] 🔄 Status change detected:', {
-        eventType: payload.eventType,
-        old_state: payload.old?.state,
-        new_state: payload.new?.state,
-        old_media_id: payload.old?.current_media_id?.slice(0, 8) || 'none',
-        new_media_id: payload.new?.current_media_id?.slice(0, 8) || 'none'
-      });
-      
       if (payload.eventType === 'UPDATE' || payload.eventType === 'INSERT') {
-        // Fetch with media_item join
-        console.log('[subscribeToPlayerStatus] 🔄 Fetching updated status with media...');
-        supabase
-          .from('player_status')
-          .select('*, current_media:media_items(*)')
-          .eq('player_id', playerId)
-          .single()
-          .then(({ data, error }) => {
-            if (error) {
-              console.error('[subscribeToPlayerStatus] ❌ Update fetch error:', error);
-              return;
-            }
-            
-            if (data) {
-              console.log('[subscribeToPlayerStatus] 📺 Updated status:', {
-                state: (data as any).state,
-                current_media_id: (data as any).current_media_id?.slice(0, 8) || 'none',
-                title: (data as any).current_media?.title?.slice(0, 30) || 'none',
-                progress: (data as any).progress,
-                last_updated: (data as any).last_updated
-              });
-              callback(data as any);
-            }
-          })
-          .catch((err: unknown) => console.error('[subscribeToPlayerStatus] ❌ Update fetch failed:', err));
+        const newRow = payload.new;
+        const mediaChanged = newRow.current_media_id !== lastMediaId;
+
+        if (mediaChanged) {
+          // Media changed — need to fetch the joined media_items row
+          lastMediaId = newRow.current_media_id;
+          fetchFullStatus();
+        } else if (lastStatus) {
+          // Progress/state only — merge Realtime payload, skip refetch
+          lastStatus = { ...lastStatus, ...newRow };
+          callback(lastStatus);
+        } else {
+          // No cached status yet — do a full fetch
+          fetchFullStatus();
+        }
       }
     }
   );
