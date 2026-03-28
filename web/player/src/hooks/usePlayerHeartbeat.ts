@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { callPlayerControl, type PlayerStatus } from '@shared/supabase-client';
 
 type UsePlayerHeartbeatArgs = {
@@ -7,6 +7,9 @@ type UsePlayerHeartbeatArgs = {
 };
 
 export function usePlayerHeartbeat({ isSlavePlayer, playerId }: UsePlayerHeartbeatArgs) {
+  const lastReportedStateRef = useRef<string | null>(null);
+  const lastProgressReportRef = useRef<number>(0);
+
   // Send a heartbeat every 30 s so players.status stays 'online' and the admin
   // Connected Devices panel can detect disconnects. Both priority and slave
   // players heartbeat — the server-side player_heartbeat() handles multi-device.
@@ -23,6 +26,22 @@ export function usePlayerHeartbeat({ isSlavePlayer, playerId }: UsePlayerHeartbe
     if (isSlavePlayer) {
       console.log('[Slave Player] Skipping status report:', { state, progress });
       return;
+    }
+
+    // Throttle progress-only updates to once every 10 seconds.
+    // State changes (playing->paused, idle->playing, etc.) always fire immediately.
+    const isStateChange = state !== lastReportedStateRef.current;
+    if (!isStateChange && progress !== undefined) {
+      const now = Date.now();
+      if (now - lastProgressReportRef.current < 10_000) {
+        return; // Skip this progress-only update
+      }
+      lastProgressReportRef.current = now;
+    }
+
+    if (isStateChange) {
+      lastReportedStateRef.current = state;
+      lastProgressReportRef.current = Date.now();
     }
 
     console.log('[Player] Reporting status:', { state, progress });

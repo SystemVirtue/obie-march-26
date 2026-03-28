@@ -8,7 +8,8 @@ export type ViewId =
   | 'queue'
   | 'playlists-all' | 'playlists-import' | 'playlists-channel'
   | 'settings-playback' | 'settings-kiosk' | 'settings-branding' | 'settings-scripts' | 'settings-prefs'
-  | 'logs';
+  | 'logs'
+  | 'server';
 
 export interface Prefs {
   accent: string;

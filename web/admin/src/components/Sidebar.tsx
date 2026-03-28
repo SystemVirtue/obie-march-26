@@ -17,6 +17,7 @@ const NAV = [
     { id: 'settings-prefs'    as ViewId, label: 'Console Preferences' },
   ]},
   { id: 'logs',      icon: '📄', label: 'Logs',      children: [] as { id: ViewId; label: string }[] },
+  { id: 'server',    icon: '🖥️', label: 'Server',    children: [] as { id: ViewId; label: string }[] },
 ];
 
 export function Sidebar({ view, setView, queue, user, onSignOut, jukeboxes, activeJukeboxSlug, onSwitchJukebox, onCreateJukebox }: {
