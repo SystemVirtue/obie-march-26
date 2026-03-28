@@ -2,7 +2,6 @@
 // All data flows through real Supabase subscriptions and Edge Function calls.
 
 import { useEffect, useState, useRef } from 'react';
-import { useAppVersionReload } from '@shared/useAppVersionReload';
 import {
   subscribeToQueue,
   subscribeToPlayerStatus,
@@ -53,8 +52,6 @@ import { LogsPanel } from './components/LogsPanel';
 // ─────────────────────────────────────────────────────────────────────────────
 
 function App() {
-  useAppVersionReload(2000); // Auto-reload on deploy
-
   const [user, setUser]         = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [routeSlug, setRouteSlug] = useState<string>(() => getPathJukeboxSlug());

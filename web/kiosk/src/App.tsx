@@ -2,7 +2,6 @@
 // Server-driven credit system and priority queue
 
 import { useRef, useState } from 'react';
-import { useAppVersionReload } from '../../shared/useAppVersionReload';
 import {
   callKioskHandler,
 } from '../../shared/supabase-client';
@@ -22,8 +21,6 @@ const DEFAULT_PLAYER_ID = import.meta.env.VITE_PLAYER_ID || '00000000-0000-0000-
 const KIOSK_JUKEBOX_STORAGE_KEY = 'obie_kiosk_jukebox_slug';
 
 function App() {
-  useAppVersionReload(2000); // Auto-reload on deploy
-
   const {
     activePlayerId,
     activeJukeboxSlug,
