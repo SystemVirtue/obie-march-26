@@ -345,24 +345,25 @@ export function subscribeToPlayerStatus(
   let lastStatus: PlayerStatus | null = null;
   let lastMediaId: string | null = null;
 
-  const fetchFullStatus = () => {
-    supabase
-      .from('player_status')
-      .select('*, current_media:media_items(*)')
-      .eq('player_id', playerId)
-      .single()
-      .then(({ data, error }) => {
-        if (error) {
-          console.error('[subscribeToPlayerStatus] ❌ Fetch error:', error);
-          return;
-        }
-        if (data) {
-          lastStatus = data as PlayerStatus;
-          lastMediaId = lastStatus.current_media_id;
-          callback(lastStatus);
-        }
-      })
-      .catch((err: unknown) => console.error('[subscribeToPlayerStatus] ❌ Fetch failed:', err));
+  const fetchFullStatus = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('player_status')
+        .select('*, current_media:media_items(*)')
+        .eq('player_id', playerId)
+        .single();
+      if (error) {
+        console.error('[subscribeToPlayerStatus] ❌ Fetch error:', error);
+        return;
+      }
+      if (data) {
+        lastStatus = data as PlayerStatus;
+        lastMediaId = lastStatus.current_media_id;
+        callback(lastStatus);
+      }
+    } catch (err) {
+      console.error('[subscribeToPlayerStatus] ❌ Fetch failed:', err);
+    }
   };
 
   // Fetch initial status with media_item join
@@ -402,43 +403,27 @@ export function subscribeToQueue(
 ): RealtimeSubscription<QueueItem> {
   let refetchTimeout: ReturnType<typeof setTimeout> | null = null;
   
-  const fetchQueue = () => {
-    console.log('[subscribeToQueue] 🔄 Fetching queue from database...');
-    const fetchTime = new Date().toISOString();
-    console.log('[subscribeToQueue] ⏰ Fetch timestamp:', fetchTime);
-    
-    supabase
-      .from('queue')
-      .select('id, player_id, type, media_item_id, position, requested_by, requested_at, played_at, expires_at, media_item:media_items(*)')
-      .eq('player_id', playerId)
-      .is('played_at', null)
-      .order('type', { ascending: false })
-      .order('position', { ascending: true })
-      .then(({ data, error }) => {
-        if (error) {
-          console.error('[subscribeToQueue] ❌ Database error:', error);
-          return;
-        }
-        
-        console.log('[subscribeToQueue] 📊 Fetched', data?.length || 0, 'items from database');
-        if (data && data.length > 0) {
-          console.log('[subscribeToQueue] 📋 Queue data:', (data as any[]).map(item => ({
-            id: item.id?.slice(0, 8) || 'unknown',
-            type: item.type || 'unknown',
-            position: item.position || -1,
-            media_id: item.media_item_id?.slice(0, 8) || 'unknown',
-            title: item.media_item?.title?.slice(0, 30) || 'unknown',
-            played_at: item.played_at || null
-          })));
-        } else {
-          console.log('[subscribeToQueue] 📋 Queue is empty');
-        }
-        
-        if (data) {
-          callback(data as QueueItem[]);
-        }
-      })
-      .catch((err: unknown) => console.error('[subscribeToQueue] ❌ Fetch failed:', err));
+  const fetchQueue = async () => {
+    try {
+      console.log('[subscribeToQueue] 🔄 Fetching queue from database...');
+      const { data, error } = await supabase
+        .from('queue')
+        .select('id, player_id, type, media_item_id, position, requested_by, requested_at, played_at, expires_at, media_item:media_items(*)')
+        .eq('player_id', playerId)
+        .is('played_at', null)
+        .order('type', { ascending: false })
+        .order('position', { ascending: true });
+      if (error) {
+        console.error('[subscribeToQueue] ❌ Database error:', error);
+        return;
+      }
+      console.log('[subscribeToQueue] 📊 Fetched', data?.length || 0, 'items from database');
+      if (data) {
+        callback(data as QueueItem[]);
+      }
+    } catch (err) {
+      console.error('[subscribeToQueue] ❌ Fetch failed:', err);
+    }
   };
 
   // Fetch initial queue
@@ -467,15 +452,18 @@ export function subscribeToPlayerSettings(
   callback: (settings: PlayerSettings) => void
 ): RealtimeSubscription<PlayerSettings> {
   // Fetch initial settings
-  supabase
-    .from('player_settings')
-    .select('*')
-    .eq('player_id', playerId)
-    .single()
-    .then(({ data }) => {
+  (async () => {
+    try {
+      const { data } = await supabase
+        .from('player_settings')
+        .select('*')
+        .eq('player_id', playerId)
+        .single();
       if (data) callback(data);
-    })
-    .catch((err: unknown) => console.error('[subscribeToPlayerSettings] ❌ Initial fetch failed:', err));
+    } catch (err) {
+      console.error('[subscribeToPlayerSettings] ❌ Initial fetch failed:', err);
+    }
+  })();
 
   return subscribeToTable<PlayerSettings>(
     'player_settings',
@@ -496,15 +484,18 @@ export function subscribeToKioskSession(
   callback: (session: KioskSession) => void
 ): RealtimeSubscription<KioskSession> {
   // Fetch initial session
-  supabase
-    .from('kiosk_sessions')
-    .select('*')
-    .eq('session_id', sessionId)
-    .single()
-    .then(({ data }) => {
+  (async () => {
+    try {
+      const { data } = await supabase
+        .from('kiosk_sessions')
+        .select('*')
+        .eq('session_id', sessionId)
+        .single();
       if (data) callback(data);
-    })
-    .catch((err: unknown) => console.error('[subscribeToKioskSession] ❌ Initial fetch failed:', err));
+    } catch (err) {
+      console.error('[subscribeToKioskSession] ❌ Initial fetch failed:', err);
+    }
+  })();
 
   return subscribeToTable<KioskSession>(
     'kiosk_sessions',
@@ -1189,18 +1180,21 @@ export function subscribeToAppVersion(onVersionChange: (newVersion: string) => v
   let loadedVersion: string | null = null;
 
   // Read initial version
-  supabase
-    .from('app_config')
-    .select('value')
-    .eq('key', 'app_version')
-    .maybeSingle()
-    .then(({ data }) => {
-      if (data?.value) {
-        loadedVersion = data.value;
+  (async () => {
+    try {
+      const { data } = await supabase
+        .from('app_config')
+        .select('value')
+        .eq('key', 'app_version')
+        .maybeSingle();
+      if (data && (data as any).value) {
+        loadedVersion = (data as any).value;
         console.log(`[AppVersion] Loaded version: ${loadedVersion}`);
       }
-    })
-    .catch((err: unknown) => console.error('[AppVersion] ❌ Initial fetch failed:', err));
+    } catch (err) {
+      console.error('[AppVersion] ❌ Initial fetch failed:', err);
+    }
+  })();
 
   // Subscribe to changes
   const channel = supabase.channel('app_config:app_version');
