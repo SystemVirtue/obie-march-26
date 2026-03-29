@@ -94,16 +94,19 @@ function App() {
   // Fade out audio and opacity over 2 seconds
   const fadeOut = useCallback((): Promise<void> => {
     return new Promise((resolve) => {
-      if (!playerRef.current || !playerDivRef.current) {
+      // Only require a volume-controllable source — don't bail if playerDivRef is null
+      // (YouTube IFrame API replaces the original div, so the ref can become stale).
+      const ytPlayer = playerRef.current;
+      const localVideo = localVideoRef.current;
+      if (!ytPlayer && !localVideo) {
         resolve();
         return;
       }
 
       const startVolume = ((): number => {
-        if (!playerRef.current) return 100;
-        if (typeof playerRef.current.getVolume === 'function') return playerRef.current.getVolume();
-        // HTMLMediaElement uses 0..1 volume
-        if (typeof (playerRef.current as any).volume === 'number') return (playerRef.current as any).volume * 100;
+        if (ytPlayer && typeof ytPlayer.getVolume === 'function') return ytPlayer.getVolume();
+        if (ytPlayer && typeof (ytPlayer as any).volume === 'number') return (ytPlayer as any).volume * 100;
+        if (localVideo) return localVideo.volume * 100;
         return 100;
       })();
       const startOpacity = 1;
@@ -123,13 +126,18 @@ function App() {
         const newVolume = startVolume * (1 - progress);
         const newOpacity = startOpacity * (1 - progress);
 
-        if (playerRef.current) {
-          if (typeof playerRef.current.setVolume === 'function') {
-            playerRef.current.setVolume(Math.max(0, newVolume));
-          } else if (typeof (playerRef.current as any).volume === 'number') {
-            (playerRef.current as any).volume = Math.max(0, Math.min(1, Math.max(0, newVolume) / 100));
+        // Fade volume on whichever source is active
+        if (ytPlayer) {
+          if (typeof ytPlayer.setVolume === 'function') {
+            ytPlayer.setVolume(Math.max(0, newVolume));
+          } else if (typeof (ytPlayer as any).volume === 'number') {
+            (ytPlayer as any).volume = Math.max(0, Math.min(1, Math.max(0, newVolume) / 100));
           }
         }
+        if (localVideo) {
+          localVideo.volume = Math.max(0, Math.min(1, Math.max(0, newVolume) / 100));
+        }
+        // Opacity is cosmetic — only apply if the div ref is still valid
         if (playerDivRef.current) {
           playerDivRef.current.style.opacity = String(Math.max(0, newOpacity));
         }
@@ -169,12 +177,14 @@ function App() {
   // Fade in audio and opacity over 2 seconds
   const fadeIn = useCallback((): Promise<void> => {
     return new Promise((resolve) => {
-      if (!playerRef.current || !playerDivRef.current) {
+      const ytPlayer = playerRef.current;
+      const localVideo = localVideoRef.current;
+      if (!ytPlayer && !localVideo) {
         resolve();
         return;
       }
 
-      const targetVolume = 100; // Can be made configurable later
+      const targetVolume = 100;
       const targetOpacity = 1;
       const duration = 2000; // 2 seconds
       const steps = 60; // 60 fps
@@ -192,12 +202,15 @@ function App() {
         const newVolume = targetVolume * progress;
         const newOpacity = targetOpacity * progress;
 
-        if (playerRef.current) {
-          if (typeof playerRef.current.setVolume === 'function') {
-            playerRef.current.setVolume(Math.min(100, newVolume));
-          } else if (typeof (playerRef.current as any).volume === 'number') {
-            (playerRef.current as any).volume = Math.min(1, Math.max(0, Math.min(100, newVolume) / 100));
+        if (ytPlayer) {
+          if (typeof ytPlayer.setVolume === 'function') {
+            ytPlayer.setVolume(Math.min(100, newVolume));
+          } else if (typeof (ytPlayer as any).volume === 'number') {
+            (ytPlayer as any).volume = Math.min(1, Math.max(0, Math.min(100, newVolume) / 100));
           }
+        }
+        if (localVideo) {
+          localVideo.volume = Math.min(1, Math.max(0, newVolume / 100));
         }
         if (playerDivRef.current) {
           playerDivRef.current.style.opacity = String(Math.min(1, newOpacity));
