@@ -63,6 +63,7 @@ function App() {
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   // Tracks the YouTube ID of the currently-loaded video (legacy reference, kept for potential future use)
   const currentYouTubeIdRef = useRef<string | null>(null);
+  const lastVideoLoadTimeRef = useRef<number>(0); // Timestamp of last loadVideoById call, used to reject stale ENDED events
   const localVideoLastReportRef = useRef<number>(0); // Throttle local video progress reports
   const localPlaybackUrlRef = useRef<string | null>(null); // Mirror of localPlaybackUrl for use inside callbacks
 
@@ -530,7 +531,16 @@ function App() {
         }
       }
     } else if (event.data === 0) {
-      // ENDED - trigger queue progression
+      // ENDED - trigger queue progression.
+      // Guard: YouTube fires stale ENDED events 2-3 s after loadVideoById for the
+      // previous video.  These arrive after the new video's PLAYING event has
+      // already reset isEndingRef, so isEndingRef alone cannot block them.
+      // Reject any ENDED that arrives within 3 s of loading the current video.
+      const msSinceLoad = Date.now() - lastVideoLoadTimeRef.current;
+      if (msSinceLoad < 3000) {
+        console.warn(`[Player] Ignoring ENDED — only ${msSinceLoad}ms since last video load (stale YouTube event)`);
+        return;
+      }
       console.log('[Player] Video ENDED - calling queue_next');
       reportEndedAndNext();
     } else if (event.data === 3) {
@@ -1072,8 +1082,9 @@ function App() {
         }
         playerRef.current.setVolume(0);
         isSkipLoadingRef.current = false; // Reset flag
-        
+
         // Load and explicitly play video (will trigger fade-in when playing state is detected)
+        lastVideoLoadTimeRef.current = Date.now(); // Guard stale ENDED events for 3 s
         playerRef.current.loadVideoById(youtubeId);
         // Ensure playback starts
         setTimeout(() => {
@@ -1088,8 +1099,9 @@ function App() {
           playerDivRef.current.style.opacity = '1';
         }
         playerRef.current.setVolume(100);
-        
+
         // loadVideoById and explicitly play
+        lastVideoLoadTimeRef.current = Date.now(); // Guard stale ENDED events for 3 s
         playerRef.current.loadVideoById(youtubeId);
         // Ensure playback starts
         setTimeout(() => {
@@ -1106,6 +1118,7 @@ function App() {
     currentMediaIdRef.current = currentMedia.id;
     currentYouTubeIdRef.current = youtubeId;
     videoHasPlayedRef.current = false; // Reset — new player, video hasn't played yet
+    lastVideoLoadTimeRef.current = Date.now(); // Guard stale ENDED events for 3 s
     setPlayerReady(false);
 
     console.log('[Player] Creating YouTube player for video:', youtubeId);
