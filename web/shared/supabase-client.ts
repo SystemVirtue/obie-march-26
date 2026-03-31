@@ -543,6 +543,52 @@ export function subscribeToSystemLogs(
 }
 
 // =============================================================================
+// POLLING + BROADCAST (replaces high-churn Realtime DB subscriptions)
+// =============================================================================
+
+/**
+ * Poll player_status at a regular interval instead of using a Realtime
+ * postgres_changes subscription.  Eliminates the subscription row churn in
+ * realtime.subscription and reduces WAL decoder load.
+ */
+export function pollPlayerStatus(
+  playerId: string,
+  callback: (status: PlayerStatus) => void,
+  intervalMs = 3000
+): { unsubscribe: () => void } {
+  const fetchStatus = async () => {
+    const { data, error } = await supabase
+      .from('player_status')
+      .select('*, current_media:media_items(*)')
+      .eq('player_id', playerId)
+      .single();
+    if (!error && data) callback(data as any);
+  };
+
+  fetchStatus();
+  const id = setInterval(fetchStatus, intervalMs);
+  return { unsubscribe: () => clearInterval(id) };
+}
+
+/**
+ * Subscribe to a player's broadcast channel for real-time progress events.
+ * Use alongside pollPlayerStatus — broadcast carries frequent progress updates
+ * without touching the database or WAL.
+ */
+export function subscribeToPlayerBroadcast(
+  playerId: string,
+  onProgress: (data: { progress: number; state: PlayerStatus['state'] }) => void
+): RealtimeChannel {
+  const channel = supabase
+    .channel(`player-broadcast:${playerId}`)
+    .on('broadcast', { event: 'progress' }, ({ payload }) => {
+      onProgress(payload as { progress: number; state: PlayerStatus['state'] });
+    })
+    .subscribe();
+  return channel;
+}
+
+// =============================================================================
 // API HELPERS
 // =============================================================================
 
