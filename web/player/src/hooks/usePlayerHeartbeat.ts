@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { callPlayerControl, type PlayerStatus } from '@shared/supabase-client';
+import { supabase, callPlayerControl, type PlayerStatus } from '@shared/supabase-client';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 
 type UsePlayerHeartbeatArgs = {
   isSlavePlayer: boolean;
@@ -7,8 +8,8 @@ type UsePlayerHeartbeatArgs = {
 };
 
 export function usePlayerHeartbeat({ isSlavePlayer, playerId }: UsePlayerHeartbeatArgs) {
-  const lastReportedStateRef = useRef<string | null>(null);
-  const lastProgressReportRef = useRef<number>(0);
+  const prevStateRef = useRef<PlayerStatus['state'] | undefined>(undefined);
+  const channelRef = useRef<RealtimeChannel | null>(null);
 
   // Send a heartbeat every 30 s so players.status stays 'online' and the admin
   // Connected Devices panel can detect disconnects. Both priority and slave
@@ -22,29 +23,42 @@ export function usePlayerHeartbeat({ isSlavePlayer, playerId }: UsePlayerHeartbe
     return () => clearInterval(id);
   }, [playerId]);
 
+  // Establish a broadcast channel for sending live progress without DB writes.
+  useEffect(() => {
+    if (isSlavePlayer) return;
+
+    const channel = supabase
+      .channel(`player-broadcast:${playerId}`)
+      .subscribe();
+    channelRef.current = channel;
+
+    return () => {
+      supabase.removeChannel(channel);
+      channelRef.current = null;
+    };
+  }, [isSlavePlayer, playerId]);
+
   const reportStatus = useCallback(async (state: PlayerStatus['state'], progress?: number) => {
     if (isSlavePlayer) {
       console.log('[Slave Player] Skipping status report:', { state, progress });
       return;
     }
 
-    // Throttle progress-only updates to once every 10 seconds.
-    // State changes (playing->paused, idle->playing, etc.) always fire immediately.
-    const isStateChange = state !== lastReportedStateRef.current;
-    if (!isStateChange && progress !== undefined) {
-      const now = Date.now();
-      if (now - lastProgressReportRef.current < 10_000) {
-        return; // Skip this progress-only update
-      }
-      lastProgressReportRef.current = now;
+    const isProgressOnly = state === prevStateRef.current && progress !== undefined;
+
+    if (isProgressOnly && channelRef.current) {
+      // Pure progress heartbeat — broadcast without hitting the DB or WAL.
+      channelRef.current.send({
+        type: 'broadcast',
+        event: 'progress',
+        payload: { progress, state },
+      }).catch(() => {});
+      return;
     }
 
-    if (isStateChange) {
-      lastReportedStateRef.current = state;
-      lastProgressReportRef.current = Date.now();
-    }
-
+    // State change — write to DB so it persists and admin commands are visible.
     console.log('[Player] Reporting status:', { state, progress });
+    prevStateRef.current = state;
     try {
       await callPlayerControl({
         player_id: playerId,

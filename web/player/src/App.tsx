@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { io } from 'socket.io-client';
 import {
   supabase,
-  subscribeToPlayerStatus,
+  pollPlayerStatus,
   subscribeToPlayerSettings,
   callPlayerControl,
   callQueueManager,
@@ -690,14 +690,15 @@ function App() {
   // A client-side effect here would fire on settings-change rather than on playlist-load,
   // causing unexpected re-shuffles and potentially moving the currently playing item.
 
-  // Subscribe to player_status updates from Supabase
+  // Poll player_status for admin commands (pause/skip/resume).
+  // 1-second interval gives responsive admin control without a Realtime DB subscription.
   useEffect(() => {
     if (!identityReady || !activePlayerId) return;
 
-    console.log('[Player] Subscribing to player status...');
+    console.log('[Player] Starting player status poll...');
     const prevStateRef = { current: status?.state };
-    
-    const subscription = subscribeToPlayerStatus(PLAYER_ID, async (newStatus) => {
+
+    const subscription = pollPlayerStatus(PLAYER_ID, async (newStatus) => {
       console.log('[Player] Status update:', newStatus);
       const prevState = prevStateRef.current;
       const newState = newStatus.state;
@@ -792,10 +793,10 @@ function App() {
       } else {
         console.log('[Player] Same media in status update, not updating state');
       }
-    });
+    }, 1000); // 1-second interval for responsive admin commands
 
     return () => {
-      console.log('[Player] Unsubscribing from player status');
+      console.log('[Player] Stopping player status poll');
       subscription.unsubscribe();
     };
   }, [identityReady, activePlayerId, PLAYER_ID, fadeIn, fadeOut, reportEndedAndNext]);

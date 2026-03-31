@@ -3,8 +3,10 @@
 
 import { useEffect, useState, useRef } from 'react';
 import {
+  supabase,
   subscribeToQueue,
-  subscribeToPlayerStatus,
+  pollPlayerStatus,
+  subscribeToPlayerBroadcast,
   subscribeToPlayerSettings,
   subscribeToTable,
   callQueueManager,
@@ -191,16 +193,25 @@ function App() {
     }
   };
 
-  // Realtime subscriptions — deps intentionally omit isSkipping; use ref to avoid subscription churn
+  // Subscriptions — deps intentionally omit isSkipping; use ref to avoid subscription churn
   useEffect(() => {
     if (!user || !activePlayerId) return;
     const q  = subscribeToQueue(activePlayerId, setQueue);
-    const s  = subscribeToPlayerStatus(activePlayerId, (ns) => {
+    // Poll for authoritative state (3s); broadcast for live progress.
+    const s = pollPlayerStatus(activePlayerId, (ns) => {
       setStatus(ns);
       if (isSkippingRef.current && (ns.state === 'playing' || ns.state === 'loading')) setIsSkipping(false);
+    }, 3000);
+    const broadcastCh = subscribeToPlayerBroadcast(activePlayerId, ({ progress }) => {
+      setStatus((prev) => prev ? { ...prev, progress } : prev);
     });
     const ps = subscribeToPlayerSettings(activePlayerId, setSettings);
-    return () => { q.unsubscribe(); s.unsubscribe(); ps.unsubscribe(); };
+    return () => {
+      q.unsubscribe();
+      s.unsubscribe();
+      supabase.removeChannel(broadcastCh);
+      ps.unsubscribe();
+    };
   }, [user, activePlayerId]);
 
   // Subscribe to ALL of the admin's player records so Connected Devices shows every
