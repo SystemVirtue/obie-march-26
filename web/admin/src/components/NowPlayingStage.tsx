@@ -3,9 +3,24 @@ import { cleanDisplayText } from '../../../shared/media-utils';
 import type { PlayerStatus, QueueItem, PlayerSettings } from '../types';
 import { fmtDuration } from '../types';
 import { Spinner } from './ui';
+import type { Player, KioskSession } from '@shared/supabase-client';
 
-export function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipping, onRemove }: {
+const HEARTBEAT_TTL = 90_000; // 90 s — 3 missed heartbeats @ 30 s interval
+
+function isStale(timestamp: string): boolean {
+  return Date.now() - new Date(timestamp).getTime() > HEARTBEAT_TTL;
+}
+
+function kioskNetworkLabel(session: KioskSession): string {
+  const ip = session.ip_address ?? '';
+  return /^(10\.|192\.168\.|127\.|172\.(1[6-9]|2\d|3[01])\.)/.test(ip)
+    ? 'Online · Local'
+    : 'Online · Network';
+}
+
+export function NowPlayingStage({ status, queue, settings, players, activePlayerId, kioskSessions, activePlaylistName, onPlayPause, onSkip, isSkipping, onRemove }: {
   status: PlayerStatus | null; queue: QueueItem[]; settings: PlayerSettings | null;
+  players?: Player[]; activePlayerId?: string; kioskSessions?: KioskSession[]; activePlaylistName?: string | null;
   onPlayPause: () => void; onSkip: () => void; isSkipping: boolean; onRemove: (id: string) => void;
 }) {
   const [showPauseConfirm, setShowPauseConfirm] = useState(false);
@@ -70,6 +85,106 @@ export function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, 
               textShadow: isPlaying ? '0 0 40px rgba(255,255,255,0.15)' : 'none' }}>{title}</h2>
             <p style={{ fontFamily: 'var(--font-display)', fontSize: 15, color: 'rgba(255,255,255,0.55)', marginTop: 4,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: '-0.01em' }}>{artist}</p>
+            {activePlaylistName && (
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.32)',
+                marginTop: 5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                letterSpacing: '0.08em' }}>
+                ▶ {activePlaylistName}
+              </div>
+            )}
+          </div>
+
+          {/* Connected Devices */}
+          <div style={{ width: 200, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.1em',
+              color: 'rgba(255,255,255,0.28)', textTransform: 'uppercase', marginBottom: 2 }}>
+              Connected Devices
+            </div>
+
+            {/* One row per player device — hidden once heartbeat goes stale */}
+            {(players ?? []).filter(p => !isStale(p.last_heartbeat)).map(player => {
+              const isActive   = player.id === activePlayerId;
+              const isPriority = player.priority_player_id === player.id;
+              const roleLabel  = isPriority ? 'Priority' : 'Slave';
+              const roleColor  = isPriority ? '#a78bfa' : '#f59e0b';
+              const stateText  = isActive
+                ? (status?.state === 'playing' ? 'Playing'
+                  : status?.state === 'paused'  ? 'Paused'
+                  : status?.state === 'idle'    ? 'Idle'
+                  : status?.state ?? '')
+                : '';
+              return (
+                <div key={player.id} style={{ padding: '5px 8px', borderRadius: 8,
+                  background: isActive ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.04)',
+                  marginBottom: 2 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 2 }}>
+                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', flexShrink: 0 }} />
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.5)',
+                      textTransform: 'uppercase', letterSpacing: '0.06em', flex: 1 }}>
+                      {player.jukebox_slug || player.name}
+                    </span>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: roleColor,
+                      letterSpacing: '0.04em' }}>{roleLabel}</span>
+                  </div>
+                  {stateText && (
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9,
+                      color: 'rgba(255,255,255,0.32)', paddingLeft: 11 }}>
+                      {stateText}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* Kiosk rows — stale sessions (> 90 s) are filtered out */}
+            {(() => {
+              const liveSessions = (kioskSessions ?? []).filter(s => !isStale(s.last_active));
+              if (!liveSessions.length) return null;
+              return (
+                <div style={{ padding: '5px 8px', borderRadius: 8, background: 'rgba(255,255,255,0.05)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
+                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#3b82f6', flexShrink: 0 }} />
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.5)',
+                      textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                      Kiosk{liveSessions.length > 1 ? ` ×${liveSessions.length}` : ''}
+                    </span>
+                  </div>
+                  {liveSessions.slice(0, 3).map(session => (
+                    <div key={session.session_id} style={{ display: 'flex', alignItems: 'center', gap: 4,
+                      paddingLeft: 11, marginBottom: 2 }}>
+                      <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#22c55e', flexShrink: 0 }} />
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.28)' }}>
+                        {session.session_id.slice(0, 8)}
+                      </span>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#22c55e', marginLeft: 2 }}>
+                        {kioskNetworkLabel(session)}
+                      </span>
+                    </div>
+                  ))}
+                  {(settings?.kiosk_coin_acceptor_connected != null) && (
+                    <div style={{ paddingLeft: 11, marginTop: 3, fontFamily: 'var(--font-mono)', fontSize: 9,
+                      color: 'rgba(255,255,255,0.28)' }}>
+                      Coin:{' '}
+                      <span style={{ color: settings?.kiosk_coin_acceptor_connected
+                        ? (settings?.kiosk_coin_acceptor_enabled ? '#22c55e' : '#fbbf24')
+                        : '#6b7280' }}>
+                        {settings?.kiosk_coin_acceptor_connected
+                          ? (settings?.kiosk_coin_acceptor_enabled ? 'Connected' : 'Disabled')
+                          : 'Disconnected'}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* No-devices fallback */}
+            {!(players ?? []).filter(p => !isStale(p.last_heartbeat)).length &&
+             !(kioskSessions ?? []).filter(s => !isStale(s.last_active)).length && (
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.18)' }}>
+                No devices
+              </div>
+            )}
           </div>
 
           {/* Up Next */}

@@ -4,10 +4,12 @@ import type { QueueItem, PlayerStatus, PlayerSettings, SystemLog, Playlist, Play
 export type { QueueItem, PlayerStatus, PlayerSettings, SystemLog, Playlist, PlaylistItem, MediaItem, AuthUser, JukeboxSummary };
 
 export type ViewId =
+  | 'search'
   | 'queue'
   | 'playlists-all' | 'playlists-import' | 'playlists-channel'
   | 'settings-playback' | 'settings-kiosk' | 'settings-branding' | 'settings-scripts' | 'settings-prefs'
-  | 'logs';
+  | 'logs'
+  | 'server';
 
 export interface Prefs {
   accent: string;

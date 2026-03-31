@@ -10,6 +10,7 @@ import {
   callPlayerControl,
   callQueueManager,
   callPlaylistManager,
+  callRadioGenerator,
   initializePlayerPlaylist,
   type PlayerStatus,
   type MediaItem,
@@ -52,6 +53,8 @@ function App() {
   const isSkipLoadingRef = useRef(false); // Track if loading after skip
   const recentlyLoadedRef = useRef(false); // Track if video was recently loaded and should auto-play
   const isEndingRef = useRef(false); // In-flight guard: prevents double queue_next from concurrent calls
+  const autoRadioInFlightRef = useRef(false); // Prevents duplicate auto-radio generation
+  const checkAutoRadioRef = useRef<(() => void) | null>(null); // Stable ref for auto-radio check
   const loadingTimeoutRef = useRef<number | null>(null); // Timeout to skip if status stays in 'loading' for 6+ seconds
   const videoHasPlayedRef = useRef(false); // true once current video reaches YouTube state PLAYING; reset on new media
   const unexpectedPauseTimeoutRef = useRef<number | null>(null); // Timeout to auto-advance if paused before video ever played
@@ -91,16 +94,19 @@ function App() {
   // Fade out audio and opacity over 2 seconds
   const fadeOut = useCallback((): Promise<void> => {
     return new Promise((resolve) => {
-      if (!playerRef.current || !playerDivRef.current) {
+      // Only require a volume-controllable source — don't bail if playerDivRef is null
+      // (YouTube IFrame API replaces the original div, so the ref can become stale).
+      const ytPlayer = playerRef.current;
+      const localVideo = localVideoRef.current;
+      if (!ytPlayer && !localVideo) {
         resolve();
         return;
       }
 
       const startVolume = ((): number => {
-        if (!playerRef.current) return 100;
-        if (typeof playerRef.current.getVolume === 'function') return playerRef.current.getVolume();
-        // HTMLMediaElement uses 0..1 volume
-        if (typeof (playerRef.current as any).volume === 'number') return (playerRef.current as any).volume * 100;
+        if (ytPlayer && typeof ytPlayer.getVolume === 'function') return ytPlayer.getVolume();
+        if (ytPlayer && typeof (ytPlayer as any).volume === 'number') return (ytPlayer as any).volume * 100;
+        if (localVideo) return localVideo.volume * 100;
         return 100;
       })();
       const startOpacity = 1;
@@ -120,13 +126,18 @@ function App() {
         const newVolume = startVolume * (1 - progress);
         const newOpacity = startOpacity * (1 - progress);
 
-        if (playerRef.current) {
-          if (typeof playerRef.current.setVolume === 'function') {
-            playerRef.current.setVolume(Math.max(0, newVolume));
-          } else if (typeof (playerRef.current as any).volume === 'number') {
-            (playerRef.current as any).volume = Math.max(0, Math.min(1, Math.max(0, newVolume) / 100));
+        // Fade volume on whichever source is active
+        if (ytPlayer) {
+          if (typeof ytPlayer.setVolume === 'function') {
+            ytPlayer.setVolume(Math.max(0, newVolume));
+          } else if (typeof (ytPlayer as any).volume === 'number') {
+            (ytPlayer as any).volume = Math.max(0, Math.min(1, Math.max(0, newVolume) / 100));
           }
         }
+        if (localVideo) {
+          localVideo.volume = Math.max(0, Math.min(1, Math.max(0, newVolume) / 100));
+        }
+        // Opacity is cosmetic — only apply if the div ref is still valid
         if (playerDivRef.current) {
           playerDivRef.current.style.opacity = String(Math.max(0, newOpacity));
         }
@@ -166,12 +177,14 @@ function App() {
   // Fade in audio and opacity over 2 seconds
   const fadeIn = useCallback((): Promise<void> => {
     return new Promise((resolve) => {
-      if (!playerRef.current || !playerDivRef.current) {
+      const ytPlayer = playerRef.current;
+      const localVideo = localVideoRef.current;
+      if (!ytPlayer && !localVideo) {
         resolve();
         return;
       }
 
-      const targetVolume = 100; // Can be made configurable later
+      const targetVolume = 100;
       const targetOpacity = 1;
       const duration = 2000; // 2 seconds
       const steps = 60; // 60 fps
@@ -189,12 +202,15 @@ function App() {
         const newVolume = targetVolume * progress;
         const newOpacity = targetOpacity * progress;
 
-        if (playerRef.current) {
-          if (typeof playerRef.current.setVolume === 'function') {
-            playerRef.current.setVolume(Math.min(100, newVolume));
-          } else if (typeof (playerRef.current as any).volume === 'number') {
-            (playerRef.current as any).volume = Math.min(1, Math.max(0, Math.min(100, newVolume) / 100));
+        if (ytPlayer) {
+          if (typeof ytPlayer.setVolume === 'function') {
+            ytPlayer.setVolume(Math.min(100, newVolume));
+          } else if (typeof (ytPlayer as any).volume === 'number') {
+            (ytPlayer as any).volume = Math.min(1, Math.max(0, Math.min(100, newVolume) / 100));
           }
+        }
+        if (localVideo) {
+          localVideo.volume = Math.min(1, Math.max(0, newVolume / 100));
         }
         if (playerDivRef.current) {
           playerDivRef.current.style.opacity = String(Math.min(1, newOpacity));
@@ -210,6 +226,40 @@ function App() {
       }, stepDuration);
     });
   }, []);
+
+  // Auto-generate radio from history when queue has no remaining items
+  const checkAndTriggerAutoRadio = useCallback(async () => {
+    if (autoRadioInFlightRef.current || !activePlayerId) return;
+
+    try {
+      const { data: remaining, error } = await supabase
+        .from('queue')
+        .select('id')
+        .eq('player_id', PLAYER_ID)
+        .is('played_at', null)
+        .limit(1);
+
+      if (!error && (!remaining || remaining.length === 0)) {
+        console.log('[Player] Queue empty after current song — auto-generating radio from history');
+        autoRadioInFlightRef.current = true;
+        try {
+          await callRadioGenerator({
+            player_id: PLAYER_ID,
+            action: 'generate',
+            source: 'history',
+          });
+          console.log('[Player] Auto-radio generation complete');
+        } catch (radioErr) {
+          console.error('[Player] Auto-radio generation failed:', radioErr);
+        } finally {
+          autoRadioInFlightRef.current = false;
+        }
+      }
+    } catch (err) {
+      console.error('[Player] Failed to check remaining queue:', err);
+    }
+  }, [activePlayerId, PLAYER_ID]);
+  checkAutoRadioRef.current = checkAndTriggerAutoRadio;
 
   // Report video ended and trigger queue_next (disabled for slave players)
   const reportEndedAndNext = useCallback(async (isSkip = false) => {
@@ -243,24 +293,39 @@ function App() {
         await ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'pause' }) }).catch(() => {});
         ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'setVolume', data: 100 }) }).catch(() => {});
       } else if (localPlaybackUrlRef.current) {
-        // Local/Cloudflare playback uses an HTMLVideoElement, so explicitly stop it.
-        // Without this, admin skip can advance queue state while the old video keeps playing.
+        // Local/Cloudflare playback uses an HTMLVideoElement — fade audio then stop.
         const localVideo = localVideoRef.current;
         if (localVideo) {
           try {
+            // Fade out audio over 1 second before stopping
+            const steps = 20;
+            const interval = 1000 / steps;
+            const startVol = localVideo.volume;
+            for (let i = 1; i <= steps; i++) {
+              await new Promise(r => setTimeout(r, interval));
+              localVideo.volume = Math.max(0, startVol * (1 - i / steps));
+            }
             localVideo.pause();
             localVideo.currentTime = 0;
             localVideo.removeAttribute('src');
             localVideo.load();
           } catch (error) {
-            console.warn('[Player] Failed to fully stop local/Cloudflare video on skip:', error);
+            console.warn('[Player] Failed to fade/stop local/Cloudflare video on skip:', error);
           }
         }
         setLocalPlaybackUrl(null);
       } else {
         await fadeOut();
       }
-      // Don't set skip loading flag - we'll fade back in immediately after loading
+      // Set skip-loading flag NOW — before the async callPlayerControl — so that
+      // the YouTube loading effect sees it even if the Supabase Realtime event for
+      // state='loading' (fired by queue_next's DB write) arrives before the HTTP
+      // response from callPlayerControl returns.  Without this, the race causes
+      // the new video to load at setVolume(100) instead of 0, silently undoing
+      // the fade-out that just completed.
+      if (isSkip) {
+        isSkipLoadingRef.current = true;
+      }
     }
 
     try {
@@ -288,11 +353,6 @@ function App() {
           metadata: {},
         };
         console.log('[Player] Loading next media from queue_next result:', nextMedia);
-
-        // If this was a skip, mark it so we can fade in when video starts
-        if (isSkip) {
-          isSkipLoadingRef.current = true;
-        }
 
         setCurrentMedia(nextMedia);
 
@@ -355,9 +415,15 @@ function App() {
       }
 
       console.log('[Player] No more items in queue - result:', result);
+      // No video loaded — clear the skip-loading flag so the next natural end
+      // doesn't incorrectly apply a fade-in to a non-skip transition.
+      isSkipLoadingRef.current = false;
       setCurrentMedia(null);
     } catch (error) {
       console.error('[Player] Failed to call queue_next:', error);
+      // On error, clear the skip-loading flag to avoid a stale true value
+      // affecting the next video load.
+      isSkipLoadingRef.current = false;
     } finally {
       // Do NOT reset isEndingRef on a short timer.  Instead, keep the guard active
       // until the next video actually starts PLAYING (reset in onPlayerStateChange
@@ -412,6 +478,9 @@ function App() {
         isEndingRef.current = false;
       }
       reportStatus('playing');
+
+      // Proactively generate radio if this is the last song in queue
+      checkAutoRadioRef.current?.();
 
       // If we're at volume 0 (after skip), fade in
       if (playerRef.current) {
@@ -643,7 +712,12 @@ function App() {
           console.log('[Player] Skip detected from Admin - triggering fade and skip');
           await reportEndedAndNext(true); // Skip with fade
           prevStateRef.current = newState;
-          setStatus(newStatus);
+          // Do NOT call setStatus(newStatus) here with the stale 'idle' snapshot.
+          // By the time reportEndedAndNext returns, queue_next has already run and
+          // the DB is in 'loading' state.  Writing the stale 'idle' into React state
+          // causes recoverFromIdle to evaluate status.state==='idle' and queue up a
+          // redundant second call.  The next Realtime event (state='loading') will
+          // update React state correctly via the normal setStatus path below.
           return; // Exit early, don't process other state changes
         }
         

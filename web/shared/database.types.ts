@@ -128,6 +128,8 @@ export type Database = {
           branding: Json | null
           cloudflare_enabled: boolean | null
           cloudflare_r2_public_url: string | null
+          coin_credits_dollar1: number | null
+          coin_credits_dollar2: number | null
           coin_per_song: number | null
           freeplay: boolean | null
           karaoke_mode: boolean | null
@@ -150,6 +152,8 @@ export type Database = {
           branding?: Json | null
           cloudflare_enabled?: boolean | null
           cloudflare_r2_public_url?: string | null
+          coin_credits_dollar1?: number | null
+          coin_credits_dollar2?: number | null
           coin_per_song?: number | null
           freeplay?: boolean | null
           karaoke_mode?: boolean | null
@@ -172,6 +176,8 @@ export type Database = {
           branding?: Json | null
           cloudflare_enabled?: boolean | null
           cloudflare_r2_public_url?: string | null
+          coin_credits_dollar1?: number | null
+          coin_credits_dollar2?: number | null
           coin_per_song?: number | null
           freeplay?: boolean | null
           karaoke_mode?: boolean | null

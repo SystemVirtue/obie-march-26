@@ -8,8 +8,10 @@ import {
   pollPlayerStatus,
   subscribeToPlayerBroadcast,
   subscribeToPlayerSettings,
+  subscribeToTable,
   callQueueManager,
   callPlayerControl,
+  callRadioGenerator,
   signOut,
   getCurrentUser,
   getUserPlayerId,
@@ -17,11 +19,17 @@ import {
   createJukebox,
   resolveJukeboxSlug,
   subscribeToAuth,
+  getPlayersByIds,
+  getKioskSessions,
+  subscribeToPlayer,
+  getPlaylistById,
+  type Player,
   type PlayerStatus,
   type PlayerSettings,
   type QueueItem,
   type AuthUser,
   type JukeboxSummary,
+  type KioskSession,
 } from '@shared/supabase-client';
 import { arrayMove } from '@dnd-kit/sortable';
 import type { DragEndEvent } from '@dnd-kit/core';
@@ -36,9 +44,11 @@ import { NowPlayingStage } from './components/NowPlayingStage';
 import { Sidebar } from './components/Sidebar';
 import { QueuePanel } from './components/QueuePanel';
 import { PlaylistsPanel } from './components/PlaylistsPanel';
+import { SearchPanel } from './components/SearchPanel';
 import { SettingsPanel } from './components/SettingsPanel';
 import { ScriptsPanel } from './components/ScriptsPanel';
 import { LogsPanel } from './components/LogsPanel';
+import { ServerPanel } from './components/ServerPanel';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ROOT APP
@@ -57,9 +67,14 @@ function App() {
   const [status, setStatus]     = useState<PlayerStatus | null>(null);
   const [settings, setSettings] = useState<PlayerSettings | null>(null);
   const [isShuffling, setIsShuffling] = useState(false);
+  const [isGeneratingRadio, setIsGeneratingRadio] = useState(false);
   const [isSkipping,  setIsSkipping]  = useState(false);
   const isSkippingRef = useRef(false);
   useEffect(() => { isSkippingRef.current = isSkipping; }, [isSkipping]);
+
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [kioskSessions, setKioskSessions] = useState<KioskSession[]>([]);
+  const [activePlaylistName, setActivePlaylistName] = useState<string | null>(null);
 
   const prefs = useAdminPrefs();
 
@@ -199,6 +214,49 @@ function App() {
     };
   }, [user, activePlayerId]);
 
+  // Subscribe to ALL of the admin's player records so Connected Devices shows every
+  // device (priority + slaves). Re-subscribes whenever the available jukebox list changes.
+  useEffect(() => {
+    if (!user || !availableJukeboxes.length) return;
+    const playerIds = availableJukeboxes.map(j => j.player_id);
+    getPlayersByIds(playerIds).then(setPlayers).catch(console.error);
+    const subs = playerIds.map(pid =>
+      subscribeToPlayer(pid, updated =>
+        setPlayers(prev => {
+          const idx = prev.findIndex(p => p.id === updated.id);
+          if (idx === -1) return [...prev, updated];
+          const next = [...prev]; next[idx] = updated; return next;
+        })
+      )
+    );
+    return () => subs.forEach(s => s.unsubscribe());
+  }, [user, availableJukeboxes]);
+
+  // Kiosk sessions — scoped to the currently-viewed jukebox.
+  // Realtime fires on any row change; 60 s interval is a fallback in case
+  // the realtime event is missed (e.g. first heartbeat after page load).
+  useEffect(() => {
+    if (!user || !activePlayerId) return;
+    const fetch = () => getKioskSessions(activePlayerId).then(setKioskSessions).catch(console.error);
+    fetch();
+    const kSub = subscribeToTable<KioskSession>(
+      'kiosk_sessions',
+      { column: 'player_id', value: activePlayerId },
+      fetch
+    );
+    const poll = setInterval(fetch, 60_000);
+    return () => { kSub.unsubscribe(); clearInterval(poll); };
+  }, [user, activePlayerId]);
+
+  // Derive active playlist name from the current jukebox's active_playlist_id
+  const activePlayer = players.find(p => p.id === activePlayerId) ?? null;
+  useEffect(() => {
+    if (!activePlayer?.active_playlist_id) { setActivePlaylistName(null); return; }
+    getPlaylistById(activePlayer.active_playlist_id)
+      .then(pl => setActivePlaylistName(pl?.name ?? null))
+      .catch(() => setActivePlaylistName(null));
+  }, [activePlayer?.active_playlist_id]);
+
   // ── Queue handlers ────────────────────────────────────────────────────────
   const handleRemove = async (queueId: string) => {
     setQueue(prev => prev.filter(item => item.id !== queueId));
@@ -230,6 +288,19 @@ function App() {
       await callQueueManager({ player_id: activePlayerId ?? PLAYER_ID, action: 'shuffle', type: 'normal' });
     } catch (e) { console.error('[Shuffle] Failed:', e); }
     finally { setIsShuffling(false); }
+  };
+
+  const handleStartRadio = async (source: 'now_playing' | 'history' | 'playlist') => {
+    setIsGeneratingRadio(true);
+    try {
+      const result = await callRadioGenerator({
+        player_id: activePlayerId ?? PLAYER_ID,
+        action: 'generate',
+        source,
+      });
+      console.log('[Radio] Generated:', result);
+    } catch (e) { console.error('[Radio] Failed:', e); }
+    finally { setIsGeneratingRadio(false); }
   };
 
   const handlePlayPause = async () => {
@@ -282,6 +353,8 @@ function App() {
   return (
     <div style={{ width: '100%', height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg)' }}>
       <NowPlayingStage status={status} queue={queue} settings={settings}
+        players={players} activePlayerId={activePlayerId ?? undefined}
+        kioskSessions={kioskSessions} activePlaylistName={activePlaylistName}
         onPlayPause={handlePlayPause} onSkip={handleSkip} isSkipping={isSkipping} onRemove={handleRemove} />
 
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
@@ -291,15 +364,20 @@ function App() {
           onSwitchJukebox={handleSwitchJukebox} onCreateJukebox={handleCreateJukebox} />
 
         <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
+          {view === 'search' && <SearchPanel playerId={activePlayerId} />}
           {isQueueView && (
             <QueuePanel queue={queue} status={status}
               onRemove={handleRemove} onReorder={handleReorder}
-              onShuffle={handleShuffle} isShuffling={isShuffling} />
+              onShuffle={handleShuffle} isShuffling={isShuffling}
+              onStartRadio={handleStartRadio} isGeneratingRadio={isGeneratingRadio}
+              hasNowPlaying={!!status?.current_media_id}
+              hasActivePlaylist={!!activePlayer?.active_playlist_id} />
           )}
-          {isPlaylistView && <PlaylistsPanel view={view} playerId={activePlayerId} />}
+          {isPlaylistView && <PlaylistsPanel view={view} playerId={activePlayerId} activePlaylistId={activePlayer?.active_playlist_id ?? undefined} />}
           {isScriptsView  && <ScriptsPanel playerId={activePlayerId} />}
           {isSettingsView && !isScriptsView && <SettingsPanel view={view} settings={settings} prefs={prefs} playerId={activePlayerId} />}
           {view === 'logs' && <LogsPanel />}
+          {view === 'server' && <ServerPanel />}
         </main>
       </div>
     </div>

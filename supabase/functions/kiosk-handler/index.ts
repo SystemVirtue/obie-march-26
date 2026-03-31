@@ -21,6 +21,27 @@ Deno.serve(async (req)=>{
     const body = await req.json();
     const { action } = body;
     console.log('Action:', action);
+    // Handle kiosk heartbeat — keeps last_active fresh so the admin Connected Devices panel
+    // can detect disconnects (sessions with stale last_active are shown as Offline/removed).
+    if (action === 'heartbeat') {
+      const { session_id } = body;
+      if (!session_id) {
+        return new Response(JSON.stringify({ error: 'session_id required' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      const { error } = await supabase
+        .from('kiosk_sessions')
+        .update({ last_active: new Date().toISOString() })
+        .eq('session_id', session_id);
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     // Handle session initialization
     if (action === 'init') {
       console.log('Creating new kiosk session');
@@ -591,6 +612,189 @@ Deno.serve(async (req)=>{
       }
     }
 
+    // Handle admin video request — bypasses credit system, adds directly to priority queue
+    if (action === 'admin_request') {
+      const { player_id, url, r2_file_id, add_to_queue, title, artist, thumbnail, duration } = body;
+      if (!player_id || (!url && !r2_file_id)) {
+        return new Response(JSON.stringify({
+          error: 'player_id and either url or r2_file_id are required for admin_request action'
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      let mediaItemId: string | null = null;
+
+      try {
+        if (r2_file_id) {
+          // R2 local media — resolve from r2_files table
+          const { data: r2File, error: r2Error } = await supabase
+            .from('r2_files')
+            .select('*')
+            .eq('id', r2_file_id)
+            .single();
+
+          if (r2Error || !r2File) {
+            return new Response(JSON.stringify({ error: 'R2 file not found' }), {
+              status: 404,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+
+          const sourceId = `cloudflare:${r2File.object_key}`;
+          const { data: resolvedId, error: mediaError } = await supabase.rpc('create_or_get_media_item', {
+            p_source_id: sourceId,
+            p_source_type: 'cloudflare',
+            p_title: r2File.title || r2File.file_name,
+            p_artist: r2File.artist || null,
+            p_url: r2File.public_url,
+            p_duration: r2File.duration || null,
+            p_thumbnail: r2File.thumbnail || null,
+            p_metadata: { bucket: r2File.bucket_name, object_key: r2File.object_key },
+          });
+
+          if (mediaError || !resolvedId) {
+            console.error('admin_request: failed to create media item from R2:', mediaError);
+            return new Response(JSON.stringify({ error: 'Failed to create media item from R2 file' }), {
+              status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+          mediaItemId = resolvedId;
+        } else {
+          // YouTube URL — use pre-scraped metadata if provided, otherwise scrape
+          if (!validateYouTubeUrl(url)) {
+            return new Response(JSON.stringify({ error: 'Invalid YouTube URL' }), {
+              status: 400,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+
+          let videoTitle = title;
+          let videoArtist = artist || null;
+          let videoThumbnail = thumbnail || null;
+          let videoDuration = duration || null;
+          let videoUrl = url;
+
+          // Extract video ID from URL
+          const videoIdMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/);
+          let videoId = videoIdMatch?.[1] || null;
+
+          // If metadata not provided, fall back to scraping
+          if (!videoTitle || !videoId) {
+            const scraperResp = await callYouTubeScraperWithFallback({
+              supabaseUrl,
+              payload: { url, type: 'auto' },
+              incomingAuthorization: req.headers.get('Authorization'),
+              serviceRoleToken: serviceRoleToken ?? null,
+              anonJwt: anonJwt ?? null,
+            });
+
+            if (!scraperResp.ok) {
+              return new Response(JSON.stringify({ error: 'Failed to scrape YouTube URL' }), {
+                status: 400,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+              });
+            }
+
+            const scraperText = await scraperResp.text();
+            let scraperData: { videos?: any[] };
+            try {
+              scraperData = JSON.parse(scraperText);
+            } catch {
+              return new Response(JSON.stringify({ error: 'Invalid response from YouTube scraper' }), {
+                status: 500,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+              });
+            }
+
+            const { videos } = scraperData;
+            if (!videos || videos.length === 0) {
+              return new Response(JSON.stringify({ error: 'No videos found at the provided URL' }), {
+                status: 400,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+              });
+            }
+
+            const video = videos[0];
+            if (!video?.id?.trim() || !video?.url?.trim() || !video?.title?.trim()) {
+              return new Response(JSON.stringify({ error: 'Invalid video data from scraper' }), {
+                status: 400,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+              });
+            }
+
+            videoId = video.id;
+            videoTitle = video.title;
+            videoArtist = video.artist || null;
+            videoThumbnail = video.thumbnail || null;
+            videoDuration = video.duration || null;
+            videoUrl = video.url;
+          }
+
+          const { data: resolvedId, error: mediaError } = await supabase.rpc('create_or_get_media_item', {
+            p_source_id: `youtube:${videoId}`,
+            p_source_type: 'youtube',
+            p_title: videoTitle,
+            p_artist: videoArtist,
+            p_url: videoUrl,
+            p_duration: videoDuration,
+            p_thumbnail: videoThumbnail,
+            p_metadata: {},
+          });
+
+          if (mediaError || !resolvedId) {
+            console.error('admin_request: failed to create media item:', mediaError);
+            return new Response(JSON.stringify({ error: 'Failed to create media item' }), {
+              status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+          mediaItemId = resolvedId;
+        }
+
+        let queueId: string | null = null;
+
+        if (add_to_queue) {
+          // Add directly to priority queue — no credit deduction
+          const { data: qId, error: queueError } = await supabase.rpc('queue_add', {
+            p_player_id: player_id,
+            p_media_item_id: mediaItemId,
+            p_type: 'priority',
+            p_requested_by: 'admin',
+          });
+
+          if (queueError) {
+            console.error('admin_request: queue_add error:', queueError);
+            return new Response(JSON.stringify({ error: queueError.message || 'Failed to add to queue' }), {
+              status: 400,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+          queueId = qId;
+
+          await supabase.from('system_logs').insert({
+            player_id,
+            event: 'admin_request',
+            severity: 'info',
+            payload: { media_item_id: mediaItemId, queue_id: queueId, source: r2_file_id ? 'r2' : 'youtube' },
+          });
+        }
+
+        return new Response(JSON.stringify({ media_item_id: mediaItemId, queue_id: queueId }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      } catch (err) {
+        console.error('admin_request error:', err);
+        return new Response(JSON.stringify({ error: err.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
     // Handle adding credits to a session (e.g., coin insert)
     if (action === 'credit') {
       const { session_id, amount } = body;
@@ -606,22 +810,12 @@ Deno.serve(async (req)=>{
         });
       }
       try {
-        const { data: existing, error: fetchErr } = await supabase.from('kiosk_sessions').select('credits').eq('session_id', session_id).single();
-        if (fetchErr || !existing) {
-          return new Response(JSON.stringify({
-            error: 'Session not found'
-          }), {
-            status: 404,
-            headers: {
-              ...corsHeaders,
-              'Content-Type': 'application/json'
-            }
-          });
-        }
-        const newCredits = (existing.credits || 0) + amount;
-        const { data: updated, error: updErr } = await supabase.from('kiosk_sessions').update({
-          credits: newCredits
-        }).eq('session_id', session_id).select().single();
+        // Use atomic increment via RPC to avoid read-then-write race conditions
+        // when multiple coins are inserted rapidly.
+        const { data: updated, error: updErr } = await supabase.rpc('kiosk_increment_credit', {
+          p_session_id: session_id,
+          p_amount: amount,
+        });
         if (updErr) {
           console.error('Failed to update credits:', updErr);
           return new Response(JSON.stringify({
@@ -634,8 +828,9 @@ Deno.serve(async (req)=>{
             }
           });
         }
+        // kiosk_increment_credit returns the new credit total as a plain INT
         return new Response(JSON.stringify({
-          credits: updated.credits
+          credits: updated
         }), {
           status: 200,
           headers: {
