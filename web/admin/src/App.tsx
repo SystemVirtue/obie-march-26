@@ -3,10 +3,8 @@
 
 import { useEffect, useState, useRef } from 'react';
 import {
-  supabase,
   subscribeToQueue,
-  pollPlayerStatus,
-  subscribeToPlayerBroadcast,
+  subscribeToPlayerStatus,
   subscribeToPlayerSettings,
   subscribeToTable,
   callQueueManager,
@@ -197,19 +195,15 @@ function App() {
   useEffect(() => {
     if (!user || !activePlayerId) return;
     const q  = subscribeToQueue(activePlayerId, setQueue);
-    // Poll for authoritative state (3s); broadcast for live progress.
-    const s = pollPlayerStatus(activePlayerId, (ns) => {
+    // Realtime subscription — payload-direct for state/progress, JOIN refetch only on media change.
+    const s = subscribeToPlayerStatus(activePlayerId, (ns) => {
       setStatus(ns);
       if (isSkippingRef.current && (ns.state === 'playing' || ns.state === 'loading')) setIsSkipping(false);
-    }, 3000);
-    const broadcastCh = subscribeToPlayerBroadcast(activePlayerId, ({ progress }) => {
-      setStatus((prev) => prev ? { ...prev, progress } : prev);
     });
     const ps = subscribeToPlayerSettings(activePlayerId, setSettings);
     return () => {
       q.unsubscribe();
       s.unsubscribe();
-      supabase.removeChannel(broadcastCh);
       ps.unsubscribe();
     };
   }, [user, activePlayerId]);
