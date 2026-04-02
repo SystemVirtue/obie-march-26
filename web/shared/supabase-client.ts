@@ -336,14 +336,15 @@ export function subscribeToTable<T = any>(
  * Subscribe to player status updates.
  * Uses the Realtime payload directly for progress/state updates,
  * only refetching with media_items join when current_media_id changes.
+ * Debounces media refetches to coalesce rapid skip bursts.
  */
 export function subscribeToPlayerStatus(
   playerId: string,
   callback: (status: PlayerStatus) => void
 ): RealtimeSubscription<PlayerStatus> {
-  // Track the last known status so we can merge Realtime payloads
   let lastStatus: PlayerStatus | null = null;
   let lastMediaId: string | null = null;
+  let mediaRefetchTimeout: ReturnType<typeof setTimeout> | null = null;
 
   const fetchFullStatus = async () => {
     try {
@@ -353,7 +354,7 @@ export function subscribeToPlayerStatus(
         .eq('player_id', playerId)
         .single();
       if (error) {
-        console.error('[subscribeToPlayerStatus] ❌ Fetch error:', error);
+        console.error('[subscribeToPlayerStatus] Fetch error:', error);
         return;
       }
       if (data) {
@@ -362,7 +363,7 @@ export function subscribeToPlayerStatus(
         callback(lastStatus);
       }
     } catch (err) {
-      console.error('[subscribeToPlayerStatus] ❌ Fetch failed:', err);
+      console.error('[subscribeToPlayerStatus] Fetch failed:', err);
     }
   };
 
@@ -378,9 +379,13 @@ export function subscribeToPlayerStatus(
         const mediaChanged = newRow.current_media_id !== lastMediaId;
 
         if (mediaChanged) {
-          // Media changed — need to fetch the joined media_items row
+          // Media changed — need to fetch the joined media_items row.
+          // Debounce to coalesce rapid media changes (e.g. skip bursts).
           lastMediaId = newRow.current_media_id;
-          fetchFullStatus();
+          if (mediaRefetchTimeout) clearTimeout(mediaRefetchTimeout);
+          mediaRefetchTimeout = setTimeout(() => {
+            fetchFullStatus();
+          }, 500);
         } else if (lastStatus) {
           // Progress/state only — merge Realtime payload, skip refetch
           lastStatus = { ...lastStatus, ...newRow };
