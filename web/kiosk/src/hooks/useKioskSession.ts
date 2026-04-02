@@ -1,11 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  supabase,
   subscribeToKioskSession,
   subscribeToPlayerSettings,
+  subscribeToPlayerStatus,
   subscribeToQueue,
-  pollPlayerStatus,
-  subscribeToPlayerBroadcast,
   callKioskHandler,
   resolveJukeboxSlug,
   type KioskSession,
@@ -144,16 +142,9 @@ export function useKioskSession({ defaultPlayerId, storageKey }: UseKioskSession
 
   useEffect(() => {
     if (!identityReady || !activePlayerId) return;
-    // Poll for authoritative state (media changes, idle/loading/paused/error).
-    const sub = pollPlayerStatus(playerId, (s) => setPlayerStatus(s), 3000);
-    // Broadcast for live progress without DB reads.
-    const broadcastCh = subscribeToPlayerBroadcast(playerId, ({ progress, state }) => {
-      setPlayerStatus((prev) => prev ? { ...prev, progress, state } : prev);
-    });
-    return () => {
-      sub.unsubscribe();
-      supabase.removeChannel(broadcastCh);
-    };
+    // Realtime subscription — instant updates, no polling overhead.
+    const sub = subscribeToPlayerStatus(playerId, (s) => setPlayerStatus(s));
+    return () => sub.unsubscribe();
   }, [identityReady, activePlayerId, playerId]);
 
   useEffect(() => {

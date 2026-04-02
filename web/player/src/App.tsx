@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { io } from 'socket.io-client';
 import {
   supabase,
-  pollPlayerStatus,
+  subscribeToPlayerStatus,
   subscribeToPlayerSettings,
   callPlayerControl,
   callQueueManager,
@@ -700,19 +700,18 @@ function App() {
   // A client-side effect here would fire on settings-change rather than on playlist-load,
   // causing unexpected re-shuffles and potentially moving the currently playing item.
 
-  // Poll player_status for admin commands (pause/skip/resume).
-  // 1-second interval gives responsive admin control without a Realtime DB subscription.
+  // Realtime subscription for player_status — instant admin commands (pause/skip/resume)
+  // with zero polling overhead. Only refetches with JOIN when current_media_id changes.
   useEffect(() => {
     if (!identityReady || !activePlayerId) return;
 
-    console.log('[Player] Starting player status poll...');
+    console.log('[Player] Starting player status subscription...');
     const prevStateRef = { current: status?.state };
 
-    const subscription = pollPlayerStatus(PLAYER_ID, async (newStatus) => {
-      console.log('[Player] Status update:', newStatus);
+    const subscription = subscribeToPlayerStatus(PLAYER_ID, async (newStatus) => {
       const prevState = prevStateRef.current;
       const newState = newStatus.state;
-      
+
       // Handle state transitions with fades.
       // In YTM Desktop mode playerRef.current is null (no iframe), so we must also
       // allow the block when playerModeRef indicates ytm_desktop.
@@ -722,28 +721,18 @@ function App() {
           console.log('[Player] Skip detected from Admin - triggering fade and skip');
           await reportEndedAndNext(true); // Skip with fade
           prevStateRef.current = newState;
-          // Do NOT call setStatus(newStatus) here with the stale 'idle' snapshot.
-          // By the time reportEndedAndNext returns, queue_next has already run and
-          // the DB is in 'loading' state.  Writing the stale 'idle' into React state
-          // causes recoverFromIdle to evaluate status.state==='idle' and queue up a
-          // redundant second call.  The next Realtime event (state='loading') will
-          // update React state correctly via the normal setStatus path below.
           return; // Exit early, don't process other state changes
         }
-        
+
         if (newState === 'paused' && prevState === 'playing') {
           if (playerModeRef.current === 'ytm_desktop') {
-            // Mark that this pause is admin-initiated so end detection ignores the
-            // resulting trackState 1→0 transition in the state-update handler.
             ytmAdminPausedRef.current = true;
             setTimeout(() => { ytmAdminPausedRef.current = false; }, 3000);
             ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'pause' }) }).catch(() => {});
           } else if (localPlaybackUrlRef.current && localVideoRef.current) {
-            // Cloudflare/local: pause the <video> element
             console.log('[Player] Pausing local/Cloudflare video...');
             localVideoRef.current.pause();
           } else if (playerRef.current) {
-            // Fade out when pausing
             console.log('[Player] Pausing - fading out...');
             await fadeOut();
             playerRef.current.pauseVideo();
@@ -752,18 +741,16 @@ function App() {
           if (playerModeRef.current === 'ytm_desktop') {
             ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'play' }) }).catch(() => {});
           } else if (localPlaybackUrlRef.current && localVideoRef.current) {
-            // Cloudflare/local: resume the <video> element
             console.log('[Player] Resuming local/Cloudflare video...');
             localVideoRef.current.play().catch(() => {});
           } else if (playerRef.current) {
-            // Fade in when resuming
             console.log('[Player] Resuming - fading in...');
             playerRef.current.playVideo();
             await fadeIn();
           }
         }
       }
-      
+
       prevStateRef.current = newState;
       setStatus(newStatus);
 
@@ -773,14 +760,11 @@ function App() {
 
       // ── Non-YouTube source (yt-dlp download or Cloudflare R2) ─────────────
       if ((newStatus.source === 'local' || newStatus.source === 'cloudflare') && newStatus.local_url) {
-        // Only activate when the local_url is actually new (avoid redundant sets)
         if (newStatus.local_url !== localPlaybackUrl) {
           console.log(`[Player][realtime] source=${newStatus.source} → activating <video>`);
-          console.log(`[Player][realtime]   media_id=${newMediaId}  url=${newStatus.local_url}`);
           setLocalPlaybackUrl(newStatus.local_url);
         }
       } else if (newMediaId && newMediaId !== oldMediaId) {
-        // New song started — always return to YouTube iframe mode
         console.log(`[Player][realtime] source=${newStatus.source ?? 'youtube'} new media_id=${newMediaId} → reset to iframe mode`);
         setLocalPlaybackUrl(null);
       }
@@ -794,19 +778,15 @@ function App() {
         });
         setCurrentMedia(newStatus.current_media || null);
 
-        // Mark that video was recently loaded and should auto-play if it pauses unexpectedly
         recentlyLoadedRef.current = true;
-        // Clear the flag after 5 seconds
         setTimeout(() => {
           recentlyLoadedRef.current = false;
         }, 5000);
-      } else {
-        console.log('[Player] Same media in status update, not updating state');
       }
-    }, 1000); // 1-second interval for responsive admin commands
+    });
 
     return () => {
-      console.log('[Player] Stopping player status poll');
+      console.log('[Player] Unsubscribing from player status');
       subscription.unsubscribe();
     };
   }, [identityReady, activePlayerId, PLAYER_ID, fadeIn, fadeOut, reportEndedAndNext]);
