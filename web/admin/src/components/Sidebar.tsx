@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { ViewId, QueueItem, AuthUser, JukeboxSummary } from '../types';
 
 const NAV = [
+  { id: 'search',    icon: '🔍', label: 'Search',    children: [] as { id: ViewId; label: string }[] },
   { id: 'queue',     icon: '🎵', label: 'Queue',     children: [] as { id: ViewId; label: string }[] },
   { id: 'playlists', icon: '📋', label: 'Playlists', children: [
     { id: 'playlists-all'     as ViewId, label: 'All Playlists' },
@@ -16,6 +17,7 @@ const NAV = [
     { id: 'settings-prefs'    as ViewId, label: 'Console Preferences' },
   ]},
   { id: 'logs',      icon: '📄', label: 'Logs',      children: [] as { id: ViewId; label: string }[] },
+  { id: 'server',    icon: '🖥️', label: 'Server',    children: [] as { id: ViewId; label: string }[] },
 ];
 
 export function Sidebar({ view, setView, queue, user, onSignOut, jukeboxes, activeJukeboxSlug, onSwitchJukebox, onCreateJukebox }: {

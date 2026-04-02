@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  supabase,
   subscribeToKioskSession,
   subscribeToPlayerSettings,
   subscribeToQueue,
-  subscribeToPlayerStatus,
-  subscribeToTable,
+  pollPlayerStatus,
+  subscribeToPlayerBroadcast,
   callKioskHandler,
-  getTotalCredits,
   resolveJukeboxSlug,
   type KioskSession,
   type PlayerSettings,
@@ -103,26 +103,36 @@ export function useKioskSession({ defaultPlayerId, storageKey }: UseKioskSession
     playerStatusRef.current = playerStatus;
   }, [playerStatus]);
 
+  // Heartbeat: keep last_active fresh so the admin panel can detect disconnects.
+  // Fires every 30 s; the admin side marks sessions Offline after 90 s without a heartbeat.
+  useEffect(() => {
+    if (!identityReady || !activePlayerId || !session) return;
+    const interval = setInterval(async () => {
+      try {
+        await callKioskHandler({
+          player_id: playerId,
+          action: 'heartbeat',
+          session_id: session.session_id,
+        });
+      } catch (e) {
+        console.warn('[kiosk] heartbeat failed', e);
+      }
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [identityReady, activePlayerId, playerId, session?.session_id]);
+
   useEffect(() => {
     if (!identityReady || !activePlayerId) return;
     if (!session) return;
 
+    // Subscribe only to the current session — credits shown must match what
+    // kiosk_request_enqueue checks (per-session, not pooled across all sessions).
     const sub = subscribeToKioskSession(session.session_id, (s) => {
       setSession(s);
     });
 
-    const tableSub = subscribeToTable('kiosk_sessions', { column: 'player_id', value: playerId }, async () => {
-      try {
-        const total = await getTotalCredits(playerId);
-        setSession((prev) => (prev ? { ...prev, credits: total } : prev));
-      } catch (err) {
-        console.error('Failed to fetch total credits after realtime event:', err);
-      }
-    });
-
     return () => {
       sub.unsubscribe();
-      tableSub.unsubscribe();
     };
   }, [identityReady, activePlayerId, playerId, session?.session_id]);
 
@@ -134,8 +144,16 @@ export function useKioskSession({ defaultPlayerId, storageKey }: UseKioskSession
 
   useEffect(() => {
     if (!identityReady || !activePlayerId) return;
-    const sub = subscribeToPlayerStatus(playerId, (s) => setPlayerStatus(s));
-    return () => sub.unsubscribe();
+    // Poll for authoritative state (media changes, idle/loading/paused/error).
+    const sub = pollPlayerStatus(playerId, (s) => setPlayerStatus(s), 3000);
+    // Broadcast for live progress without DB reads.
+    const broadcastCh = subscribeToPlayerBroadcast(playerId, ({ progress, state }) => {
+      setPlayerStatus((prev) => prev ? { ...prev, progress, state } : prev);
+    });
+    return () => {
+      sub.unsubscribe();
+      supabase.removeChannel(broadcastCh);
+    };
   }, [identityReady, activePlayerId, playerId]);
 
   useEffect(() => {
