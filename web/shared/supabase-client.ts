@@ -336,8 +336,12 @@ export function subscribeToPlayerStatus(
   playerId: string,
   callback: (status: PlayerStatus) => void
 ): RealtimeSubscription<PlayerStatus> {
+  // Cache the last-known current_media so we can reuse it when only
+  // state/progress change (avoids a JOIN refetch on every update).
+  let cachedMedia: MediaItem | undefined;
+
   // Fetch initial status with media_item join
-  console.log('[subscribeToPlayerStatus] 🎵 Fetching initial player status...');
+  console.log('[subscribeToPlayerStatus] Fetching initial player status...');
   supabase
     .from('player_status')
     .select('*, current_media:media_items(*)')
@@ -345,17 +349,16 @@ export function subscribeToPlayerStatus(
     .single()
     .then(({ data, error }) => {
       if (error) {
-        console.error('[subscribeToPlayerStatus] ❌ Initial status error:', error);
+        console.error('[subscribeToPlayerStatus] Initial status error:', error);
         return;
       }
-      
+
       if (data) {
-        console.log('[subscribeToPlayerStatus] 📺 Initial status:', {
+        cachedMedia = (data as any).current_media ?? undefined;
+        console.log('[subscribeToPlayerStatus] Initial status:', {
           state: (data as any).state,
           current_media_id: (data as any).current_media_id?.slice(0, 8) || 'none',
-          title: (data as any).current_media?.title?.slice(0, 30) || 'none',
-          progress: (data as any).progress,
-          last_updated: (data as any).last_updated
+          title: cachedMedia?.title?.slice(0, 30) || 'none',
         });
         callback(data as any);
       }
@@ -365,17 +368,14 @@ export function subscribeToPlayerStatus(
     'player_status',
     { column: 'player_id', value: playerId },
     (payload) => {
-      console.log('[subscribeToPlayerStatus] 🔄 Status change detected:', {
-        eventType: payload.eventType,
-        old_state: payload.old?.state,
-        new_state: payload.new?.state,
-        old_media_id: payload.old?.current_media_id?.slice(0, 8) || 'none',
-        new_media_id: payload.new?.current_media_id?.slice(0, 8) || 'none'
-      });
-      
-      if (payload.eventType === 'UPDATE' || payload.eventType === 'INSERT') {
-        // Fetch with media_item join
-        console.log('[subscribeToPlayerStatus] 🔄 Fetching updated status with media...');
+      if (payload.eventType !== 'UPDATE' && payload.eventType !== 'INSERT') return;
+
+      const newRow = payload.new;
+      const mediaChanged = newRow?.current_media_id !== payload.old?.current_media_id;
+
+      if (mediaChanged && newRow?.current_media_id) {
+        // Media changed — need the JOIN to get full media_items data
+        console.log('[subscribeToPlayerStatus] Media changed, fetching with JOIN...');
         supabase
           .from('player_status')
           .select('*, current_media:media_items(*)')
@@ -383,21 +383,20 @@ export function subscribeToPlayerStatus(
           .single()
           .then(({ data, error }) => {
             if (error) {
-              console.error('[subscribeToPlayerStatus] ❌ Update fetch error:', error);
+              console.error('[subscribeToPlayerStatus] Update fetch error:', error);
               return;
             }
-            
             if (data) {
-              console.log('[subscribeToPlayerStatus] 📺 Updated status:', {
-                state: (data as any).state,
-                current_media_id: (data as any).current_media_id?.slice(0, 8) || 'none',
-                title: (data as any).current_media?.title?.slice(0, 30) || 'none',
-                progress: (data as any).progress,
-                last_updated: (data as any).last_updated
-              });
+              cachedMedia = (data as any).current_media ?? undefined;
               callback(data as any);
             }
           });
+      } else {
+        // State/progress update only — merge with cached media, no extra query
+        if (newRow?.current_media_id === null) {
+          cachedMedia = undefined;
+        }
+        callback({ ...newRow, current_media: cachedMedia } as PlayerStatus);
       }
     }
   );

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  subscribeToKioskSession,
   subscribeToPlayerSettings,
   subscribeToQueue,
   subscribeToPlayerStatus,
@@ -107,22 +106,29 @@ export function useKioskSession({ defaultPlayerId, storageKey }: UseKioskSession
     if (!identityReady || !activePlayerId) return;
     if (!session) return;
 
-    const sub = subscribeToKioskSession(session.session_id, (s) => {
-      setSession(s);
-    });
+    const sessionId = session.session_id;
 
-    const tableSub = subscribeToTable('kiosk_sessions', { column: 'player_id', value: playerId }, async () => {
-      try {
-        const total = await getTotalCredits(playerId);
-        setSession((prev) => (prev ? { ...prev, credits: total } : prev));
-      } catch (err) {
-        console.error('Failed to fetch total credits after realtime event:', err);
+    // Single subscription for all kiosk_sessions for this player.
+    // Handles both own-session updates and cross-session credit changes.
+    const sub = subscribeToTable<KioskSession>('kiosk_sessions', { column: 'player_id', value: playerId }, async (payload) => {
+      if (payload.eventType === 'UPDATE' || payload.eventType === 'INSERT') {
+        if (payload.new?.session_id === sessionId) {
+          // This is our own session — update it directly from the payload
+          setSession(payload.new);
+        } else {
+          // Another session changed (e.g. credits added from admin) — recompute total
+          try {
+            const total = await getTotalCredits(playerId);
+            setSession((prev) => (prev ? { ...prev, credits: total } : prev));
+          } catch (err) {
+            console.error('Failed to fetch total credits after realtime event:', err);
+          }
+        }
       }
     });
 
     return () => {
       sub.unsubscribe();
-      tableSub.unsubscribe();
     };
   }, [identityReady, activePlayerId, playerId, session?.session_id]);
 
