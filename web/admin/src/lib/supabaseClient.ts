@@ -193,11 +193,18 @@ export function subscribeToTable<T = any>(
 
 /**
  * Subscribe to player status updates
+ *
+ * Uses the Realtime payload directly for most field changes and only refetches
+ * via REST when current_media_id changes (to get the joined media_items data).
  */
 export function subscribeToPlayerStatus(
   playerId: string,
   callback: (status: PlayerStatus) => void
 ): RealtimeSubscription<PlayerStatus> {
+  let lastMediaId: string | null = null;
+  let cachedMedia: MediaItem | undefined = undefined;
+  let mediaRefetchTimeout: ReturnType<typeof setTimeout> | null = null;
+
   // Fetch initial status with media_item join
   supabase
     .from('player_status')
@@ -205,23 +212,48 @@ export function subscribeToPlayerStatus(
     .eq('player_id', playerId)
     .single()
     .then(({ data }) => {
-      if (data) callback(data as any);
+      if (data) {
+        const typed = data as any;
+        lastMediaId = typed.current_media_id || null;
+        cachedMedia = typed.current_media || undefined;
+        callback(typed);
+      }
     });
 
   return subscribeToTable<PlayerStatus>(
     'player_status',
     { column: 'player_id', value: playerId },
     (payload) => {
-      if (payload.eventType === 'UPDATE' || payload.eventType === 'INSERT') {
-        // Fetch with media_item join
-        supabase
-          .from('player_status')
-          .select('*, current_media:media_items(*)')
-          .eq('player_id', playerId)
-          .single()
-          .then(({ data }) => {
-            if (data) callback(data as any);
-          });
+      if (payload.eventType !== 'UPDATE' && payload.eventType !== 'INSERT') return;
+
+      const newRow = payload.new;
+      const newMediaId = newRow?.current_media_id || null;
+      const mediaChanged = newMediaId !== lastMediaId;
+
+      if (mediaChanged && newMediaId) {
+        lastMediaId = newMediaId;
+        if (mediaRefetchTimeout) clearTimeout(mediaRefetchTimeout);
+        mediaRefetchTimeout = setTimeout(() => {
+          supabase
+            .from('player_status')
+            .select('*, current_media:media_items(*)')
+            .eq('player_id', playerId)
+            .single()
+            .then(({ data }) => {
+              if (data) {
+                const typed = data as any;
+                cachedMedia = typed.current_media || undefined;
+                lastMediaId = typed.current_media_id || null;
+                callback(typed);
+              }
+            });
+        }, 500);
+      } else {
+        lastMediaId = newMediaId;
+        callback({
+          ...newRow,
+          current_media: newMediaId ? cachedMedia : undefined,
+        } as PlayerStatus);
       }
     }
   );
