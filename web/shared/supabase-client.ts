@@ -873,6 +873,9 @@ export async function getTotalCredits(playerId: string): Promise<number> {
  */
 export async function updateAllCredits(playerId: string, action: 'clear' | 'add', amount?: number): Promise<void> {
   if (action === 'clear') {
+    // Fetch previous total for logging
+    const prevTotal = await getTotalCredits(playerId).catch(() => 0);
+
     // Set credits to 0 for all sessions belonging to this player
     const { error } = await (supabase as any)
       .from('kiosk_sessions')
@@ -880,6 +883,14 @@ export async function updateAllCredits(playerId: string, action: 'clear' | 'add'
       .eq('player_id', playerId);
 
     if (error) throw error;
+
+    // Log the clear action
+    await supabase.from('system_logs' as any).insert({
+      player_id: playerId,
+      event: 'credit_clear',
+      severity: 'info',
+      payload: { source: 'admin', action: 'clear', previous_balance: prevTotal },
+    } as any).then(() => {}, console.error);
   } else if (action === 'add' && amount) {
     // Add credits to the most-recently-active kiosk session for this player.
     // Admin +1/+3 buttons are expected to increment the visible total by a small amount,
@@ -902,6 +913,14 @@ export async function updateAllCredits(playerId: string, action: 'clear' | 'add'
         .eq('session_id', s.session_id);
 
       if (error) throw error;
+
+      // Log the admin credit add
+      await supabase.from('system_logs' as any).insert({
+        player_id: playerId,
+        event: 'credit_deposit',
+        severity: 'info',
+        payload: { source: 'admin', amount, action: 'add', new_balance: newCredits },
+      } as any).then(() => {}, console.error);
     } else {
       // If there are no sessions, nothing to update
       return;

@@ -21,9 +21,8 @@ Deno.serve(async (req)=>{
     const body = await req.json();
     const { action } = body;
     console.log('Action:', action);
-    // Handle session initialization
+    // Handle session initialization — resume existing session or create new one
     if (action === 'init') {
-      console.log('Creating new kiosk session');
       const requestedPlayerId = typeof body.player_id === 'string' && body.player_id.trim()
         ? body.player_id.trim()
         : null;
@@ -46,7 +45,58 @@ Deno.serve(async (req)=>{
           }
         });
       }
-      // Create new session
+
+      // Try to resume the most recent session for this player
+      const { data: existingSessions, error: fetchErr } = await supabase
+        .from('kiosk_sessions')
+        .select('*')
+        .eq('player_id', player.id)
+        .order('last_active', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false });
+
+      if (!fetchErr && existingSessions && existingSessions.length > 0) {
+        const resumeSession = existingSessions[0];
+
+        // Roll credits from orphaned sessions into the resumed one
+        let rolledCredits = 0;
+        const orphanIds: string[] = [];
+        for (let i = 1; i < existingSessions.length; i++) {
+          rolledCredits += existingSessions[i].credits || 0;
+          orphanIds.push(existingSessions[i].session_id);
+        }
+
+        if (rolledCredits > 0) {
+          await supabase
+            .from('kiosk_sessions')
+            .update({ credits: (resumeSession.credits || 0) + rolledCredits, last_active: new Date().toISOString() })
+            .eq('session_id', resumeSession.session_id);
+          resumeSession.credits = (resumeSession.credits || 0) + rolledCredits;
+          console.log(`Rolled ${rolledCredits} credits from ${orphanIds.length} orphaned session(s)`);
+        } else {
+          await supabase
+            .from('kiosk_sessions')
+            .update({ last_active: new Date().toISOString() })
+            .eq('session_id', resumeSession.session_id);
+        }
+        resumeSession.last_active = new Date().toISOString();
+
+        // Clean up orphaned sessions
+        if (orphanIds.length > 0) {
+          await supabase
+            .from('kiosk_sessions')
+            .delete()
+            .in('session_id', orphanIds);
+          console.log(`Deleted ${orphanIds.length} orphaned session(s)`);
+        }
+
+        console.log('Resumed session:', resumeSession.session_id, 'credits:', resumeSession.credits);
+        return new Response(JSON.stringify({ session: resumeSession }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      // No existing session — create a new one
       const { data: session, error: sessionError } = await supabase.from('kiosk_sessions').insert({
         player_id: player.id,
         credits: 0
@@ -63,15 +113,10 @@ Deno.serve(async (req)=>{
           }
         });
       }
-      console.log('Created session:', session.session_id);
-      return new Response(JSON.stringify({
-        session
-      }), {
+      console.log('Created new session:', session.session_id);
+      return new Response(JSON.stringify({ session }), {
         status: 200,
-        headers: {
-          ...corsHeaders,
-          'Content-Type': 'application/json'
-        }
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
     // Handle free-text search forwarded to youtube-scraper (server-side)
@@ -593,7 +638,7 @@ Deno.serve(async (req)=>{
 
     // Handle adding credits to a session (e.g., coin insert)
     if (action === 'credit') {
-      const { session_id, amount } = body;
+      const { session_id, amount, source } = body;
       if (!session_id || typeof amount !== 'number') {
         return new Response(JSON.stringify({
           error: 'session_id and numeric amount are required for credit action'
@@ -606,7 +651,7 @@ Deno.serve(async (req)=>{
         });
       }
       try {
-        const { data: existing, error: fetchErr } = await supabase.from('kiosk_sessions').select('credits').eq('session_id', session_id).single();
+        const { data: existing, error: fetchErr } = await supabase.from('kiosk_sessions').select('credits, player_id').eq('session_id', session_id).single();
         if (fetchErr || !existing) {
           return new Response(JSON.stringify({
             error: 'Session not found'
@@ -634,6 +679,15 @@ Deno.serve(async (req)=>{
             }
           });
         }
+
+        // Log the credit deposit
+        await supabase.rpc('log_event', {
+          p_player_id: existing.player_id,
+          p_event: 'credit_deposit',
+          p_severity: 'info',
+          p_payload: { source: source || 'unknown', amount, new_balance: newCredits, session_id },
+        });
+
         return new Response(JSON.stringify({
           credits: updated.credits
         }), {

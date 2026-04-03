@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { cleanDisplayText } from '../../../shared/media-utils';
 import type { PlayerStatus, QueueItem, PlayerSettings } from '../types';
 import { fmtDuration } from '../types';
@@ -15,7 +15,51 @@ export function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, 
   const artist = cleanDisplayText(cm?.artist) || '—';
   const isPlaying = status?.state === 'playing';
   const isPaused  = status?.state === 'paused';
-  const progress  = Math.min(100, (status?.progress ?? 0) * 100);
+
+  // Timeline interpolation — smoothly estimate progress between server updates
+  const lastServerProgressRef = useRef(0);
+  const lastServerTimestampRef = useRef(Date.now());
+  const lastMediaIdRef = useRef<string | null>(null);
+  const [displayProgress, setDisplayProgress] = useState(0);
+
+  // Sync refs when server status updates
+  useEffect(() => {
+    const serverProgress = status?.progress ?? 0;
+    const mediaId = status?.current_media_id ?? cm?.id ?? null;
+
+    // Reset on new song
+    if (mediaId !== lastMediaIdRef.current) {
+      lastMediaIdRef.current = mediaId;
+      lastServerProgressRef.current = 0;
+      lastServerTimestampRef.current = Date.now();
+      setDisplayProgress(0);
+      return;
+    }
+
+    lastServerProgressRef.current = serverProgress;
+    lastServerTimestampRef.current = Date.now();
+  }, [status?.progress, status?.current_media_id, cm?.id]);
+
+  // Interpolation timer — tick every 2s while playing
+  useEffect(() => {
+    if (!isPlaying || !cm?.duration || cm.duration <= 0) {
+      // Not playing: show exact server progress
+      setDisplayProgress(Math.min(100, (status?.progress ?? 0) * 100));
+      return;
+    }
+
+    const tick = () => {
+      const elapsed = (Date.now() - lastServerTimestampRef.current) / 1000;
+      const interpolated = lastServerProgressRef.current + (elapsed / cm.duration!);
+      setDisplayProgress(Math.min(100, interpolated * 100));
+    };
+
+    tick(); // immediate sync
+    const id = setInterval(tick, 2000);
+    return () => clearInterval(id);
+  }, [isPlaying, cm?.duration, status?.progress]);
+
+  const progress = displayProgress;
   const stateLabel = isSkipping ? 'SKIPPING' : isPlaying ? 'Now Playing' : isPaused ? 'Paused' : (status?.state || 'Idle');
   const handlePlayPauseClick = () => {
     if (isSkipping) return;
@@ -96,10 +140,10 @@ export function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, 
         <div style={{ paddingBottom: 14 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 9 }}>
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.3)', flexShrink: 0 }}>
-              {fmtDuration((status?.progress ?? 0) * (cm?.duration ?? 0))}
+              {fmtDuration((progress / 100) * (cm?.duration ?? 0))}
             </span>
             <div style={{ flex: 1, height: 3, borderRadius: 99, background: 'rgba(255,255,255,0.1)', position: 'relative' }}>
-              <div style={{ height: '100%', borderRadius: 99, background: 'linear-gradient(90deg,var(--accent),var(--accent-dark))', width: `${progress}%`, transition: 'width 0.5s linear' }} />
+              <div style={{ height: '100%', borderRadius: 99, background: 'linear-gradient(90deg,var(--accent),var(--accent-dark))', width: `${progress}%`, transition: 'width 2s linear' }} />
             </div>
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.3)', flexShrink: 0 }}>{fmtDuration(cm?.duration)}</span>
           </div>

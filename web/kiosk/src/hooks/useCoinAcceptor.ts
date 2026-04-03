@@ -57,7 +57,8 @@ export function useCoinAcceptor({
             session_id: currentSession.session_id,
             action: 'credit',
             amount,
-          })) as { credits?: number };
+            source: 'coin_acceptor',
+          } as any)) as { credits?: number };
 
           if (result?.credits !== undefined) {
             onCreditsUpdated(result.credits);

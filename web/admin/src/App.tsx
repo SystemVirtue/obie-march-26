@@ -37,6 +37,7 @@ import { PlaylistsPanel } from './components/PlaylistsPanel';
 import { SettingsPanel } from './components/SettingsPanel';
 import { ScriptsPanel } from './components/ScriptsPanel';
 import { LogsPanel } from './components/LogsPanel';
+import { ServerPanel } from './components/ServerPanel';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ROOT APP
@@ -289,6 +290,7 @@ function App() {
           {isScriptsView  && <ScriptsPanel playerId={activePlayerId} />}
           {isSettingsView && !isScriptsView && <SettingsPanel view={view} settings={settings} prefs={prefs} playerId={activePlayerId} />}
           {view === 'logs' && <LogsPanel />}
+          {view === 'server' && <ServerPanel />}
         </main>
       </div>
     </div>
