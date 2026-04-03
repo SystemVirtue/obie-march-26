@@ -167,16 +167,19 @@ Deno.serve(async (req)=>{
 
     // Handle status update
     if (action === 'update' || action === 'ended' || action === 'skip') {
-      // For skip: capture current player state BEFORE updating, so we can decide
-      // whether the player needs to fade out or whether it's already idle.
+      // For skip: capture current player state AND current_media_id BEFORE updating,
+      // so we can decide whether the player needs to fade out or whether it's already
+      // idle, and so the server-side advance can pass an idempotency key to queue_next.
       let preUpdateState: string | null = null;
+      let preUpdateMediaId: string | null = null;
       if (action === 'skip') {
         const { data: currentStatus } = await supabase
           .from('player_status')
-          .select('state')
+          .select('state, current_media_id')
           .eq('player_id', player_id)
           .single();
         preUpdateState = currentStatus?.state ?? null;
+        preUpdateMediaId = currentStatus?.current_media_id ?? null;
       }
 
       const updateData: Record<string, unknown> = {
@@ -224,12 +227,15 @@ Deno.serve(async (req)=>{
         if (shouldAdvanceServerSide) {
           // Nothing is actively playing (idle/loading/error/unknown), so the player-side
           // fade callback may never fire. Advance queue immediately on the server.
+          // Use preUpdateMediaId (read from DB before the state update) as the idempotency
+          // key so queue_next won't double-skip if a natural end already advanced the queue.
           console.log('[player-control] Skip while not actively playing - calling queue_next directly', {
-            pre_update_state: preUpdateState
+            pre_update_state: preUpdateState,
+            pre_update_media_id: preUpdateMediaId
           });
           const { data: nextItem, error: nextError } = await supabase.rpc('queue_next', {
             p_player_id: player_id,
-            p_expected_media_id: current_media_id || null
+            p_expected_media_id: preUpdateMediaId || null
           });
           if (nextError) {
             console.error('[player-control] ❌ Failed to get next item on idle-skip:', nextError);
@@ -262,8 +268,11 @@ Deno.serve(async (req)=>{
           }
         });
       }
-      // If song ended naturally (from Player), trigger queue_next
-      if (action === 'ended' || state === 'idle') {
+      // If song ended naturally (from Player), trigger queue_next.
+      // Only action='ended' should advance the queue — the old '|| state === 'idle''
+      // branch was a latent bug that would fire queue_next for any status update
+      // that happened to include state:'idle' (e.g. a stale heartbeat).
+      if (action === 'ended') {
         // Check if this player is the priority player before allowing queue progression
         const { data: player } = await supabase
           .from('players')
@@ -293,33 +302,7 @@ Deno.serve(async (req)=>{
         if (nextError) {
           console.error('[player-control] ❌ Failed to get next item:', nextError);
         } else {
-          console.log('[player-control] 🎵 Queue_next returned:', {
-            next_item: nextItem,
-            media_id: nextItem?.[0]?.id?.slice(0, 8) || 'none',
-            title: nextItem?.[0]?.title?.slice(0, 30) || 'none',
-            url: nextItem?.[0]?.url?.slice(0, 50) || 'none'
-          });
-          
-          // Also check what's in the queue now
-          const { data: currentQueue } = await supabase
-            .from('queue')
-            .select('id, media_item_id, type, position, played_at, media_items!inner(*)')
-            .eq('player_id', player_id)
-            .is('played_at', null)
-            .order('type', { ascending: false })
-            .order('position', { ascending: true });
-            
-          console.log('[player-control] 📋 Current queue after queue_next:', {
-            total_items: currentQueue?.length || 0,
-            items: currentQueue?.map(item => ({
-              id: item.id.slice(0, 8),
-              media_id: item.media_item_id?.slice(0, 8),
-              type: item.type,
-              position: item.position,
-              title: item.media_items?.title?.slice(0, 30) || 'none',
-              played_at: item.played_at
-            }))
-          });
+          console.log('[player-control] 🎵 Queue_next returned:', nextItem?.[0]?.title?.slice(0, 30) || 'none');
         }
         return new Response(JSON.stringify({
           success: true,

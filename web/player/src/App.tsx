@@ -10,6 +10,7 @@ import {
   callPlayerControl,
   callQueueManager,
   callPlaylistManager,
+  callRadioGenerator,
   initializePlayerPlaylist,
   type PlayerStatus,
   type MediaItem,
@@ -52,6 +53,8 @@ function App() {
   const isSkipLoadingRef = useRef(false); // Track if loading after skip
   const recentlyLoadedRef = useRef(false); // Track if video was recently loaded and should auto-play
   const isEndingRef = useRef(false); // In-flight guard: prevents double queue_next from concurrent calls
+  const autoRadioInFlightRef = useRef(false); // Prevents duplicate auto-radio generation
+  const checkAutoRadioRef = useRef<(() => void) | null>(null); // Stable ref for auto-radio check
   const loadingTimeoutRef = useRef<number | null>(null); // Timeout to skip if status stays in 'loading' for 6+ seconds
   const videoHasPlayedRef = useRef(false); // true once current video reaches YouTube state PLAYING; reset on new media
   const unexpectedPauseTimeoutRef = useRef<number | null>(null); // Timeout to auto-advance if paused before video ever played
@@ -60,6 +63,7 @@ function App() {
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   // Tracks the YouTube ID of the currently-loaded video (legacy reference, kept for potential future use)
   const currentYouTubeIdRef = useRef<string | null>(null);
+  const lastVideoLoadTimeRef = useRef<number>(0); // Timestamp of last loadVideoById call, used to reject stale ENDED events
   const localVideoLastReportRef = useRef<number>(0); // Throttle local video progress reports
   const localPlaybackUrlRef = useRef<string | null>(null); // Mirror of localPlaybackUrl for use inside callbacks
 
@@ -91,16 +95,19 @@ function App() {
   // Fade out audio and opacity over 2 seconds
   const fadeOut = useCallback((): Promise<void> => {
     return new Promise((resolve) => {
-      if (!playerRef.current || !playerDivRef.current) {
+      // Only require a volume-controllable source — don't bail if playerDivRef is null
+      // (YouTube IFrame API replaces the original div, so the ref can become stale).
+      const ytPlayer = playerRef.current;
+      const localVideo = localVideoRef.current;
+      if (!ytPlayer && !localVideo) {
         resolve();
         return;
       }
 
       const startVolume = ((): number => {
-        if (!playerRef.current) return 100;
-        if (typeof playerRef.current.getVolume === 'function') return playerRef.current.getVolume();
-        // HTMLMediaElement uses 0..1 volume
-        if (typeof (playerRef.current as any).volume === 'number') return (playerRef.current as any).volume * 100;
+        if (ytPlayer && typeof ytPlayer.getVolume === 'function') return ytPlayer.getVolume();
+        if (ytPlayer && typeof (ytPlayer as any).volume === 'number') return (ytPlayer as any).volume * 100;
+        if (localVideo) return localVideo.volume * 100;
         return 100;
       })();
       const startOpacity = 1;
@@ -120,13 +127,18 @@ function App() {
         const newVolume = startVolume * (1 - progress);
         const newOpacity = startOpacity * (1 - progress);
 
-        if (playerRef.current) {
-          if (typeof playerRef.current.setVolume === 'function') {
-            playerRef.current.setVolume(Math.max(0, newVolume));
-          } else if (typeof (playerRef.current as any).volume === 'number') {
-            (playerRef.current as any).volume = Math.max(0, Math.min(1, Math.max(0, newVolume) / 100));
+        // Fade volume on whichever source is active
+        if (ytPlayer) {
+          if (typeof ytPlayer.setVolume === 'function') {
+            ytPlayer.setVolume(Math.max(0, newVolume));
+          } else if (typeof (ytPlayer as any).volume === 'number') {
+            (ytPlayer as any).volume = Math.max(0, Math.min(1, Math.max(0, newVolume) / 100));
           }
         }
+        if (localVideo) {
+          localVideo.volume = Math.max(0, Math.min(1, Math.max(0, newVolume) / 100));
+        }
+        // Opacity is cosmetic — only apply if the div ref is still valid
         if (playerDivRef.current) {
           playerDivRef.current.style.opacity = String(Math.max(0, newOpacity));
         }
@@ -166,12 +178,14 @@ function App() {
   // Fade in audio and opacity over 2 seconds
   const fadeIn = useCallback((): Promise<void> => {
     return new Promise((resolve) => {
-      if (!playerRef.current || !playerDivRef.current) {
+      const ytPlayer = playerRef.current;
+      const localVideo = localVideoRef.current;
+      if (!ytPlayer && !localVideo) {
         resolve();
         return;
       }
 
-      const targetVolume = 100; // Can be made configurable later
+      const targetVolume = 100;
       const targetOpacity = 1;
       const duration = 2000; // 2 seconds
       const steps = 60; // 60 fps
@@ -189,12 +203,15 @@ function App() {
         const newVolume = targetVolume * progress;
         const newOpacity = targetOpacity * progress;
 
-        if (playerRef.current) {
-          if (typeof playerRef.current.setVolume === 'function') {
-            playerRef.current.setVolume(Math.min(100, newVolume));
-          } else if (typeof (playerRef.current as any).volume === 'number') {
-            (playerRef.current as any).volume = Math.min(1, Math.max(0, Math.min(100, newVolume) / 100));
+        if (ytPlayer) {
+          if (typeof ytPlayer.setVolume === 'function') {
+            ytPlayer.setVolume(Math.min(100, newVolume));
+          } else if (typeof (ytPlayer as any).volume === 'number') {
+            (ytPlayer as any).volume = Math.min(1, Math.max(0, Math.min(100, newVolume) / 100));
           }
+        }
+        if (localVideo) {
+          localVideo.volume = Math.min(1, Math.max(0, newVolume / 100));
         }
         if (playerDivRef.current) {
           playerDivRef.current.style.opacity = String(Math.min(1, newOpacity));
@@ -210,6 +227,40 @@ function App() {
       }, stepDuration);
     });
   }, []);
+
+  // Auto-generate radio from history when queue has no remaining items
+  const checkAndTriggerAutoRadio = useCallback(async () => {
+    if (autoRadioInFlightRef.current || !activePlayerId) return;
+
+    try {
+      const { data: remaining, error } = await supabase
+        .from('queue')
+        .select('id')
+        .eq('player_id', PLAYER_ID)
+        .is('played_at', null)
+        .limit(1);
+
+      if (!error && (!remaining || remaining.length === 0)) {
+        console.log('[Player] Queue empty after current song — auto-generating radio from history');
+        autoRadioInFlightRef.current = true;
+        try {
+          await callRadioGenerator({
+            player_id: PLAYER_ID,
+            action: 'generate',
+            source: 'history',
+          });
+          console.log('[Player] Auto-radio generation complete');
+        } catch (radioErr) {
+          console.error('[Player] Auto-radio generation failed:', radioErr);
+        } finally {
+          autoRadioInFlightRef.current = false;
+        }
+      }
+    } catch (err) {
+      console.error('[Player] Failed to check remaining queue:', err);
+    }
+  }, [activePlayerId, PLAYER_ID]);
+  checkAutoRadioRef.current = checkAndTriggerAutoRadio;
 
   // Report video ended and trigger queue_next (disabled for slave players)
   const reportEndedAndNext = useCallback(async (isSkip = false) => {
@@ -243,24 +294,39 @@ function App() {
         await ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'pause' }) }).catch(() => {});
         ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'setVolume', data: 100 }) }).catch(() => {});
       } else if (localPlaybackUrlRef.current) {
-        // Local/Cloudflare playback uses an HTMLVideoElement, so explicitly stop it.
-        // Without this, admin skip can advance queue state while the old video keeps playing.
+        // Local/Cloudflare playback uses an HTMLVideoElement — fade audio then stop.
         const localVideo = localVideoRef.current;
         if (localVideo) {
           try {
+            // Fade out audio over 1 second before stopping
+            const steps = 20;
+            const interval = 1000 / steps;
+            const startVol = localVideo.volume;
+            for (let i = 1; i <= steps; i++) {
+              await new Promise(r => setTimeout(r, interval));
+              localVideo.volume = Math.max(0, startVol * (1 - i / steps));
+            }
             localVideo.pause();
             localVideo.currentTime = 0;
             localVideo.removeAttribute('src');
             localVideo.load();
           } catch (error) {
-            console.warn('[Player] Failed to fully stop local/Cloudflare video on skip:', error);
+            console.warn('[Player] Failed to fade/stop local/Cloudflare video on skip:', error);
           }
         }
         setLocalPlaybackUrl(null);
       } else {
         await fadeOut();
       }
-      // Don't set skip loading flag - we'll fade back in immediately after loading
+      // Set skip-loading flag NOW — before the async callPlayerControl — so that
+      // the YouTube loading effect sees it even if the Supabase Realtime event for
+      // state='loading' (fired by queue_next's DB write) arrives before the HTTP
+      // response from callPlayerControl returns.  Without this, the race causes
+      // the new video to load at setVolume(100) instead of 0, silently undoing
+      // the fade-out that just completed.
+      if (isSkip) {
+        isSkipLoadingRef.current = true;
+      }
     }
 
     try {
@@ -288,11 +354,6 @@ function App() {
           metadata: {},
         };
         console.log('[Player] Loading next media from queue_next result:', nextMedia);
-
-        // If this was a skip, mark it so we can fade in when video starts
-        if (isSkip) {
-          isSkipLoadingRef.current = true;
-        }
 
         setCurrentMedia(nextMedia);
 
@@ -338,6 +399,20 @@ function App() {
           latestStatus?.state === 'idle' &&
           (!expectedMediaId || latestStatus.current_media_id === expectedMediaId);
 
+        if (!stillIdleOnSameMedia) {
+          // DB has already advanced to a new state (e.g. 'loading' from a concurrent
+          // queue_next) or current_media_id changed.  The idempotency guard correctly
+          // blocked our call — the Realtime subscription will deliver the new song.
+          // Do NOT null out currentMedia here: doing so would blank the player display
+          // even though the next song is already queued and loading.
+          console.log('[Player] queue_next empty but DB already advanced — suppressing setCurrentMedia(null)', {
+            db_state: latestStatus?.state,
+            db_media_id: latestStatus?.current_media_id,
+            expected_media_id: expectedMediaId,
+          });
+          return;
+        }
+
         if (stillIdleOnSameMedia) {
           console.warn('[Player] queue_next returned empty while still idle on same media - retrying once without idempotency key');
           const retryResult = await callPlayerControl({
@@ -355,9 +430,15 @@ function App() {
       }
 
       console.log('[Player] No more items in queue - result:', result);
+      // No video loaded — clear the skip-loading flag so the next natural end
+      // doesn't incorrectly apply a fade-in to a non-skip transition.
+      isSkipLoadingRef.current = false;
       setCurrentMedia(null);
     } catch (error) {
       console.error('[Player] Failed to call queue_next:', error);
+      // On error, clear the skip-loading flag to avoid a stale true value
+      // affecting the next video load.
+      isSkipLoadingRef.current = false;
     } finally {
       // Do NOT reset isEndingRef on a short timer.  Instead, keep the guard active
       // until the next video actually starts PLAYING (reset in onPlayerStateChange
@@ -413,6 +494,9 @@ function App() {
       }
       reportStatus('playing');
 
+      // Proactively generate radio if this is the last song in queue
+      checkAutoRadioRef.current?.();
+
       // If we're at volume 0 (after skip), fade in
       if (playerRef.current) {
         const currentVol = ((): number => {
@@ -461,7 +545,16 @@ function App() {
         }
       }
     } else if (event.data === 0) {
-      // ENDED - trigger queue progression
+      // ENDED - trigger queue progression.
+      // Guard: YouTube fires stale ENDED events 2-3 s after loadVideoById for the
+      // previous video.  These arrive after the new video's PLAYING event has
+      // already reset isEndingRef, so isEndingRef alone cannot block them.
+      // Reject any ENDED that arrives within 3 s of loading the current video.
+      const msSinceLoad = Date.now() - lastVideoLoadTimeRef.current;
+      if (msSinceLoad < 3000) {
+        console.warn(`[Player] Ignoring ENDED — only ${msSinceLoad}ms since last video load (stale YouTube event)`);
+        return;
+      }
       console.log('[Player] Video ENDED - calling queue_next');
       reportEndedAndNext();
     } else if (event.data === 3) {
@@ -621,18 +714,18 @@ function App() {
   // A client-side effect here would fire on settings-change rather than on playlist-load,
   // causing unexpected re-shuffles and potentially moving the currently playing item.
 
-  // Subscribe to player_status updates from Supabase
+  // Realtime subscription for player_status — instant admin commands (pause/skip/resume)
+  // with zero polling overhead. Only refetches with JOIN when current_media_id changes.
   useEffect(() => {
     if (!identityReady || !activePlayerId) return;
 
-    console.log('[Player] Subscribing to player status...');
+    console.log('[Player] Starting player status subscription...');
     const prevStateRef = { current: status?.state };
-    
+
     const subscription = subscribeToPlayerStatus(PLAYER_ID, async (newStatus) => {
-      console.log('[Player] Status update:', newStatus);
       const prevState = prevStateRef.current;
       const newState = newStatus.state;
-      
+
       // Handle state transitions with fades.
       // In YTM Desktop mode playerRef.current is null (no iframe), so we must also
       // allow the block when playerModeRef indicates ytm_desktop.
@@ -642,23 +735,18 @@ function App() {
           console.log('[Player] Skip detected from Admin - triggering fade and skip');
           await reportEndedAndNext(true); // Skip with fade
           prevStateRef.current = newState;
-          setStatus(newStatus);
           return; // Exit early, don't process other state changes
         }
-        
+
         if (newState === 'paused' && prevState === 'playing') {
           if (playerModeRef.current === 'ytm_desktop') {
-            // Mark that this pause is admin-initiated so end detection ignores the
-            // resulting trackState 1→0 transition in the state-update handler.
             ytmAdminPausedRef.current = true;
             setTimeout(() => { ytmAdminPausedRef.current = false; }, 3000);
             ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'pause' }) }).catch(() => {});
           } else if (localPlaybackUrlRef.current && localVideoRef.current) {
-            // Cloudflare/local: pause the <video> element
             console.log('[Player] Pausing local/Cloudflare video...');
             localVideoRef.current.pause();
           } else if (playerRef.current) {
-            // Fade out when pausing
             console.log('[Player] Pausing - fading out...');
             await fadeOut();
             playerRef.current.pauseVideo();
@@ -667,18 +755,16 @@ function App() {
           if (playerModeRef.current === 'ytm_desktop') {
             ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'play' }) }).catch(() => {});
           } else if (localPlaybackUrlRef.current && localVideoRef.current) {
-            // Cloudflare/local: resume the <video> element
             console.log('[Player] Resuming local/Cloudflare video...');
             localVideoRef.current.play().catch(() => {});
           } else if (playerRef.current) {
-            // Fade in when resuming
             console.log('[Player] Resuming - fading in...');
             playerRef.current.playVideo();
             await fadeIn();
           }
         }
       }
-      
+
       prevStateRef.current = newState;
       setStatus(newStatus);
 
@@ -688,14 +774,11 @@ function App() {
 
       // ── Non-YouTube source (yt-dlp download or Cloudflare R2) ─────────────
       if ((newStatus.source === 'local' || newStatus.source === 'cloudflare') && newStatus.local_url) {
-        // Only activate when the local_url is actually new (avoid redundant sets)
         if (newStatus.local_url !== localPlaybackUrl) {
           console.log(`[Player][realtime] source=${newStatus.source} → activating <video>`);
-          console.log(`[Player][realtime]   media_id=${newMediaId}  url=${newStatus.local_url}`);
           setLocalPlaybackUrl(newStatus.local_url);
         }
       } else if (newMediaId && newMediaId !== oldMediaId) {
-        // New song started — always return to YouTube iframe mode
         console.log(`[Player][realtime] source=${newStatus.source ?? 'youtube'} new media_id=${newMediaId} → reset to iframe mode`);
         setLocalPlaybackUrl(null);
       }
@@ -709,14 +792,10 @@ function App() {
         });
         setCurrentMedia(newStatus.current_media || null);
 
-        // Mark that video was recently loaded and should auto-play if it pauses unexpectedly
         recentlyLoadedRef.current = true;
-        // Clear the flag after 5 seconds
         setTimeout(() => {
           recentlyLoadedRef.current = false;
         }, 5000);
-      } else {
-        console.log('[Player] Same media in status update, not updating state');
       }
     });
 
@@ -997,8 +1076,9 @@ function App() {
         }
         playerRef.current.setVolume(0);
         isSkipLoadingRef.current = false; // Reset flag
-        
+
         // Load and explicitly play video (will trigger fade-in when playing state is detected)
+        lastVideoLoadTimeRef.current = Date.now(); // Guard stale ENDED events for 3 s
         playerRef.current.loadVideoById(youtubeId);
         // Ensure playback starts
         setTimeout(() => {
@@ -1013,8 +1093,9 @@ function App() {
           playerDivRef.current.style.opacity = '1';
         }
         playerRef.current.setVolume(100);
-        
+
         // loadVideoById and explicitly play
+        lastVideoLoadTimeRef.current = Date.now(); // Guard stale ENDED events for 3 s
         playerRef.current.loadVideoById(youtubeId);
         // Ensure playback starts
         setTimeout(() => {
@@ -1031,6 +1112,7 @@ function App() {
     currentMediaIdRef.current = currentMedia.id;
     currentYouTubeIdRef.current = youtubeId;
     videoHasPlayedRef.current = false; // Reset — new player, video hasn't played yet
+    lastVideoLoadTimeRef.current = Date.now(); // Guard stale ENDED events for 3 s
     setPlayerReady(false);
 
     console.log('[Player] Creating YouTube player for video:', youtubeId);

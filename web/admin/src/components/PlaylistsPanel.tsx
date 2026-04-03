@@ -11,7 +11,7 @@ import {
 import type { ViewId } from '../types';
 import { Spinner, PanelHeader, Btn } from './ui';
 
-export function PlaylistsPanel({ view, playerId }: { view: ViewId; playerId: string }) {
+export function PlaylistsPanel({ view, playerId, activePlaylistId }: { view: ViewId; playerId: string; activePlaylistId?: string }) {
   const [playlists, setPlaylists] = useState<(Playlist & { item_count?: number })[]>([]);
   const [playlistItems, setPlaylistItems] = useState<(PlaylistItem & { media_item?: MediaItem })[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -178,8 +178,9 @@ export function PlaylistsPanel({ view, playerId }: { view: ViewId; playerId: str
   );
 
   // playlists-all
-  const active = playlists.find(p => p.is_active);
-  const sorted = [...playlists].sort((a, b) => (b.is_active ? 1 : 0) - (a.is_active ? 1 : 0));
+  const sorted = [...playlists].sort((a, b) =>
+    (b.id === activePlaylistId ? 1 : 0) - (a.id === activePlaylistId ? 1 : 0)
+  );
   const totalSongs = playlists.reduce((a, p) => a + (p.item_count ?? 0), 0);
 
   return (
@@ -190,14 +191,9 @@ export function PlaylistsPanel({ view, playerId }: { view: ViewId; playerId: str
       {msg && <div style={{ margin: '8px 24px 0', padding: '8px 12px', borderRadius: 8,
         background: msg.ok ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
         color: msg.ok ? '#4ade80' : '#f87171', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{msg.text}</div>}
-      {active && (
-        <div style={{ margin: '8px 24px 0', padding: '8px 14px', borderRadius: 8, background: 'var(--accent-dim)', border: '1px solid var(--accent-border)', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--accent)' }}>
-          ▶ Currently Active: {active.name}
-        </div>
-      )}
       <div style={{ flex: 1, overflowY: 'auto', padding: '12px 24px' }}>
         {sorted.map(playlist => {
-          const isActive   = playlist.is_active;
+          const isActive   = playlist.id === activePlaylistId;
           const isExpanded = expandedId === playlist.id;
           return (
             <div key={playlist.id} style={{ marginBottom: 6, borderRadius: 13,

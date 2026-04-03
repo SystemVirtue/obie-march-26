@@ -15,6 +15,7 @@ export interface Player {
   status: 'offline' | 'online' | 'error';
   last_heartbeat: string;
   active_playlist_id: string | null;
+  priority_player_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -106,6 +107,8 @@ export interface PlayerSettings {
   kiosk_coin_acceptor_connected?: boolean;
   kiosk_coin_acceptor_device_id?: string | null;
   kiosk_show_virtual_coin_button?: boolean;
+  coin_credits_dollar1?: number;
+  coin_credits_dollar2?: number;
   player_mode?: 'iframe' | 'ytm_desktop';
   cloudflare_enabled?: boolean;
   cloudflare_r2_public_url?: string | null;
@@ -330,74 +333,67 @@ export function subscribeToTable<T = any>(
 }
 
 /**
- * Subscribe to player status updates
+ * Subscribe to player status updates.
+ * Uses the Realtime payload directly for progress/state updates,
+ * only refetching with media_items join when current_media_id changes.
+ * Debounces media refetches to coalesce rapid skip bursts.
  */
 export function subscribeToPlayerStatus(
   playerId: string,
   callback: (status: PlayerStatus) => void
 ): RealtimeSubscription<PlayerStatus> {
-  // Fetch initial status with media_item join
-  console.log('[subscribeToPlayerStatus] 🎵 Fetching initial player status...');
-  supabase
-    .from('player_status')
-    .select('*, current_media:media_items(*)')
-    .eq('player_id', playerId)
-    .single()
-    .then(({ data, error }) => {
+  let lastStatus: PlayerStatus | null = null;
+  let lastMediaId: string | null = null;
+  let mediaRefetchTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  const fetchFullStatus = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('player_status')
+        .select('*, current_media:media_items(*)')
+        .eq('player_id', playerId)
+        .single();
       if (error) {
-        console.error('[subscribeToPlayerStatus] ❌ Initial status error:', error);
+        console.error('[subscribeToPlayerStatus] Fetch error:', error);
         return;
       }
-      
       if (data) {
-        console.log('[subscribeToPlayerStatus] 📺 Initial status:', {
-          state: (data as any).state,
-          current_media_id: (data as any).current_media_id?.slice(0, 8) || 'none',
-          title: (data as any).current_media?.title?.slice(0, 30) || 'none',
-          progress: (data as any).progress,
-          last_updated: (data as any).last_updated
-        });
-        callback(data as any);
+        lastStatus = data as PlayerStatus;
+        lastMediaId = lastStatus.current_media_id;
+        callback(lastStatus);
       }
-    });
+    } catch (err) {
+      console.error('[subscribeToPlayerStatus] Fetch failed:', err);
+    }
+  };
+
+  // Fetch initial status with media_item join
+  fetchFullStatus();
 
   return subscribeToTable<PlayerStatus>(
     'player_status',
     { column: 'player_id', value: playerId },
     (payload) => {
-      console.log('[subscribeToPlayerStatus] 🔄 Status change detected:', {
-        eventType: payload.eventType,
-        old_state: payload.old?.state,
-        new_state: payload.new?.state,
-        old_media_id: payload.old?.current_media_id?.slice(0, 8) || 'none',
-        new_media_id: payload.new?.current_media_id?.slice(0, 8) || 'none'
-      });
-      
       if (payload.eventType === 'UPDATE' || payload.eventType === 'INSERT') {
-        // Fetch with media_item join
-        console.log('[subscribeToPlayerStatus] 🔄 Fetching updated status with media...');
-        supabase
-          .from('player_status')
-          .select('*, current_media:media_items(*)')
-          .eq('player_id', playerId)
-          .single()
-          .then(({ data, error }) => {
-            if (error) {
-              console.error('[subscribeToPlayerStatus] ❌ Update fetch error:', error);
-              return;
-            }
-            
-            if (data) {
-              console.log('[subscribeToPlayerStatus] 📺 Updated status:', {
-                state: (data as any).state,
-                current_media_id: (data as any).current_media_id?.slice(0, 8) || 'none',
-                title: (data as any).current_media?.title?.slice(0, 30) || 'none',
-                progress: (data as any).progress,
-                last_updated: (data as any).last_updated
-              });
-              callback(data as any);
-            }
-          });
+        const newRow = payload.new;
+        const mediaChanged = newRow.current_media_id !== lastMediaId;
+
+        if (mediaChanged) {
+          // Media changed — need to fetch the joined media_items row.
+          // Debounce to coalesce rapid media changes (e.g. skip bursts).
+          lastMediaId = newRow.current_media_id;
+          if (mediaRefetchTimeout) clearTimeout(mediaRefetchTimeout);
+          mediaRefetchTimeout = setTimeout(() => {
+            fetchFullStatus();
+          }, 500);
+        } else if (lastStatus) {
+          // Progress/state only — merge Realtime payload, skip refetch
+          lastStatus = { ...lastStatus, ...newRow };
+          callback(lastStatus);
+        } else {
+          // No cached status yet — do a full fetch
+          fetchFullStatus();
+        }
       }
     }
   );
@@ -412,44 +408,29 @@ export function subscribeToQueue(
 ): RealtimeSubscription<QueueItem> {
   let refetchTimeout: ReturnType<typeof setTimeout> | null = null;
   
-  const fetchQueue = () => {
-    console.log('[subscribeToQueue] 🔄 Fetching queue from database...');
-    const fetchTime = new Date().toISOString();
-    console.log('[subscribeToQueue] ⏰ Fetch timestamp:', fetchTime);
-    
-    supabase
-      .from('queue')
-      .select('id, player_id, type, media_item_id, position, requested_by, requested_at, played_at, expires_at, media_item:media_items(*)')
-      .eq('player_id', playerId)
-      .is('played_at', null)
-      .order('type', { ascending: false })
-      .order('position', { ascending: true })
-      .then(({ data, error }) => {
-        if (error) {
-          console.error('[subscribeToQueue] ❌ Database error:', error);
-          return;
-        }
-        
-        console.log('[subscribeToQueue] 📊 Fetched', data?.length || 0, 'items from database');
-        if (data && data.length > 0) {
-          console.log('[subscribeToQueue] 📋 Queue data:', (data as any[]).map(item => ({
-            id: item.id?.slice(0, 8) || 'unknown',
-            type: item.type || 'unknown',
-            position: item.position || -1,
-            media_id: item.media_item_id?.slice(0, 8) || 'unknown',
-            title: item.media_item?.title?.slice(0, 30) || 'unknown',
-            played_at: item.played_at || null
-          })));
-        } else {
-          console.log('[subscribeToQueue] 📋 Queue is empty');
-        }
-        
-        if (data) {
-          callback(data as QueueItem[]);
-        }
-      });
+  const fetchQueue = async () => {
+    try {
+      console.log('[subscribeToQueue] 🔄 Fetching queue from database...');
+      const { data, error } = await supabase
+        .from('queue')
+        .select('id, player_id, type, media_item_id, position, requested_by, requested_at, played_at, expires_at, media_item:media_items(*)')
+        .eq('player_id', playerId)
+        .is('played_at', null)
+        .order('type', { ascending: false })
+        .order('position', { ascending: true });
+      if (error) {
+        console.error('[subscribeToQueue] ❌ Database error:', error);
+        return;
+      }
+      console.log('[subscribeToQueue] 📊 Fetched', data?.length || 0, 'items from database');
+      if (data) {
+        callback(data as QueueItem[]);
+      }
+    } catch (err) {
+      console.error('[subscribeToQueue] ❌ Fetch failed:', err);
+    }
   };
-  
+
   // Fetch initial queue
   fetchQueue();
 
@@ -476,14 +457,18 @@ export function subscribeToPlayerSettings(
   callback: (settings: PlayerSettings) => void
 ): RealtimeSubscription<PlayerSettings> {
   // Fetch initial settings
-  supabase
-    .from('player_settings')
-    .select('*')
-    .eq('player_id', playerId)
-    .single()
-    .then(({ data }) => {
+  (async () => {
+    try {
+      const { data } = await supabase
+        .from('player_settings')
+        .select('*')
+        .eq('player_id', playerId)
+        .single();
       if (data) callback(data);
-    });
+    } catch (err) {
+      console.error('[subscribeToPlayerSettings] ❌ Initial fetch failed:', err);
+    }
+  })();
 
   return subscribeToTable<PlayerSettings>(
     'player_settings',
@@ -504,14 +489,18 @@ export function subscribeToKioskSession(
   callback: (session: KioskSession) => void
 ): RealtimeSubscription<KioskSession> {
   // Fetch initial session
-  supabase
-    .from('kiosk_sessions')
-    .select('*')
-    .eq('session_id', sessionId)
-    .single()
-    .then(({ data }) => {
+  (async () => {
+    try {
+      const { data } = await supabase
+        .from('kiosk_sessions')
+        .select('*')
+        .eq('session_id', sessionId)
+        .single();
       if (data) callback(data);
-    });
+    } catch (err) {
+      console.error('[subscribeToKioskSession] ❌ Initial fetch failed:', err);
+    }
+  })();
 
   return subscribeToTable<KioskSession>(
     'kiosk_sessions',
@@ -540,6 +529,52 @@ export function subscribeToSystemLogs(
       }
     }
   );
+}
+
+// =============================================================================
+// POLLING + BROADCAST (replaces high-churn Realtime DB subscriptions)
+// =============================================================================
+
+/**
+ * Poll player_status at a regular interval instead of using a Realtime
+ * postgres_changes subscription.  Eliminates the subscription row churn in
+ * realtime.subscription and reduces WAL decoder load.
+ */
+export function pollPlayerStatus(
+  playerId: string,
+  callback: (status: PlayerStatus) => void,
+  intervalMs = 3000
+): { unsubscribe: () => void } {
+  const fetchStatus = async () => {
+    const { data, error } = await supabase
+      .from('player_status')
+      .select('*, current_media:media_items(*)')
+      .eq('player_id', playerId)
+      .single();
+    if (!error && data) callback(data as any);
+  };
+
+  fetchStatus();
+  const id = setInterval(fetchStatus, intervalMs);
+  return { unsubscribe: () => clearInterval(id) };
+}
+
+/**
+ * Subscribe to a player's broadcast channel for real-time progress events.
+ * Use alongside pollPlayerStatus — broadcast carries frequent progress updates
+ * without touching the database or WAL.
+ */
+export function subscribeToPlayerBroadcast(
+  playerId: string,
+  onProgress: (data: { progress: number; state: PlayerStatus['state'] }) => void
+): RealtimeChannel {
+  const channel = supabase
+    .channel(`player-broadcast:${playerId}`)
+    .on('broadcast', { event: 'progress' }, ({ payload }) => {
+      onProgress(payload as { progress: number; state: PlayerStatus['state'] });
+    })
+    .subscribe();
+  return channel;
 }
 
 // =============================================================================
@@ -635,12 +670,18 @@ export async function callDownloadVideo(params: {
 export async function callKioskHandler(params: {
   session_id?: string;
   player_id?: string;
-  action: 'init' | 'search' | 'credit' | 'request' | 'check' | 'search_r2' | 'request_r2';
+  action: 'init' | 'heartbeat' | 'search' | 'credit' | 'request' | 'check' | 'search_r2' | 'request_r2' | 'admin_request';
   query?: string;
   media_item_id?: string;
   amount?: number;
   url?: string;
   r2_file_id?: string;
+  add_to_queue?: boolean;
+  // Pre-scraped metadata for admin_request (skips youtube-scraper call)
+  title?: string;
+  artist?: string;
+  thumbnail?: string;
+  duration?: number;
 }) {
   try {
     if (!supabaseAnonKey) {
@@ -701,6 +742,14 @@ export async function callYouTubeScraper(params: { url: string }) {
   return await invokeEdgeFunction('youtube-scraper', params, { preferSession: false });
 }
 
+export async function callRadioGenerator(params: {
+  player_id: string;
+  action: 'generate';
+  source: 'now_playing' | 'history' | 'playlist';
+}) {
+  return await invokeEdgeFunction('radio-generator', params, { preferSession: false });
+}
+
 /**
  * Initialize player with default playlist and start auto-play
  */
@@ -755,6 +804,74 @@ export async function getPlayer(playerId: string): Promise<Player | null> {
 
   if (error) throw error;
   return data;
+}
+
+/**
+ * Batch-fetch multiple player records by ID (for multi-player Connected Devices view)
+ */
+export async function getPlayersByIds(playerIds: string[]): Promise<Player[]> {
+  if (!playerIds.length) return [];
+  const { data, error } = await supabase
+    .from('players')
+    .select('*')
+    .in('id', playerIds);
+  if (error) throw error;
+  return (data ?? []) as Player[];
+}
+
+/**
+ * Subscribe to real-time changes on a player record
+ */
+export function subscribeToPlayer(
+  playerId: string,
+  callback: (player: Player) => void
+): RealtimeSubscription<Player> {
+  supabase
+    .from('players')
+    .select('*')
+    .eq('id', playerId)
+    .single()
+    .then(({ data }) => { if (data) callback(data as Player); });
+
+  return subscribeToTable<Player>(
+    'players',
+    { column: 'id', value: playerId },
+    (payload) => {
+      if (payload.eventType === 'UPDATE' || payload.eventType === 'INSERT') {
+        callback(payload.new);
+      }
+    }
+  );
+}
+
+/**
+ * Get kiosk sessions for a player (last 24 hours)
+ */
+export async function getKioskSessions(playerId: string): Promise<KioskSession[]> {
+  // 5-minute window: with a 30-second heartbeat, a closed kiosk goes stale within ~90 s
+  // (Offline threshold) and drops off this list within 5 min.
+  const since = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  const { data, error } = await supabase
+    .from('kiosk_sessions')
+    .select('*')
+    .eq('player_id', playerId)
+    .gte('last_active', since)
+    .order('last_active', { ascending: false });
+  if (error) throw error;
+  return data ?? [];
+}
+
+/**
+ * Get a single playlist by ID
+ */
+export async function getPlaylistById(playlistId: string): Promise<Playlist | null> {
+  const { data, error } = await supabase
+    .from('playlists')
+    .select('*')
+    .eq('id', playlistId)
+    .single();
+  if (error) return null;
+  return data as Playlist;
 }
 
 /**
@@ -1118,5 +1235,59 @@ export function subscribeToAuth(callback: (user: AuthUser | null) => void): { un
 
   return {
     unsubscribe: () => subscription.unsubscribe(),
+  };
+}
+
+// ─── App Version Auto-Reload ──────────────────────────────────────────────────
+
+/**
+ * Subscribe to app_config version changes via Realtime.
+ * On first connect, reads the current version from the DB.
+ * When a newer version is detected, calls `onVersionChange` with the new version.
+ * Typical usage: call window.location.reload() in the callback.
+ */
+export function subscribeToAppVersion(onVersionChange: (newVersion: string) => void): { unsubscribe: () => void } {
+  let loadedVersion: string | null = null;
+
+  // Read initial version
+  (async () => {
+    try {
+      const { data } = await supabase
+        .from('app_config')
+        .select('value')
+        .eq('key', 'app_version')
+        .maybeSingle();
+      if (data && (data as any).value) {
+        loadedVersion = (data as any).value;
+        console.log(`[AppVersion] Loaded version: ${loadedVersion}`);
+      }
+    } catch (err) {
+      console.error('[AppVersion] ❌ Initial fetch failed:', err);
+    }
+  })();
+
+  // Subscribe to changes
+  const channel = supabase.channel('app_config:app_version');
+  channel
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'app_config',
+        filter: 'key=eq.app_version',
+      },
+      (payload: any) => {
+        const newVersion = payload.new?.value;
+        if (newVersion && loadedVersion && newVersion !== loadedVersion) {
+          console.log(`[AppVersion] Version changed: ${loadedVersion} → ${newVersion}`);
+          onVersionChange(newVersion);
+        }
+      }
+    )
+    .subscribe();
+
+  return {
+    unsubscribe: () => supabase.removeChannel(channel),
   };
 }
