@@ -399,6 +399,20 @@ function App() {
           latestStatus?.state === 'idle' &&
           (!expectedMediaId || latestStatus.current_media_id === expectedMediaId);
 
+        if (!stillIdleOnSameMedia) {
+          // DB has already advanced to a new state (e.g. 'loading' from a concurrent
+          // queue_next) or current_media_id changed.  The idempotency guard correctly
+          // blocked our call — the Realtime subscription will deliver the new song.
+          // Do NOT null out currentMedia here: doing so would blank the player display
+          // even though the next song is already queued and loading.
+          console.log('[Player] queue_next empty but DB already advanced — suppressing setCurrentMedia(null)', {
+            db_state: latestStatus?.state,
+            db_media_id: latestStatus?.current_media_id,
+            expected_media_id: expectedMediaId,
+          });
+          return;
+        }
+
         if (stillIdleOnSameMedia) {
           console.warn('[Player] queue_next returned empty while still idle on same media - retrying once without idempotency key');
           const retryResult = await callPlayerControl({
