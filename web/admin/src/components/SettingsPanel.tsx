@@ -218,10 +218,22 @@ export function SettingsPanel({ view, settings, prefs, playerId }: { view: ViewI
           {'kiosk_coin_acceptor_enabled' in local && (
             <div style={{ marginTop: 16, padding: 18, borderRadius: 14, background: 'rgba(255,255,255,0.025)', border: '1px solid var(--border)' }}>
               <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, color: '#fff', marginBottom: 10 }}>Coin Acceptor Hardware</div>
-              <button onClick={() => handleToggle('kiosk_coin_acceptor_enabled' as keyof PlayerSettings)} style={{ padding: '9px 18px', borderRadius: 10, border: 'none', cursor: 'pointer', fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 600,
+              <button onClick={async () => {
+                if (local.kiosk_coin_acceptor_connected) {
+                  // Reset connection state without disabling
+                  set('kiosk_coin_acceptor_connected' as keyof PlayerSettings, false);
+                  set('kiosk_coin_acceptor_device_id' as keyof PlayerSettings, null as any);
+                  try {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    await (supabase as any).from('player_settings').update({ kiosk_coin_acceptor_connected: false, kiosk_coin_acceptor_device_id: null }).eq('player_id', playerId);
+                  } catch (e) { console.error(e); }
+                } else {
+                  handleToggle('kiosk_coin_acceptor_enabled' as keyof PlayerSettings);
+                }
+              }} style={{ padding: '9px 18px', borderRadius: 10, border: 'none', cursor: 'pointer', fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 600,
                 background: local.kiosk_coin_acceptor_enabled ? (local.kiosk_coin_acceptor_connected ? 'rgba(34,197,94,0.18)' : 'rgba(251,191,36,0.15)') : 'rgba(59,130,246,0.15)',
                 color:      local.kiosk_coin_acceptor_enabled ? (local.kiosk_coin_acceptor_connected ? '#4ade80'              : '#fbbf24')                  : '#60a5fa' }}>
-                {local.kiosk_coin_acceptor_enabled ? (local.kiosk_coin_acceptor_connected ? '🟢 Connected' : '🟡 Connecting…') : '🔵 Enable Coin Acceptor'}
+                {local.kiosk_coin_acceptor_enabled ? (local.kiosk_coin_acceptor_connected ? '🟢 Connected (Click to Reset)' : '🟡 Connecting…') : '🔵 Enable Coin Acceptor'}
               </button>
               {local.kiosk_coin_acceptor_device_id && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 8 }}>Device: {local.kiosk_coin_acceptor_device_id}</div>}
               <div style={{ marginTop: 14, display: 'flex', gap: 16, flexWrap: 'wrap' }}>

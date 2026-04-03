@@ -146,7 +146,8 @@ function App() {
           session_id: session.session_id,
           action: 'credit',
           amount: 1,
-        });
+          source: 'virtual_button',
+        } as any);
         setSession({ ...session, credits });
       } catch (error) {
         console.error('Failed to add credit:', error);
@@ -218,7 +219,13 @@ function App() {
 
           {/* Credits Display - Top Right */}
           <div className="fixed top-4 right-4 z-20">
-            <div className="bg-black/60 border-2 border-yellow-400 rounded-lg p-3 shadow-lg">
+            <div className={`bg-black/60 border-2 rounded-lg p-3 shadow-lg ${
+              settings?.freeplay
+                ? 'border-yellow-400'
+                : settings?.kiosk_coin_acceptor_connected
+                  ? 'border-green-500'
+                  : 'border-red-500'
+            }`}>
               <div className="flex items-center gap-2">
                 <Coins className="text-yellow-300 h-6 w-6" />
                 <div className="flex flex-col">

@@ -219,10 +219,47 @@ export function ScriptsPanel({ playerId }: { playerId: string }) {
     log({ ts: now(), text: `Done. ${totalRemoved} total duplicate${totalRemoved === 1 ? '' : 's'} removed across all playlists.`, level: totalRemoved > 0 ? 'ok' : 'info' });
   };
 
+  const runRefreshJukebox = async (_: string, log: (e: ScriptLog) => void) => {
+    log({ ts: now(), text: 'Resetting player status to idle…', level: 'info' });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: statusErr } = await (supabase as any).from('player_status').update({
+      state: 'idle',
+      progress: 0,
+      last_updated: new Date().toISOString(),
+    }).eq('player_id', playerId);
+    if (statusErr) log({ ts: now(), text: `Warning: ${statusErr.message}`, level: 'err' });
+    else log({ ts: now(), text: '✓ Player status reset to idle', level: 'ok' });
+
+    log({ ts: now(), text: 'Resetting coin acceptor connection flag…', level: 'info' });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: coinErr } = await (supabase as any).from('player_settings').update({
+      kiosk_coin_acceptor_connected: false,
+      kiosk_coin_acceptor_device_id: null,
+    }).eq('player_id', playerId);
+    if (coinErr) log({ ts: now(), text: `Warning: ${coinErr.message}`, level: 'err' });
+    else log({ ts: now(), text: '✓ Coin acceptor connection reset', level: 'ok' });
+
+    log({ ts: now(), text: 'Touching kiosk session timestamps…', level: 'info' });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: sessErr } = await (supabase as any).from('kiosk_sessions').update({
+      last_active: new Date().toISOString(),
+    }).eq('player_id', playerId);
+    if (sessErr) log({ ts: now(), text: `Warning: ${sessErr.message}`, level: 'err' });
+    else log({ ts: now(), text: '✓ Kiosk sessions refreshed', level: 'ok' });
+
+    log({ ts: now(), text: 'All reset steps complete. Reloading admin console in 2 seconds…', level: 'ok' });
+    await delay(2000);
+    window.location.reload();
+  };
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <PanelHeader title="Functions & Scripts" subtitle="Invoke server-side operations via Supabase Edge Functions" />
       <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
+        <ScriptCard icon="🔃" name="refresh-jukebox" category="System"
+          desc="Reset player state, coin acceptor, and kiosk sessions. Use when Supabase is out of sync, the player is stalled, or realtime subscriptions are broken. Reloads admin console after reset."
+          onRun={runRefreshJukebox}
+        />
         <ScriptCard icon="📥" name="import-single-playlist" category="Playlists"
           desc="Import a single YouTube playlist. Enter the YouTube Playlist ID, optionally followed by | and a name."
           input={{ label: 'YouTube Playlist ID | Name', placeholder: 'PLN9QqCogPsXJCgeL_iEgYnW6Rl_8nIUUH|Obie Playlist', required: true }}
