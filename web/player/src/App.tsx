@@ -529,19 +529,30 @@ function App() {
           }
         }
       } else {
-        // Video has played before — this is a genuine pause (user or admin).
-        reportStatus('paused');
-
-        // If video was recently loaded and paused unexpectedly, attempt to auto-play
+        // Video has played before — could be a genuine user/admin pause OR an unexpected
+        // mid-load pause (e.g. YouTube briefly plays then re-pauses during buffering start).
+        //
+        // IMPORTANT: Do NOT call reportStatus('paused') before playVideo() when we intend
+        // to immediately resume.  If we do, the 'paused' DB write can arrive at the server
+        // AFTER the subsequent 'playing' write (HTTP jitter), leaving the DB permanently
+        // stuck in 'paused'.  The status-sync effect then enforces that by calling
+        // pauseVideo() — causing the video to freeze indefinitely.
+        //
+        // Fix: attempt auto-play first when the video was recently loaded; only report
+        // 'paused' to the DB if we are NOT going to immediately call playVideo().
         if (recentlyLoadedRef.current && playerRef.current && typeof playerRef.current.playVideo === 'function') {
-          console.log('[Player] Video paused unexpectedly after load, attempting auto-play...');
+          console.log('[Player] Video paused unexpectedly after recent load — attempting auto-play (skipping paused DB write to avoid race)');
           try {
             playerRef.current.playVideo();
-            // Clear the flag since we're attempting to play
             recentlyLoadedRef.current = false;
           } catch (error) {
             console.error('[Player] Error auto-playing video:', error);
+            // playVideo() itself threw — fall back to reporting the genuine pause
+            reportStatus('paused');
           }
+        } else {
+          // No recent load — this is a genuine pause (user or admin).
+          reportStatus('paused');
         }
       }
     } else if (event.data === 0) {
@@ -1382,6 +1393,16 @@ function App() {
             if (v && v.duration && isFinite(v.duration) && v.duration > 0) {
               const progress = v.currentTime / v.duration;
               reportStatus('playing', progress);
+            }
+          }}
+          onPause={() => {
+            // Guard: ignore programmatic pauses during skip/end transitions (isEndingRef) and
+            // transient load pauses before the video has ever played (videoHasPlayedRef).
+            // Only report a genuine pause to the DB so the admin console reflects it and the
+            // status-sync effect can issue a resume command if the admin un-pauses remotely.
+            if (videoHasPlayedRef.current && !isEndingRef.current) {
+              console.log('[Player][local-video] ⏸ PAUSE — reporting paused state');
+              reportStatus('paused');
             }
           }}
           onEnded={() => {
