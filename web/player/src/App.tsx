@@ -727,13 +727,36 @@ function App() {
 
   // Realtime subscription for player_status — instant admin commands (pause/skip/resume)
   // with zero polling overhead. Only refetches with JOIN when current_media_id changes.
+  //
+  // Polling fallback: Supabase Realtime can hit its message-per-second rate limit and
+  // silently drop change events.  If the player enters 'loading' state but never
+  // receives the subsequent 'playing' (or new 'loading') event, the video stalls
+  // forever.  To recover, we schedule a 10-second REST fallback: if it fires, we
+  // re-fetch player_status directly from PostgREST and apply it as if it had
+  // arrived via Realtime.  The timer is cleared on every status update so it only
+  // fires when Realtime has genuinely gone silent.
   useEffect(() => {
     if (!identityReady || !activePlayerId) return;
 
     console.log('[Player] Starting player status subscription...');
     const prevStateRef = { current: status?.state };
 
-    const subscription = subscribeToPlayerStatus(PLAYER_ID, async (newStatus) => {
+    // Closure variable — tracks the pending REST fallback poll timer.
+    let realtimePollTimer: number | null = null;
+
+    const clearPollTimer = () => {
+      if (realtimePollTimer !== null) {
+        clearTimeout(realtimePollTimer);
+        realtimePollTimer = null;
+      }
+    };
+
+    // Core status-application logic, shared by both the Realtime subscription
+    // and the REST polling fallback so both paths behave identically.
+    const applyStatus = async (newStatus: PlayerStatus) => {
+      // Any update (Realtime or polled) clears the pending poll timer.
+      clearPollTimer();
+
       const prevState = prevStateRef.current;
       const newState = newStatus.state;
 
@@ -808,13 +831,61 @@ function App() {
           recentlyLoadedRef.current = false;
         }, 5000);
       }
-    });
+
+      // ── Realtime polling fallback ────────────────────────────────────────────
+      // If the player enters 'loading' state, schedule a REST fetch in 10 seconds.
+      // Slave players don't drive playback so they don't need the fallback.
+      if (newState === 'loading' && !isSlavePlayer) {
+        realtimePollTimer = window.setTimeout(async () => {
+          realtimePollTimer = null;
+          console.warn('[Player] Realtime silent for 10s in loading state — polling REST for fresh status');
+          try {
+            const { data, error } = await supabase
+              .from('player_status')
+              .select('*, current_media:media_items(*)')
+              .eq('player_id', PLAYER_ID)
+              .single();
+            if (error || !data) {
+              console.error('[Player] REST fallback poll failed:', error);
+              return;
+            }
+            const polledStatus = data as PlayerStatus;
+            if (polledStatus.state !== 'loading') {
+              // Realtime dropped an event — apply the fresh status now.
+              console.log('[Player] REST poll found state:', polledStatus.state, '— applying as Realtime recovery');
+              await applyStatus(polledStatus);
+            } else {
+              // Still loading after 10s — keep polling every 10s until it changes.
+              // (The 6-second loadingTimeout in the status-watch effect will fire
+              //  advanceToNext independently if the video truly never loads.)
+              console.warn('[Player] REST poll: still loading after 10s — will retry');
+              realtimePollTimer = window.setTimeout(async () => {
+                realtimePollTimer = null;
+                const { data: retryData } = await supabase
+                  .from('player_status')
+                  .select('*, current_media:media_items(*)')
+                  .eq('player_id', PLAYER_ID)
+                  .single();
+                if (retryData && (retryData as PlayerStatus).state !== 'loading') {
+                  await applyStatus(retryData as PlayerStatus);
+                }
+              }, 10000);
+            }
+          } catch (err) {
+            console.error('[Player] REST fallback poll error:', err);
+          }
+        }, 10000);
+      }
+    };
+
+    const subscription = subscribeToPlayerStatus(PLAYER_ID, applyStatus);
 
     return () => {
       console.log('[Player] Unsubscribing from player status');
       subscription.unsubscribe();
+      clearPollTimer();
     };
-  }, [identityReady, activePlayerId, PLAYER_ID, fadeIn, fadeOut, reportEndedAndNext]);
+  }, [identityReady, activePlayerId, PLAYER_ID, fadeIn, fadeOut, reportEndedAndNext, isSlavePlayer]);
 
   // Subscribe to player settings (to watch karaoke_mode)
   useEffect(() => {
