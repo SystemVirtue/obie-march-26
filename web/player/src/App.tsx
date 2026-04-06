@@ -517,10 +517,13 @@ function App() {
       // fires PAUSED right after loadVideoById before playVideo() has been called).
       // Don't write 'paused' to the DB — it would trigger the unexpected-pause
       // guard in the status-watch effect and cause a double-advance after a skip.
-      // Instead, just ensure playback starts.
+      // Instead, always attempt playVideo() — recentlyLoadedRef may already be
+      // false if playVideo() was called in response to a previous PAUSED event on
+      // this same load, but the video still hasn't started; gating on it silently
+      // swallows the event and leaves the player permanently paused.
       if (!videoHasPlayedRef.current) {
-        console.log('[Player] PAUSED before first play — treating as loading pause, attempting playVideo()');
-        if (recentlyLoadedRef.current && playerRef.current && typeof playerRef.current.playVideo === 'function') {
+        console.log('[Player] PAUSED before first play — attempting playVideo() (loading artifact)');
+        if (playerRef.current && typeof playerRef.current.playVideo === 'function') {
           try {
             playerRef.current.playVideo();
             recentlyLoadedRef.current = false;
@@ -562,7 +565,7 @@ function App() {
       // already reset isEndingRef, so isEndingRef alone cannot block them.
       // Reject any ENDED that arrives within 3 s of loading the current video.
       const msSinceLoad = Date.now() - lastVideoLoadTimeRef.current;
-      if (msSinceLoad < 3000) {
+      if (msSinceLoad < 5000) {
         console.warn(`[Player] Ignoring ENDED — only ${msSinceLoad}ms since last video load (stale YouTube event)`);
         return;
       }
@@ -1243,6 +1246,13 @@ function App() {
       }
       isEndingRef.current = true;
       console.error(`[Player] ${reason} — advancing to next video`);
+
+      // Fade out audio before advancing so the transition isn't jarring.
+      // This mirrors the skip fade in reportEndedAndNext(true).
+      if (!localPlaybackUrlRef.current && playerModeRef.current !== 'ytm_desktop') {
+        try { await fadeOut(); } catch (_) { /* non-fatal */ }
+      }
+
       try {
         const result = await callPlayerControl({
           player_id: PLAYER_ID,
@@ -1288,9 +1298,40 @@ function App() {
 
     if (status.state === 'loading') {
       // ── 6-second loading timeout ──────────────────────────────────────────
+      // IMPORTANT: Before advancing, check actual YouTube player state.
+      // Supabase Realtime frequently drops the 'playing' status update under
+      // load (MessagePerSecondRateLimitReached).  When it does, React status
+      // stays 'loading' even though YouTube is already playing, causing this
+      // timer to fire advanceToNext() on a perfectly healthy video — the root
+      // cause of the ~9-second premature-skip pattern seen in production logs.
       console.log('[Player] Video entered loading state, setting 6-second timeout to load next if not loaded');
       loadingTimeoutRef.current = window.setTimeout(() => {
         loadingTimeoutRef.current = null;
+
+        // Check the live YouTube / local player state before deciding to skip.
+        if (!localPlaybackUrlRef.current && playerModeRef.current !== 'ytm_desktop') {
+          if (playerRef.current && typeof playerRef.current.getPlayerState === 'function') {
+            const ytState = playerRef.current.getPlayerState();
+            if (ytState === 1) {
+              // YouTube IS playing — Realtime dropped the 'playing' event.
+              // Correct the DB state and do NOT skip the video.
+              console.warn('[Player] Loading timeout fired but YouTube is PLAYING — Realtime dropped event; correcting DB state');
+              reportStatus('playing');
+              return;
+            }
+            if (ytState === 3) {
+              // YouTube is still buffering — extend the timeout by 4 s rather
+              // than skipping a video that is actively loading data.
+              console.warn('[Player] Loading timeout fired but YouTube is BUFFERING — extending by 4s');
+              loadingTimeoutRef.current = window.setTimeout(() => {
+                loadingTimeoutRef.current = null;
+                advanceToNext('Video still buffering after 10 seconds total');
+              }, 4000);
+              return;
+            }
+          }
+        }
+
         advanceToNext('Video still in loading state after 6 seconds');
       }, 6000);
 
@@ -1418,9 +1459,18 @@ function App() {
     if (status.state === 'playing') {
       player.playVideo();
     } else if (status.state === 'paused') {
-      player.pauseVideo();
+      // Self-heal: if the DB says 'paused' but YouTube is actively playing,
+      // the DB state is stale (reportStatus('paused') arrived after 'playing'
+      // due to HTTP jitter).  Correct the DB rather than pausing a healthy video.
+      const ytState = typeof player.getPlayerState === 'function' ? player.getPlayerState() : -1;
+      if (ytState === 1) {
+        console.warn('[Player] status-sync: DB is paused but YouTube is PLAYING — correcting DB state');
+        reportStatus('playing');
+      } else {
+        player.pauseVideo();
+      }
     }
-  }, [status?.state, localPlaybackUrl]);
+  }, [status?.state, localPlaybackUrl, reportStatus]);
 
   if (!identityReady) return <ResolvingScreen />;
 
