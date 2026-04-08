@@ -609,8 +609,6 @@ function App() {
         // Check if this player was previously priority
         const storedPlayerId = localStorage.getItem('obie_priority_player_id');
         
-        console.log('[Player] Registering session:', sessionId, 'stored_player_id:', storedPlayerId);
-        
         const sessionResult = await callPlayerControl({
           player_id: PLAYER_ID,
           action: 'register_session',
@@ -624,14 +622,9 @@ function App() {
         // If this player became priority, store its ID in localStorage
         if (sessionResult.is_priority) {
           localStorage.setItem('obie_priority_player_id', PLAYER_ID);
-          console.log('[Player] Priority player ID stored in localStorage');
         } else if (storedPlayerId === PLAYER_ID) {
-          // This player was previously priority but is no longer - clear localStorage
           localStorage.removeItem('obie_priority_player_id');
-          console.log('[Player] Priority player ID removed from localStorage');
         }
-        
-        console.log('[Player] Session registered successfully, is_slave:', !sessionResult.is_priority, 'restored:', sessionResult.restored || false);
       } catch (error) {
         console.error('[Player] Failed to initialize:', error);
       }
