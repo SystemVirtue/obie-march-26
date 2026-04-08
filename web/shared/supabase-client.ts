@@ -1,7 +1,8 @@
 // Shared Supabase Client and Types
 // Used by all three frontend apps
 
-import { createClient, SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
+import { createClient, RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
+import { QUEUE_DEBOUNCE_MS, PLAYER_STATUS_DEBOUNCE_MS } from './constants';
 
 // =============================================================================
 // TYPES
@@ -67,7 +68,6 @@ export interface QueueItem {
   position: number;
   requested_by: string | null;
   requested_at: string;
-  played_at: string | null;
   expires_at: string;
   media_item?: MediaItem; // Joined data
 }
@@ -385,7 +385,7 @@ export function subscribeToPlayerStatus(
           if (mediaRefetchTimeout) clearTimeout(mediaRefetchTimeout);
           mediaRefetchTimeout = setTimeout(() => {
             fetchFullStatus();
-          }, 500);
+          }, PLAYER_STATUS_DEBOUNCE_MS);
         } else if (lastStatus) {
           // Progress/state only — merge Realtime payload, skip refetch
           lastStatus = { ...lastStatus, ...newRow };
@@ -440,11 +440,10 @@ export function subscribeToQueue(
     { column: 'player_id', value: playerId },
     () => {
       // Debounce refetch to allow database updates to complete
-      console.log('[subscribeToQueue] Change detected, scheduling refetch in 800ms...');
       if (refetchTimeout) clearTimeout(refetchTimeout);
       refetchTimeout = setTimeout(() => {
         fetchQueue();
-      }, 800); // Increased to 800ms to ensure all position updates complete
+      }, QUEUE_DEBOUNCE_MS);
     }
   );
 }
