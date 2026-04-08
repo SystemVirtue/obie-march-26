@@ -88,15 +88,22 @@ Deno.serve(async (req)=>{
         .eq('id', player_id)
         .single();
 
-      if (!existingPriority?.priority_player_id) {
-        // No priority player yet - check if any players are currently playing
+      const currentPriorityId = existingPriority?.priority_player_id ?? null;
+
+      // Allow claim/reclaim if: no priority player set, OR this player WAS the priority player.
+      // A page reload clears localStorage, so we can't rely solely on stored_player_id —
+      // the DB record is the authoritative source for whether this player should be priority.
+      if (!currentPriorityId || currentPriorityId === player_id) {
+        // Check if any players are currently playing (only block if another player is active)
         const { data: playingPlayers } = await supabase
           .from('player_status')
-          .select('id')
+          .select('player_id, state')
           .eq('state', 'playing');
 
-        if (!playingPlayers || playingPlayers.length === 0) {
-          // No players are currently playing - make this one priority
+        const otherPlayerPlaying = playingPlayers?.some((p: any) => p.player_id !== player_id) ?? false;
+
+        if (!otherPlayerPlaying) {
+          // Safe to claim / reclaim priority
           const { error: updateError } = await supabase
             .from('players')
             .update({ priority_player_id: player_id })
@@ -104,42 +111,36 @@ Deno.serve(async (req)=>{
 
           if (updateError) throw updateError;
 
-          console.log(`[player-control] Player ${player_id} registered as priority player (no players playing, session: ${session_id})`);
+          const verb = currentPriorityId === player_id ? 'reclaimed' : 'registered as';
+          console.log(`[player-control] Player ${player_id} ${verb} priority player (session: ${session_id})`);
           return new Response(JSON.stringify({
             success: true,
-            is_priority: true
+            is_priority: true,
+            restored: currentPriorityId === player_id,
           }), {
             status: 200,
-            headers: {
-              ...corsHeaders,
-              'Content-Type': 'application/json'
-            }
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
           });
         } else {
-          // Players are playing - this becomes a slave
-          console.log(`[player-control] Player ${player_id} registered as slave player (other players playing, session: ${session_id})`);
+          // Another player is actively playing — become slave
+          console.log(`[player-control] Player ${player_id} registered as slave (another player is playing, session: ${session_id})`);
           return new Response(JSON.stringify({
             success: true,
             is_priority: false
           }), {
             status: 200,
-            headers: {
-              ...corsHeaders,
-              'Content-Type': 'application/json'
-            }
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
           });
         }
       } else {
-        console.log(`[player-control] Player ${player_id} registered as slave player (priority exists, session: ${session_id})`);
+        // A different player holds priority
+        console.log(`[player-control] Player ${player_id} registered as slave (priority held by ${currentPriorityId}, session: ${session_id})`);
         return new Response(JSON.stringify({
           success: true,
           is_priority: false
         }), {
           status: 200,
-          headers: {
-            ...corsHeaders,
-            'Content-Type': 'application/json'
-          }
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       }
     }
