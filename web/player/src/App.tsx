@@ -22,6 +22,11 @@ import { ResolvingScreen, JukeboxNamePrompt, StatusOverlays } from './components
 import { usePlayerIdentity } from './hooks/usePlayerIdentity';
 import { usePlayerHeartbeat } from './hooks/usePlayerHeartbeat';
 import { useKaraokeLyrics } from './hooks/useKaraokeLyrics';
+import {
+  IS_ENDING_FALLBACK_MS,
+  RECENTLY_LOADED_TIMEOUT_MS,
+  FADE_DURATION_MS
+} from '../../shared/constants';
 
 const DEFAULT_PLAYER_ID = import.meta.env.VITE_PLAYER_ID || '00000000-0000-0000-0000-000000000001';
 const PLAYER_JUKEBOX_STORAGE_KEY = 'obie_player_jukebox_slug';
@@ -111,9 +116,8 @@ function App() {
         return 100;
       })();
       const startOpacity = 1;
-      const duration = 2000; // 2 seconds
       const steps = 60; // 60 fps
-      const stepDuration = duration / steps;
+      const stepDuration = FADE_DURATION_MS / steps;
       let currentStep = 0;
 
       // Clear any existing fade
@@ -154,11 +158,11 @@ function App() {
     });
   }, []);
 
-  // YTM Desktop skip fade: step volume 100→0 over 2s via setVolume commands
+  // YTM Desktop skip fade: step volume 100→0 over fade duration via setVolume commands
   const fadeOutYtm = useCallback((): Promise<void> => {
     return new Promise((resolve) => {
       const steps = 10;
-      const stepDuration = 2000 / steps; // 200ms per step
+      const stepDuration = FADE_DURATION_MS / steps;
       let currentStep = 0;
       const interval = window.setInterval(() => {
         currentStep++;
@@ -187,9 +191,8 @@ function App() {
 
       const targetVolume = 100;
       const targetOpacity = 1;
-      const duration = 2000; // 2 seconds
       const steps = 60; // 60 fps
-      const stepDuration = duration / steps;
+      const stepDuration = FADE_DURATION_MS / steps;
       let currentStep = 0;
 
       // Clear any existing fade
@@ -237,11 +240,9 @@ function App() {
         .from('queue')
         .select('id')
         .eq('player_id', PLAYER_ID)
-        .is('played_at', null)
         .limit(1);
 
       if (!error && (!remaining || remaining.length === 0)) {
-        console.log('[Player] Queue empty after current song — auto-generating radio from history');
         autoRadioInFlightRef.current = true;
         try {
           await callRadioGenerator({
@@ -249,7 +250,6 @@ function App() {
             action: 'generate',
             source: 'history',
           });
-          console.log('[Player] Auto-radio generation complete');
         } catch (radioErr) {
           console.error('[Player] Auto-radio generation failed:', radioErr);
         } finally {
@@ -265,26 +265,11 @@ function App() {
   // Report video ended and trigger queue_next (disabled for slave players)
   const reportEndedAndNext = useCallback(async (isSkip = false) => {
     // Slave players do not trigger queue operations
-    if (isSlavePlayer) {
-      console.log('[Slave Player] Skipping ended/next report');
-      return;
-    }
+    if (isSlavePlayer) return;
 
     // Prevent concurrent calls: natural end + status subscription can both fire simultaneously.
-    // The primary guard is server-side (player-control skips the intermediate state='idle' write),
-    // but this ref provides belt-and-suspenders protection.
-    //
-    // isEndingRef stays true for 1000ms AFTER the queue_next call completes (see finally block).
-    // This covers a race where player-control writing progress=1 to player_status fires a
-    // second Realtime event with state='idle' that arrives after the first call returns —
-    // the 1s cooldown absorbs that bounce window and prevents a double queue_next.
-    if (isEndingRef.current) {
-      console.log('[Player] End/skip cooldown active, ignoring duplicate trigger');
-      return;
-    }
+    if (isEndingRef.current) return;
     isEndingRef.current = true;
-
-    console.log(isSkip ? '[Player] Video SKIPPED - triggering queue_next' : '[Player] Video ENDED - triggering queue_next');
 
     // Fade out if this is a skip
     if (isSkip) {
@@ -331,15 +316,8 @@ function App() {
 
     try {
       const expectedMediaId = currentMediaIdRef.current || null;
-      const applyNextItem = (candidate: any): boolean => {
+      const applyNextItem = (candidate: { next_item?: { media_item_id: string; title: string; url: string; duration?: number } }): boolean => {
         if (!candidate?.next_item) return false;
-
-        console.log('[Player] Next item data:', {
-          media_item_id: candidate.next_item.media_item_id,
-          title: candidate.next_item.title,
-          url: candidate.next_item.url,
-          duration: candidate.next_item.duration
-        });
 
         const nextMedia: MediaItem = {
           id: candidate.next_item.media_item_id,
@@ -353,8 +331,6 @@ function App() {
           fetched_at: new Date().toISOString(),
           metadata: {},
         };
-        console.log('[Player] Loading next media from queue_next result:', nextMedia);
-
         setCurrentMedia(nextMedia);
 
         // Mark that video was recently loaded and should auto-play if it pauses unexpectedly
@@ -379,8 +355,6 @@ function App() {
         action: 'ended', // Always use 'ended' after fade completes to trigger queue_next
         current_media_id: expectedMediaId || undefined, // Idempotency: server skips if already advanced
       });
-      console.log('[Player] Queue_next full result:', JSON.stringify(result, null, 2));
-
       if (applyNextItem(result)) {
         return;
       }
@@ -405,23 +379,16 @@ function App() {
           // blocked our call — the Realtime subscription will deliver the new song.
           // Do NOT null out currentMedia here: doing so would blank the player display
           // even though the next song is already queued and loading.
-          console.log('[Player] queue_next empty but DB already advanced — suppressing setCurrentMedia(null)', {
-            db_state: latestStatus?.state,
-            db_media_id: latestStatus?.current_media_id,
-            expected_media_id: expectedMediaId,
-          });
           return;
         }
 
         if (stillIdleOnSameMedia) {
-          console.warn('[Player] queue_next returned empty while still idle on same media - retrying once without idempotency key');
           const retryResult = await callPlayerControl({
             player_id: PLAYER_ID,
             state: 'idle',
             progress: 1,
             action: 'ended',
           });
-          console.log('[Player] queue_next retry result:', JSON.stringify(retryResult, null, 2));
 
           if (applyNextItem(retryResult)) {
             return;
@@ -429,7 +396,6 @@ function App() {
         }
       }
 
-      console.log('[Player] No more items in queue - result:', result);
       // No video loaded — clear the skip-loading flag so the next natural end
       // doesn't incorrectly apply a fade-in to a non-skip transition.
       isSkipLoadingRef.current = false;
@@ -450,28 +416,20 @@ function App() {
       // double queue_next that desyncs "now playing" from the actual playback.
       setTimeout(() => {
         if (isEndingRef.current) {
-          console.warn('[Player] isEndingRef fallback reset after 10s (next video never reached PLAYING)');
           isEndingRef.current = false;
         }
-      }, 10000);
+      }, IS_ENDING_FALLBACK_MS);
     }
   }, [fadeOut, fadeOutYtm, isSlavePlayer, PLAYER_ID]);
 
   // YouTube Player event handlers
-  const onPlayerReady = useCallback((_event: any) => {
-    console.log('[Player] YouTube player ready - waiting for user to press play');
-    setPlayerReady(true); // Mark player as ready to hide loading overlay
-    // Don't report status here - let user click play first
-    // Reporting 'idle' here causes the backend to think video ended and skip to next
+  const onPlayerReady = useCallback(() => {
+    setPlayerReady(true);
   }, []);
 
-  const onPlayerStateChange = useCallback((event: any) => {
+  const onPlayerStateChange = useCallback((event: { data: number }) => {
     // Ignore YouTube events when a Cloudflare/local video is active
-    if (localPlaybackUrlRef.current) {
-      console.log('[Player] YouTube state change ignored (local/Cloudflare video active):', event.data);
-      return;
-    }
-    console.log('[Player] YouTube state change:', event.data);
+    if (localPlaybackUrlRef.current) return;
 
     // YouTube Player States:
     // -1 = UNSTARTED
@@ -483,15 +441,8 @@ function App() {
 
     if (event.data === 1) {
       // PLAYING
-      console.log('[Player] Video PLAYING');
-      videoHasPlayedRef.current = true; // Video confirmed playing — any subsequent pause is user-initiated
-      // Clear the ending guard — the new video has started playing, so it's now
-      // safe to accept future ENDED events.  This replaces the old 1-second timer
-      // and prevents double queue_next from stale YouTube events during load.
-      if (isEndingRef.current) {
-        console.log('[Player] Clearing isEndingRef — new video confirmed PLAYING');
-        isEndingRef.current = false;
-      }
+      videoHasPlayedRef.current = true;
+      if (isEndingRef.current) isEndingRef.current = false;
       reportStatus('playing');
 
       // Proactively generate radio if this is the last song in queue
@@ -504,14 +455,10 @@ function App() {
           if (typeof (playerRef.current as any).volume === 'number') return (playerRef.current as any).volume * 100;
           return 100;
         })();
-        if (currentVol === 0) {
-          console.log('[Player] Auto-playing after skip - fading in...');
-          fadeIn();
-        }
+        if (currentVol === 0) fadeIn();
       }
     } else if (event.data === 2) {
       // PAUSED
-      console.log('[Player] Video PAUSED');
 
       // If the video hasn't played yet, this is a transient loading pause (YouTube
       // fires PAUSED right after loadVideoById before playVideo() has been called).
@@ -522,13 +469,12 @@ function App() {
       // this same load, but the video still hasn't started; gating on it silently
       // swallows the event and leaves the player permanently paused.
       if (!videoHasPlayedRef.current) {
-        console.log('[Player] PAUSED before first play — attempting playVideo() (loading artifact)');
         if (playerRef.current && typeof playerRef.current.playVideo === 'function') {
           try {
             playerRef.current.playVideo();
             recentlyLoadedRef.current = false;
-          } catch (error) {
-            console.error('[Player] Error auto-playing video:', error);
+          } catch {
+            // Silent fail - will report paused below
           }
         }
       } else {
@@ -544,13 +490,10 @@ function App() {
         // Fix: attempt auto-play first when the video was recently loaded; only report
         // 'paused' to the DB if we are NOT going to immediately call playVideo().
         if (recentlyLoadedRef.current && playerRef.current && typeof playerRef.current.playVideo === 'function') {
-          console.log('[Player] Video paused unexpectedly after recent load — attempting auto-play (skipping paused DB write to avoid race)');
           try {
             playerRef.current.playVideo();
             recentlyLoadedRef.current = false;
-          } catch (error) {
-            console.error('[Player] Error auto-playing video:', error);
-            // playVideo() itself threw — fall back to reporting the genuine pause
+          } catch {
             reportStatus('paused');
           }
         } else {
@@ -563,17 +506,12 @@ function App() {
       // Guard: YouTube fires stale ENDED events 2-3 s after loadVideoById for the
       // previous video.  These arrive after the new video's PLAYING event has
       // already reset isEndingRef, so isEndingRef alone cannot block them.
-      // Reject any ENDED that arrives within 3 s of loading the current video.
+      // Reject any ENDED that arrives within 5 s of loading the current video.
       const msSinceLoad = Date.now() - lastVideoLoadTimeRef.current;
-      if (msSinceLoad < 5000) {
-        console.warn(`[Player] Ignoring ENDED — only ${msSinceLoad}ms since last video load (stale YouTube event)`);
-        return;
-      }
-      console.log('[Player] Video ENDED - calling queue_next');
+      if (msSinceLoad < RECENTLY_LOADED_TIMEOUT_MS) return;
       reportEndedAndNext();
     } else if (event.data === 3) {
       // BUFFERING
-      console.log('[Player] Video BUFFERING');
       reportStatus('loading');
     }
   }, [reportStatus, reportEndedAndNext, fadeIn]);
@@ -587,11 +525,7 @@ function App() {
   //   150 = Same as 101 (embedding not allowed by owner)
   const onPlayerError = useCallback(async (event: any) => {
     // Ignore YouTube errors when a Cloudflare/local video is active
-    if (localPlaybackUrlRef.current) {
-      console.log('[Player] YouTube error ignored (local/Cloudflare video active):', event.data);
-      return;
-    }
-    console.error('[Player] YouTube player error:', event.data);
+    if (localPlaybackUrlRef.current) return;
 
     if (isSlavePlayer) return;
 
@@ -622,9 +556,8 @@ function App() {
             player_id: PLAYER_ID,
             media_item_id: unavailableMediaId,
           });
-          console.log(`[Player] Removed unplayable video (error ${event.data}) from queue and playlists`);
-        } catch (removeErr) {
-          console.error('[Player] Failed to remove unplayable video:', removeErr);
+        } catch {
+          // Silent fail - already logged at higher level
         }
       }
     }
@@ -640,7 +573,6 @@ function App() {
     // so without this reset the guard stays true for the full 10-second fallback
     // window and silently drops the skip, leaving the player stuck in Loading.
     isEndingRef.current = false;
-    console.error(`[Player] Skipping video due to playback error (${event.data})`);
     reportEndedAndNext(false);
   }, [isSlavePlayer, reportEndedAndNext]);
 
@@ -648,19 +580,12 @@ function App() {
   useEffect(() => {
     if (ytApiReady) return;
 
-    console.log('[Player] Loading YouTube IFrame API...');
-
-    // Load the IFrame Player API code asynchronously
     const tag = document.createElement('script');
     tag.src = 'https://www.youtube.com/iframe_api';
     const firstScriptTag = document.getElementsByTagName('script')[0];
     firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
 
-    // API will call this function when ready
-    window.onYouTubeIframeAPIReady = () => {
-      console.log('[Player] YouTube IFrame API ready');
-      setYtApiReady(true);
-    };
+    window.onYouTubeIframeAPIReady = () => setYtApiReady(true);
   }, [ytApiReady]);
 
   // Initialize player with default playlist
@@ -672,16 +597,9 @@ function App() {
       hasInitialized.current = true;
 
       try {
-        console.log('[Player] Initializing player with default playlist...');
-        
-        const result = await initializePlayerPlaylist(PLAYER_ID) as any;
-        
-        if (result?.success) {
-          console.log('[Player] Playlist loaded:', {
-            playlist_name: result.playlist_name,
-            loaded_count: result.loaded_count
-          });
-        } else {
+        const result = await initializePlayerPlaylist(PLAYER_ID) as { success?: boolean; playlist_name?: string; loaded_count?: number };
+
+        if (!result?.success) {
           console.warn('[Player] No playlist available');
         }
 

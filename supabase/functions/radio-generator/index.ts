@@ -192,19 +192,40 @@ async function loadSeedsNowPlaying(supabase: any, playerId: string): Promise<See
 }
 
 async function loadSeedsHistory(supabase: any, playerId: string): Promise<SeedTrack[]> {
-  const { data: queueItems } = await supabase
-    .from('queue')
-    .select('media_item_id, media_item:media_items(title, artist)')
+  // Query system_logs for queue_next events to get play history
+  // (queue.played_at was removed; items are now deleted when played)
+  const { data: logEvents } = await supabase
+    .from('system_logs')
+    .select('payload')
     .eq('player_id', playerId)
-    .not('played_at', 'is', null)
-    .order('played_at', { ascending: false })
+    .eq('event', 'queue_next')
+    .order('timestamp', { ascending: false })
     .limit(20);
 
-  if (!queueItems || queueItems.length === 0) throw new Error('No play history found');
+  if (!logEvents || logEvents.length === 0) throw new Error('No play history found');
 
-  return queueItems
-    .filter((q: any) => q.media_item)
-    .map((q: any) => ({ title: q.media_item.title, artist: q.media_item.artist }));
+  // Extract media_item_ids from log payloads
+  const mediaIds = logEvents
+    .map((log: any) => log.payload?.media_item_id)
+    .filter((id: string | undefined): id is string => !!id);
+
+  if (mediaIds.length === 0) throw new Error('No play history found');
+
+  // Fetch media items for the extracted IDs
+  const { data: mediaItems } = await supabase
+    .from('media_items')
+    .select('id, title, artist')
+    .in('id', mediaIds);
+
+  if (!mediaItems || mediaItems.length === 0) throw new Error('No play history found');
+
+  // Create a map for ordering based on log sequence
+  const mediaMap = new Map(mediaItems.map((m: any) => [m.id, m]));
+
+  return mediaIds
+    .map((id: string) => mediaMap.get(id))
+    .filter((m: any): m is { title: string; artist: string | null } => !!m)
+    .map((m: any) => ({ title: m.title, artist: m.artist }));
 }
 
 async function loadSeedsPlaylist(supabase: any, playerId: string): Promise<SeedTrack[]> {

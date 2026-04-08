@@ -12,6 +12,7 @@ import {
   type PlayerStatus,
 } from '../../../shared/supabase-client';
 import { normalizeJukeboxSlug, getPathJukeboxSlug } from '../../../shared/jukebox-utils';
+import { HEARTBEAT_INTERVAL_MS, MAX_MARQUEE_ITEMS } from '../../../shared/constants';
 
 type UseKioskSessionArgs = {
   defaultPlayerId: string;
@@ -102,7 +103,7 @@ export function useKioskSession({ defaultPlayerId, storageKey }: UseKioskSession
   }, [playerStatus]);
 
   // Heartbeat: keep last_active fresh so the admin panel can detect disconnects.
-  // Fires every 30 s; the admin side marks sessions Offline after 90 s without a heartbeat.
+  // Fires every HEARTBEAT_INTERVAL_MS; the admin side marks sessions Offline after 90 s without a heartbeat.
   useEffect(() => {
     if (!identityReady || !activePlayerId || !session) return;
     const interval = setInterval(async () => {
@@ -115,7 +116,7 @@ export function useKioskSession({ defaultPlayerId, storageKey }: UseKioskSession
       } catch (e) {
         console.warn('[kiosk] heartbeat failed', e);
       }
-    }, 30_000);
+    }, HEARTBEAT_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [identityReady, activePlayerId, playerId, session?.session_id]);
 
@@ -161,9 +162,8 @@ export function useKioskSession({ defaultPlayerId, storageKey }: UseKioskSession
       const priorityItems = upcomingItems.filter((item) => item.type === 'priority');
       const normalItems = upcomingItems.filter((item) => item.type === 'normal');
 
-      const maxMarqueeItems = 5;
-      const prioritySliced = priorityItems.slice(0, maxMarqueeItems);
-      const remainingSlots = Math.max(0, maxMarqueeItems - prioritySliced.length);
+      const prioritySliced = priorityItems.slice(0, MAX_MARQUEE_ITEMS);
+      const remainingSlots = Math.max(0, MAX_MARQUEE_ITEMS - prioritySliced.length);
       const normalSliced = normalItems.slice(0, remainingSlots);
 
       setQueue([...prioritySliced, ...normalSliced]);

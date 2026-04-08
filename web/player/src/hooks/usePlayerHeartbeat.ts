@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { supabase, callPlayerControl, type PlayerStatus } from '@shared/supabase-client';
+import { HEARTBEAT_INTERVAL_MS } from '../../../shared/constants';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
 type UsePlayerHeartbeatArgs = {
@@ -19,7 +20,7 @@ export function usePlayerHeartbeat({ isSlavePlayer, playerId }: UsePlayerHeartbe
     const send = () => callPlayerControl({ player_id: playerId, action: 'heartbeat' })
       .catch(e => console.warn('[player] heartbeat failed', e));
     send(); // immediate on mount
-    const id = setInterval(send, 30_000);
+    const id = setInterval(send, HEARTBEAT_INTERVAL_MS);
     return () => clearInterval(id);
   }, [playerId]);
 

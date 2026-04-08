@@ -127,24 +127,6 @@ Deno.serve(async (req) => {
         break;
       }
 
-      case "next": {
-        const { data: nextItem, error: nextError } = await supabase.rpc("queue_next", {
-          p_player_id: player_id,
-        });
-        if (nextError) throw nextError;
-        result = { next_item: Array.isArray(nextItem) ? nextItem[0] : nextItem ?? null };
-        break;
-      }
-
-      case "skip": {
-        const { error: skipError } = await supabase.rpc("queue_skip", {
-          p_player_id: player_id,
-        });
-        if (skipError) throw skipError;
-        result = { success: true };
-        break;
-      }
-
       case "clear": {
         const { error: clearError } = await supabase.rpc("queue_clear", {
           p_player_id: player_id,

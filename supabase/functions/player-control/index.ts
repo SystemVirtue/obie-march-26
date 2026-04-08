@@ -337,8 +337,10 @@ Deno.serve(async (req)=>{
     });
   } catch (error) {
     console.error('Player control error:', error);
+    const message = error instanceof Error ? error.message : String(error);
     return new Response(JSON.stringify({
-      error: 'Internal server error'
+      error: 'Internal server error',
+      message
     }), {
       status: 500,
       headers: {

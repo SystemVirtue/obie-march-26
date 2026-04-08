@@ -311,6 +311,13 @@ function App() {
   const handleSkip = async () => {
     if (isSkipping) return;
     setIsSkipping(true);
+    // Optimistic: mark current item as played locally so it disappears immediately
+    const currentMediaId = status?.current_media_id;
+    if (currentMediaId) {
+      setQueue(prev => prev.map(q => 
+        q.media_item_id === currentMediaId ? { ...q, played_at: new Date().toISOString() } : q
+      ));
+    }
     try { await callPlayerControl({ player_id: activePlayerId ?? PLAYER_ID, state: 'idle', action: 'skip' }); }
     catch (e) { console.error(e); setIsSkipping(false); }
     setTimeout(() => setIsSkipping(false), 3000);
