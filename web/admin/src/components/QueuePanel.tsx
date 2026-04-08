@@ -123,10 +123,8 @@ export function QueuePanel({ queue, status, onRemove, onReorder, onShuffle, isSh
 }) {
   const [showRadioPopover, setShowRadioPopover] = useState(false);
   const sensors = useSensors(useSensor(PointerSensor), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
-  // Defensive: filter out played items (played_at is set) and currently playing item
-  const unplayedQueue = queue.filter(q => !q.played_at);
-  const normalQ   = unplayedQueue.filter(q => q.type === 'normal'   && q.media_item_id !== status?.current_media_id);
-  const priorityQ = unplayedQueue.filter(q => q.type === 'priority' && q.media_item_id !== status?.current_media_id);
+  const normalQ   = queue.filter(q => q.type === 'normal'   && q.media_item_id !== status?.current_media_id);
+  const priorityQ = queue.filter(q => q.type === 'priority' && q.media_item_id !== status?.current_media_id);
   const totalCount = normalQ.length + priorityQ.length;
 
   const handleRadioSelect = (source: RadioSource) => {
