@@ -68,6 +68,7 @@ export interface QueueItem {
   position: number;
   requested_by: string | null;
   requested_at: string;
+  played_at: string | null;
   expires_at: string;
   media_item?: MediaItem; // Joined data
 }
