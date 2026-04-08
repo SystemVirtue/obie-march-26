@@ -81,8 +81,10 @@ export function NowPlayingStage({ status, queue, settings, players, activePlayer
     if (isPlaying) { setShowPauseConfirm(true); } else { onPlayPause(); }
   };
 
-  const upNext   = queue.filter(q => q.media_item_id !== status?.current_media_id).slice(0, 3);
-  const priority = queue.filter(q => q.type === 'priority');
+  // Defensive: filter out played items (played_at is set) and currently playing item
+  const unplayedQueue = queue.filter(q => !q.played_at);
+  const upNext   = unplayedQueue.filter(q => q.media_item_id !== status?.current_media_id).slice(0, 3);
+  const priority = unplayedQueue.filter(q => q.type === 'priority');
 
   return (
     <div style={{ position: 'relative', height: '33vh', minHeight: 240, flexShrink: 0, overflow: 'hidden', background: '#050505' }}>

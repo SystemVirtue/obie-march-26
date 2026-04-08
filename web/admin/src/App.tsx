@@ -261,12 +261,14 @@ function App() {
   const handleReorder = async (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-    const normalQ = queue.filter(i => i.type === 'normal' && i.media_item_id !== status?.current_media_id && i.id);
+    // Defensive: filter out played items and currently playing item
+    const unplayedQ = queue.filter(i => !i.played_at);
+    const normalQ = unplayedQ.filter(i => i.type === 'normal' && i.media_item_id !== status?.current_media_id && i.id);
     const oldIdx  = normalQ.findIndex(i => i.id === active.id);
     const newIdx  = normalQ.findIndex(i => i.id === over.id);
     const reordered = arrayMove(normalQ, oldIdx, newIdx);
-    const priority  = queue.filter(i => i.type === 'priority');
-    const current   = queue.filter(i => i.media_item_id === status?.current_media_id);
+    const priority  = unplayedQ.filter(i => i.type === 'priority');
+    const current   = unplayedQ.filter(i => i.media_item_id === status?.current_media_id);
     setQueue([...current, ...priority, ...reordered]);
     try {
       const ids = Array.from(new Set(reordered.map((i) => i.id).filter(Boolean))) as string[];
@@ -277,7 +279,9 @@ function App() {
   const handleShuffle = async () => {
     setIsShuffling(true);
     try {
-      const normalQ = queue.filter(i => i.type === 'normal' && i.media_item_id !== status?.current_media_id && i.id);
+      // Defensive: filter out played items and currently playing item
+      const unplayedQ = queue.filter(i => !i.played_at);
+      const normalQ = unplayedQ.filter(i => i.type === 'normal' && i.media_item_id !== status?.current_media_id && i.id);
       if (normalQ.length <= 1) return;
       await callQueueManager({ player_id: activePlayerId ?? PLAYER_ID, action: 'shuffle', type: 'normal' });
     } catch (e) { console.error('[Shuffle] Failed:', e); }
