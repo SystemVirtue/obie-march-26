@@ -47,10 +47,9 @@ BEGIN
     AND  type      = 'normal'
     AND  position  >= 1;
 
-  -- Insert position: always start at position 1 (position 0 is sacred).
-  -- If position 0 has an item, it continues playing.
-  -- If position 0 is empty, the first new item will be at position 1 (next up).
-  v_insert_start_pos := 1;
+  -- Insert position: start at position 1 normally, BUT if position 0 is empty,
+  -- start at position 0 so the first playlist item plays immediately.
+  v_insert_start_pos := CASE WHEN v_position_0_id IS NULL THEN 0 ELSE 1 END;
 
   INSERT INTO queue (player_id, type, media_item_id, position, requested_by)
   SELECT
