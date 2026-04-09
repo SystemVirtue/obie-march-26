@@ -63,6 +63,7 @@ function App() {
   const loadingTimeoutRef = useRef<number | null>(null); // Timeout to skip if status stays in 'loading' for 6+ seconds
   const videoHasPlayedRef = useRef(false); // true once current video reaches YouTube state PLAYING; reset on new media
   const unexpectedPauseTimeoutRef = useRef<number | null>(null); // Timeout to auto-advance if paused before video ever played
+  const adminPausedRef = useRef(false); // Track if pause was triggered by admin to prevent auto-resume
   // ── Local video fallback (yt-dlp) ──────────────────────────────────────────
   const [localPlaybackUrl, setLocalPlaybackUrl] = useState<string | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -489,7 +490,8 @@ function App() {
         //
         // Fix: attempt auto-play first when the video was recently loaded; only report
         // 'paused' to the DB if we are NOT going to immediately call playVideo().
-        if (recentlyLoadedRef.current && playerRef.current && typeof playerRef.current.playVideo === 'function') {
+        // Only auto-resume if this wasn't an admin pause
+        if (recentlyLoadedRef.current && !adminPausedRef.current && playerRef.current && typeof playerRef.current.playVideo === 'function') {
           try {
             playerRef.current.playVideo();
             recentlyLoadedRef.current = false;
@@ -674,28 +676,32 @@ function App() {
       const prevState = prevStateRef.current;
       const newState = newStatus.state;
 
+      // Always update the prevStateRef immediately so state tracking works
+      // correctly even if playerRef isn't ready yet
+      prevStateRef.current = newState;
+
       // Handle state transitions with fades.
       // In YTM Desktop mode playerRef.current is null (no iframe), so we must also
-      // allow the block when playerModeRef indicates ytm_desktop.
+      // allow the block when playerModeRef indicates 'ytm_desktop'.
       if ((playerRef.current || playerModeRef.current === 'ytm_desktop') && prevState !== newState) {
         // SKIP: Admin set state to 'idle' while video was playing
         if (newState === 'idle' && (prevState === 'playing' || prevState === 'paused')) {
           console.log('[Player] Skip detected from Admin - triggering fade and skip');
           await reportEndedAndNext(true); // Skip with fade
-          prevStateRef.current = newState;
           return; // Exit early, don't process other state changes
         }
 
         if (newState === 'paused' && prevState === 'playing') {
+          // Mark that admin triggered this pause to prevent auto-resume
+          adminPausedRef.current = true;
+          setTimeout(() => { adminPausedRef.current = false; }, 5000); // Clear after 5s
           if (playerModeRef.current === 'ytm_desktop') {
             ytmAdminPausedRef.current = true;
             setTimeout(() => { ytmAdminPausedRef.current = false; }, 3000);
             ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'pause' }) }).catch(() => {});
           } else if (localPlaybackUrlRef.current && localVideoRef.current) {
-            console.log('[Player] Pausing local/Cloudflare video...');
             localVideoRef.current.pause();
           } else if (playerRef.current) {
-            console.log('[Player] Pausing - fading out...');
             await fadeOut();
             playerRef.current.pauseVideo();
           }
@@ -713,7 +719,6 @@ function App() {
         }
       }
 
-      prevStateRef.current = newState;
       setStatus(newStatus);
 
       // Check if current_media changed
