@@ -1372,6 +1372,51 @@ function App() {
     };
   }, [status?.state]);
 
+  // ── Stuck-at-ended watchdog ─────────────────────────────────────────────────
+  // Defense-in-depth: if the actual video player (YouTube or local <video>) has
+  // ended but queue_next never fired (e.g. 502 on player-control, Realtime drop,
+  // stale source field disabling timeouts), this interval retries the ended call.
+  // Checks every 15 seconds — independent of DB state or Realtime events.
+  useEffect(() => {
+    if (!currentMedia || isSlavePlayer) return;
+
+    const stuckCheckInterval = window.setInterval(async () => {
+      // Don't interfere if a queue advance is already in-flight.
+      if (isEndingRef.current) return;
+
+      let isStuck = false;
+
+      // Check YouTube IFrame player
+      if (!localPlaybackUrlRef.current && playerModeRef.current !== 'ytm_desktop') {
+        if (playerRef.current && typeof playerRef.current.getPlayerState === 'function') {
+          const ytState = playerRef.current.getPlayerState();
+          if (ytState === 0) { // YT.PlayerState.ENDED
+            isStuck = true;
+            console.error('[Player] Stuck watchdog: YouTube player is ENDED but queue never advanced — retrying ended call');
+          }
+        }
+      }
+
+      // Check local/Cloudflare <video> element
+      if (localPlaybackUrlRef.current && localVideoRef.current) {
+        if (localVideoRef.current.ended) {
+          isStuck = true;
+          console.error('[Player] Stuck watchdog: Local video is ENDED but queue never advanced — retrying ended call');
+        }
+      }
+
+      if (isStuck) {
+        try {
+          await reportEndedAndNext();
+        } catch (err) {
+          console.error('[Player] Stuck watchdog: retry failed:', err);
+        }
+      }
+    }, 15000);
+
+    return () => clearInterval(stuckCheckInterval);
+  }, [currentMedia, isSlavePlayer, reportEndedAndNext]);
+
   useEffect(() => {
     if (!status || status.state !== 'idle' || !currentMedia || isSlavePlayer) return;
     if (isEndingRef.current) return;
