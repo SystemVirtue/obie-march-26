@@ -160,10 +160,26 @@ CREATE OR REPLACE FUNCTION queue_add(
   p_requested_by TEXT DEFAULT NULL
 ) RETURNS UUID AS $$
 DECLARE
-  v_next_pos INT;
-  v_queue_id UUID;
+  v_next_pos      INT;
+  v_queue_id      UUID;
+  v_max_size      INT;
+  v_current_count INT;
 BEGIN
   PERFORM pg_advisory_xact_lock(hashtext('queue_' || p_player_id::text));
+
+  -- Check queue limits
+  SELECT max_queue_size INTO v_max_size
+  FROM   player_settings
+  WHERE  player_id = p_player_id;
+
+  SELECT COUNT(*) INTO v_current_count
+  FROM   queue
+  WHERE  player_id = p_player_id
+    AND  played_at IS NULL;
+
+  IF v_current_count >= v_max_size THEN
+    RAISE EXCEPTION 'Queue is full (max: %)', v_max_size;
+  END IF;
 
   SELECT COALESCE(MAX(position), -1) + 1 INTO v_next_pos
   FROM   queue
@@ -180,6 +196,20 @@ BEGIN
     CASE WHEN p_type = 'priority' THEN NOW() + INTERVAL '30 minutes' ELSE NULL END
   )
   RETURNING id INTO v_queue_id;
+
+  -- Log event
+  PERFORM log_event(
+    p_player_id,
+    'queue_add',
+    'info',
+    jsonb_build_object(
+      'queue_id',       v_queue_id,
+      'media_item_id',  p_media_item_id,
+      'type',           p_type,
+      'position',       v_next_pos,
+      'requested_by',   p_requested_by
+    )
+  );
 
   RETURN v_queue_id;
 END;
