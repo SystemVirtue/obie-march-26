@@ -192,6 +192,8 @@ Deno.serve(async (req)=>{
       }
 
       let mediaItemId = media_item_id;
+      let mediaTitle: string | null = null;
+      let mediaArtist: string | null = null;
 
       // If URL provided, scrape it first to get/create media item
       if (url && !mediaItemId) {
@@ -304,6 +306,8 @@ Deno.serve(async (req)=>{
           }
 
           mediaItemId = resolvedId;
+          mediaTitle = video.title || null;
+          mediaArtist = video.artist || null;
         } catch (scrapeError) {
           console.error('Scraping error:', scrapeError);
           return new Response(JSON.stringify({
@@ -357,12 +361,17 @@ Deno.serve(async (req)=>{
           console.error('add_media_to_kiosk_requests_playlist error:', trackPlaylistError);
         }
 
-        // Log the successful kiosk request
-        const { data: mediaItem } = await supabase
-          .from('media_items')
-          .select('title, artist')
-          .eq('id', mediaItemId)
-          .single();
+        // Log the successful kiosk request.
+        // If we scraped a URL, title/artist are already captured — skip the refetch.
+        if (!mediaTitle) {
+          const { data: mediaItem } = await supabase
+            .from('media_items')
+            .select('title, artist')
+            .eq('id', mediaItemId)
+            .single();
+          mediaTitle = mediaItem?.title || null;
+          mediaArtist = mediaItem?.artist || null;
+        }
 
         await supabase.from('system_logs').insert({
           player_id,
@@ -372,8 +381,8 @@ Deno.serve(async (req)=>{
             session_id,
             media_item_id: mediaItemId,
             queue_id: queueId,
-            title: mediaItem?.title || 'Unknown',
-            artist: mediaItem?.artist || 'Unknown'
+            title: mediaTitle || 'Unknown',
+            artist: mediaArtist || 'Unknown'
           }
         });
 

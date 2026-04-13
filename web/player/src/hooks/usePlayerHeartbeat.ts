@@ -15,10 +15,13 @@ export function usePlayerHeartbeat({ isSlavePlayer, playerId }: UsePlayerHeartbe
   // Send a heartbeat every 30 s so players.status stays 'online' and the admin
   // Connected Devices panel can detect disconnects. Both priority and slave
   // players heartbeat — the server-side player_heartbeat() handles multi-device.
+  // Calls the SECURITY DEFINER RPC directly, bypassing the Edge Function HTTP hop
+  // to eliminate cold-start latency (~200-1000ms saved per heartbeat).
   useEffect(() => {
     if (!playerId) return;
-    const send = () => callPlayerControl({ player_id: playerId, action: 'heartbeat' })
-      .catch(e => console.warn('[player] heartbeat failed', e));
+    const send = () => (supabase.rpc as any)('player_heartbeat', { p_player_id: playerId })
+      .then(({ error }: { error: any }) => { if (error) console.warn('[player] heartbeat failed', error); })
+      .catch((e: any) => console.warn('[player] heartbeat failed', e));
     send(); // immediate on mount
     const id = setInterval(send, HEARTBEAT_INTERVAL_MS);
     return () => clearInterval(id);

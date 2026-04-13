@@ -197,17 +197,35 @@ Deno.serve(async (req)=>{
           }
         });
       }
+      // Get the position of the item being removed so we can close the gap in one query
+      const { data: removedItem } = await supabase
+        .from('playlist_items')
+        .select('position')
+        .eq('playlist_id', playlist_id)
+        .eq('media_item_id', media_item_id)
+        .limit(1)
+        .maybeSingle();
+      const removedPosition = removedItem?.position;
+
       const { error: removeError } = await supabase.from('playlist_items').delete().eq('playlist_id', playlist_id).eq('media_item_id', media_item_id);
       if (removeError) throw removeError;
-      // Reorder remaining items
-      const { data: items } = await supabase.from('playlist_items').select('id').eq('playlist_id', playlist_id).order('position', {
-        ascending: true
-      });
-      if (items && items.length > 0) {
-        for(let i = 0; i < items.length; i++){
-          await supabase.from('playlist_items').update({
-            position: i
-          }).eq('id', items[i].id);
+
+      // Close the position gap with a single RPC call instead of N individual updates.
+      // If the RPC doesn't exist yet (migration not applied), fall back to N+1 re-sequence.
+      if (removedPosition != null) {
+        const { error: reseqError } = await supabase.rpc('resequence_playlist_after_remove', {
+          p_playlist_id: playlist_id,
+          p_removed_position: removedPosition,
+        });
+        if (reseqError) {
+          console.error('resequence_playlist_after_remove error (falling back):', reseqError);
+          // Fallback: fetch all items and re-sequence individually
+          const { data: items } = await supabase.from('playlist_items').select('id').eq('playlist_id', playlist_id).order('position', { ascending: true });
+          if (items && items.length > 0) {
+            for (let i = 0; i < items.length; i++) {
+              await supabase.from('playlist_items').update({ position: i }).eq('id', items[i].id);
+            }
+          }
         }
       }
       return new Response(JSON.stringify({
@@ -233,11 +251,22 @@ Deno.serve(async (req)=>{
           }
         });
       }
-      // Update positions
-      for(let i = 0; i < item_ids.length; i++){
-        await supabase.from('playlist_items').update({
-          position: i
-        }).eq('id', item_ids[i]).eq('playlist_id', playlist_id);
+      // Batch update positions in a single RPC call instead of N individual updates
+      const { error: reorderError } = await supabase.rpc('playlist_reorder', {
+        p_playlist_id: playlist_id,
+        p_item_ids: item_ids,
+      });
+      if (reorderError) {
+        // Fallback to sequential updates if RPC doesn't exist yet
+        if (reorderError.message?.includes('function') && reorderError.message?.includes('does not exist')) {
+          for (let i = 0; i < item_ids.length; i++) {
+            await supabase.from('playlist_items').update({
+              position: i
+            }).eq('id', item_ids[i]).eq('playlist_id', playlist_id);
+          }
+        } else {
+          throw reorderError;
+        }
       }
       return new Response(JSON.stringify({
         success: true

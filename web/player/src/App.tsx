@@ -86,6 +86,8 @@ function App() {
   const ytmTrackStateRef = useRef<number | null>(null); // previous YTM trackState for transition detection
   const ytmAdminPausedRef = useRef(false);           // true while a Supabase-admin pause is in flight
   const playerModeRef = useRef<'iframe' | 'ytm_desktop'>('iframe');
+  const playVideoTimerRef = useRef<number | null>(null); // Delayed playVideo() call after load
+  const ytmFadeIntervalRef = useRef<number | null>(null); // YTM Desktop fade interval
   const [ytmTestResult, setYtmTestResult] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle');
   const [ytmTestMsg, setYtmTestMsg] = useState<string | null>(null);
 
@@ -162,10 +164,11 @@ function App() {
   // YTM Desktop skip fade: step volume 100→0 over fade duration via setVolume commands
   const fadeOutYtm = useCallback((): Promise<void> => {
     return new Promise((resolve) => {
+      if (ytmFadeIntervalRef.current) clearInterval(ytmFadeIntervalRef.current);
       const steps = 10;
       const stepDuration = FADE_DURATION_MS / steps;
       let currentStep = 0;
-      const interval = window.setInterval(() => {
+      ytmFadeIntervalRef.current = window.setInterval(() => {
         currentStep++;
         const vol = Math.round(100 * (1 - currentStep / steps));
         ytmFetch('/api/v1/command', {
@@ -173,7 +176,8 @@ function App() {
           body: JSON.stringify({ command: 'setVolume', data: vol }),
         }).catch(() => {});
         if (currentStep >= steps) {
-          clearInterval(interval);
+          clearInterval(ytmFadeIntervalRef.current!);
+          ytmFadeIntervalRef.current = null;
           resolve();
         }
       }, stepDuration);
@@ -234,7 +238,7 @@ function App() {
 
   // Auto-generate radio from history when queue has no remaining items
   const checkAndTriggerAutoRadio = useCallback(async () => {
-    if (autoRadioInFlightRef.current || !activePlayerId) return;
+    if (isSlavePlayer || autoRadioInFlightRef.current || !activePlayerId) return;
 
     try {
       const { data: remaining, error } = await supabase
@@ -260,7 +264,7 @@ function App() {
     } catch (err) {
       console.error('[Player] Failed to check remaining queue:', err);
     }
-  }, [activePlayerId, PLAYER_ID]);
+  }, [isSlavePlayer, activePlayerId, PLAYER_ID]);
   checkAutoRadioRef.current = checkAndTriggerAutoRadio;
 
   // Report video ended and trigger queue_next (disabled for slave players)
@@ -578,16 +582,23 @@ function App() {
     reportEndedAndNext(false);
   }, [isSlavePlayer, reportEndedAndNext]);
 
-  // Load YouTube IFrame API
+  // Load YouTube IFrame API (with error handling + retry)
   useEffect(() => {
     if (ytApiReady) return;
 
-    const tag = document.createElement('script');
-    tag.src = 'https://www.youtube.com/iframe_api';
-    const firstScriptTag = document.getElementsByTagName('script')[0];
-    firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
+    const loadYtApi = () => {
+      const tag = document.createElement('script');
+      tag.src = 'https://www.youtube.com/iframe_api';
+      tag.onerror = () => {
+        console.error('[Player] YouTube IFrame API script failed to load — retrying in 10s');
+        setTimeout(loadYtApi, 10000);
+      };
+      const firstScriptTag = document.getElementsByTagName('script')[0];
+      firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
+    };
 
     window.onYouTubeIframeAPIReady = () => setYtApiReady(true);
+    loadYtApi();
   }, [ytApiReady]);
 
   // Initialize player with default playlist
@@ -1081,8 +1092,10 @@ function App() {
         // Load and explicitly play video (will trigger fade-in when playing state is detected)
         lastVideoLoadTimeRef.current = Date.now(); // Guard stale ENDED events for 3 s
         playerRef.current.loadVideoById(youtubeId);
-        // Ensure playback starts
-        setTimeout(() => {
+        // Ensure playback starts (clear any prior pending playVideo timer)
+        if (playVideoTimerRef.current) clearTimeout(playVideoTimerRef.current);
+        playVideoTimerRef.current = window.setTimeout(() => {
+          playVideoTimerRef.current = null;
           if (playerRef.current && playerRef.current.playVideo) {
             console.log('[Player] Explicitly calling playVideo() after skip load');
             playerRef.current.playVideo();
@@ -1098,8 +1111,10 @@ function App() {
         // loadVideoById and explicitly play
         lastVideoLoadTimeRef.current = Date.now(); // Guard stale ENDED events for 3 s
         playerRef.current.loadVideoById(youtubeId);
-        // Ensure playback starts
-        setTimeout(() => {
+        // Ensure playback starts (clear any prior pending playVideo timer)
+        if (playVideoTimerRef.current) clearTimeout(playVideoTimerRef.current);
+        playVideoTimerRef.current = window.setTimeout(() => {
+          playVideoTimerRef.current = null;
           if (playerRef.current && playerRef.current.playVideo) {
             console.log('[Player] Explicitly calling playVideo() after normal load');
             playerRef.current.playVideo();
@@ -1170,27 +1185,57 @@ function App() {
       }
 
       try {
+        const expectedMediaId = currentMediaIdRef.current || undefined;
         const result = await callPlayerControl({
           player_id: PLAYER_ID,
           state: 'idle',
           progress: 1,
           action: 'ended',
-          current_media_id: currentMediaIdRef.current || undefined,
+          current_media_id: expectedMediaId,
         });
-        if (result?.next_item) {
-          const nextMedia: MediaItem = {
-            id: result.next_item.media_item_id,
-            title: result.next_item.title || 'Unknown',
-            artist: 'Unknown',
-            url: result.next_item.url,
-            duration: result.next_item.duration || 0,
-            source_id: '',
-            source_type: 'youtube',
-            thumbnail: null,
-            fetched_at: new Date().toISOString(),
-            metadata: {},
-          };
-          setCurrentMedia(nextMedia);
+        const applyNext = (r: any) => {
+          if (r?.next_item) {
+            const nextMedia: MediaItem = {
+              id: r.next_item.media_item_id,
+              title: r.next_item.title || 'Unknown',
+              artist: 'Unknown',
+              url: r.next_item.url,
+              duration: r.next_item.duration || 0,
+              source_id: '',
+              source_type: 'youtube',
+              thumbnail: null,
+              fetched_at: new Date().toISOString(),
+              metadata: {},
+            };
+            setCurrentMedia(nextMedia);
+            return true;
+          }
+          return false;
+        };
+
+        if (!applyNext(result)) {
+          // Retry without expected_media_id if DB is stuck idle on same media (stale-ID race)
+          const { data: latestStatusRaw } = await supabase
+            .from('player_status')
+            .select('state,current_media_id')
+            .eq('player_id', PLAYER_ID)
+            .maybeSingle();
+          const latestStatus = latestStatusRaw as { state: string | null; current_media_id: string | null } | null;
+
+          const stillIdleOnSameMedia =
+            latestStatus?.state === 'idle' &&
+            (!expectedMediaId || latestStatus.current_media_id === expectedMediaId);
+
+          if (stillIdleOnSameMedia) {
+            const retryResult = await callPlayerControl({
+              player_id: PLAYER_ID,
+              state: 'idle',
+              progress: 1,
+              action: 'ended',
+            });
+            applyNext(retryResult);
+          }
+          // If DB already advanced (different state/media), Realtime will deliver the new song
         }
       } catch (error) {
         console.error('[Player] Failed to advance after auto-skip:', error);

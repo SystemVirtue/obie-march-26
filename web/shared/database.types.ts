@@ -389,7 +389,6 @@ export type Database = {
           expires_at: string | null
           id: string
           media_item_id: string
-          played_at: string | null
           player_id: string
           position: number
           requested_at: string | null
@@ -400,7 +399,6 @@ export type Database = {
           expires_at?: string | null
           id?: string
           media_item_id: string
-          played_at?: string | null
           player_id: string
           position: number
           requested_at?: string | null
@@ -411,7 +409,6 @@ export type Database = {
           expires_at?: string | null
           id?: string
           media_item_id?: string
-          played_at?: string | null
           player_id?: string
           position?: number
           requested_at?: string | null
