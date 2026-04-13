@@ -2,6 +2,24 @@
 // Handles player status updates and heartbeat
 import { corsHeaders } from '../_shared/cors.ts';
 import { createServiceClient } from '../_shared/supabase-client.ts';
+
+/** Check if the given player_id is the priority player. Returns true if authorized. */
+async function isPriorityPlayer(supabase: any, player_id: string): Promise<boolean> {
+  const { data: player } = await supabase
+    .from('players')
+    .select('priority_player_id')
+    .eq('id', player_id)
+    .single();
+  return player?.priority_player_id === player_id;
+}
+
+function jsonResponse(body: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
+
 Deno.serve(async (req)=>{
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -202,25 +220,9 @@ Deno.serve(async (req)=>{
       // If idle: call queue_next directly (no fade needed, nothing is playing).
       // If playing/paused: let the Player handle the fade and then call queue_next.
       if (action === 'skip' && state === 'idle') {
-        // Check if this player is the priority player before allowing queue progression
-        const { data: player } = await supabase
-          .from('players')
-          .select('priority_player_id')
-          .eq('id', player_id)
-          .single();
-
-        if (player?.priority_player_id !== player_id) {
+        if (!await isPriorityPlayer(supabase, player_id)) {
           console.log(`[player-control] Ignoring skip from non-priority player ${player_id}`);
-          return new Response(JSON.stringify({
-            success: false,
-            reason: 'not_priority_player'
-          }), {
-            status: 200,
-            headers: {
-              ...corsHeaders,
-              'Content-Type': 'application/json'
-            }
-          });
+          return jsonResponse({ success: false, reason: 'not_priority_player' });
         }
 
         const shouldAdvanceServerSide = preUpdateState !== 'playing' && preUpdateState !== 'paused';
@@ -274,25 +276,9 @@ Deno.serve(async (req)=>{
       // branch was a latent bug that would fire queue_next for any status update
       // that happened to include state:'idle' (e.g. a stale heartbeat).
       if (action === 'ended') {
-        // Check if this player is the priority player before allowing queue progression
-        const { data: player } = await supabase
-          .from('players')
-          .select('priority_player_id')
-          .eq('id', player_id)
-          .single();
-
-        if (player?.priority_player_id !== player_id) {
+        if (!await isPriorityPlayer(supabase, player_id)) {
           console.log(`[player-control] Ignoring ${action} from non-priority player ${player_id}`);
-          return new Response(JSON.stringify({
-            success: false,
-            reason: 'not_priority_player'
-          }), {
-            status: 200,
-            headers: {
-              ...corsHeaders,
-              'Content-Type': 'application/json'
-            }
-          });
+          return jsonResponse({ success: false, reason: 'not_priority_player' });
         }
 
         console.log('[player-control] Song ended, calling queue_next for priority player:', player_id);

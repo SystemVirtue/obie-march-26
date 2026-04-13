@@ -68,7 +68,6 @@ export interface QueueItem {
   position: number;
   requested_by: string | null;
   requested_at: string;
-  played_at: string | null;
   expires_at: string;
   media_item?: MediaItem; // Joined data
 }
@@ -414,9 +413,8 @@ export function subscribeToQueue(
       console.log('[subscribeToQueue] 🔄 Fetching queue from database...');
       const { data, error } = await supabase
         .from('queue')
-        .select('id, player_id, type, media_item_id, position, requested_by, requested_at, played_at, expires_at, media_item:media_items(*)')
+        .select('id, player_id, type, media_item_id, position, requested_by, requested_at, expires_at, media_item:media_items(*)')
         .eq('player_id', playerId)
-        .is('played_at', null)
         .order('type', { ascending: false })
         .order('position', { ascending: true });
       if (error) {
@@ -964,7 +962,6 @@ export async function getQueue(playerId: string): Promise<QueueItem[]> {
     .from('queue')
     .select('*, media_item:media_items(*)')
     .eq('player_id', playerId)
-    .is('played_at', null)
     .order('type', { ascending: false })
     .order('position', { ascending: true });
 

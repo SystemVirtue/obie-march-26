@@ -38,27 +38,29 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Verify player exists
-    const { data: player, error: playerError } = await supabase
-      .from("players")
-      .select("status")
-      .eq("id", player_id)
-      .single();
+    // Only check player existence + online status for actions that require it.
+    // Other actions (remove, reorder, clear, shuffle) get implicit FK validation
+    // from their RPCs, saving a round-trip.
+    if (REQUIRES_ONLINE.has(action)) {
+      const { data: player, error: playerError } = await supabase
+        .from("players")
+        .select("status")
+        .eq("id", player_id)
+        .single();
 
-    if (playerError || !player) {
-      return new Response(JSON.stringify({ error: "Player not found" }), {
-        status: 404,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+      if (playerError || !player) {
+        return new Response(JSON.stringify({ error: "Player not found" }), {
+          status: 404,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
 
-    // Only block playback-triggering actions when player is offline.
-    // Admin queue management (remove, reorder, clear, skip) works regardless.
-    if (REQUIRES_ONLINE.has(action) && player.status !== "online") {
-      return new Response(JSON.stringify({ error: "Player is offline" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      if (player.status !== "online") {
+        return new Response(JSON.stringify({ error: "Player is offline" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
     }
 
     let result: unknown;
