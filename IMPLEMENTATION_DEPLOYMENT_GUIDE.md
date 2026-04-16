@@ -27,7 +27,7 @@ Successfully implemented Phase 4 recommendations with **zero breaking changes**.
 - All existing player_status records maintain current behavior
 - New events only logged for status changes (2-5 per day estimated)
 
-### 2. Edge Function Modifications (3 files)
+### 2. Edge Function Modifications (2 files)
 
 #### A. player-control/index.ts
 **Lines added**: ~20 (logging helper + 1 log call)
@@ -41,11 +41,7 @@ Successfully implemented Phase 4 recommendations with **zero breaking changes**.
 - Enhanced error handler to persist errors to system_logs
 - **Safety**: Error logging wrapped in try/catch; won't block error responses
 
-#### C. kiosk-handler/index.ts
-**Lines added**: ~15 (import + error logging in catch block)
-- Import error-logger helpers  
-- Enhanced error handler to persist errors to system_logs
-- **Safety**: Error logging wrapped in try/catch; won't block error responses
+**Note**: kiosk-handler not modified to preserve existing error handling patterns
 
 ### 3. New Shared Helper (1 file)
 **File created**: `supabase/functions/_shared/error-logger.ts`
