@@ -4,6 +4,7 @@ import { corsHeaders } from '../_shared/cors.ts';
 import { createServiceClient } from '../_shared/supabase-client.ts';
 import { callYouTubeScraperWithFallback } from '../_shared/youtube-scraper-caller.ts';
 import { validateYouTubeUrl } from '../_shared/validation.ts';
+import { logEdgeError, logEvent } from '../_shared/error-logger.ts';
 
 Deno.serve(async (req)=>{
   // Handle CORS preflight
@@ -918,6 +919,21 @@ Deno.serve(async (req)=>{
     });
   } catch (error) {
     console.error('Kiosk handler error:', error);
+    
+    // Log error persistently to system_logs
+    try {
+      const supabase = createServiceClient();
+      await logEdgeError(supabase, error, {
+        location: 'kiosk-handler:main',
+        details: {
+          action: body?.action || 'unknown',
+          session_id: body?.session_id || null
+        }
+      });
+    } catch (logErr) {
+      console.error('Failed to log kiosk-handler error:', logErr);
+    }
+    
     return new Response(JSON.stringify({
       error: error.message
     }), {

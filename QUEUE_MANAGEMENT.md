@@ -218,6 +218,117 @@ const currentQueueItem = status?.current_queue_position !== undefined &&
 
 ---
 
+## Continuous Playback (Option B)
+
+### 📻 **Overview**
+
+Obie Jukebox enforces **radio-like continuous playback** with zero dead air. The system automatically prevents pause states that would stop the music, implementing a "Pause Only When Offline" model.
+
+### 🎯 **How It Works**
+
+**Option B: Pause Only When Offline**
+
+1. **Admin UI**: Pause button is **disabled** when any player is online
+   - Admin can only pause if ALL players are offline
+   - Prevents manual pause while jukebox is playing
+   - Shows tooltip: "Pause disabled (player online)"
+
+2. **Player App**: Auto-resumes any unexpected pauses
+   - Player app is inherently "online" if executing JavaScript
+   - Auto-resumes pauses unless admin explicitly paused
+   - Handles YouTube API pause events (embedding blocks, network lag)
+   - Recently-loaded videos (first 8s) auto-resume without reporting to DB
+
+3. **Timeout Guards**: Aggressive auto-skip if pause persists
+   - **Unexpected pause timeout**: 2.5s skip to next song
+   - Only triggers if video never reached PLAYING state
+   - Prevents indefinite stalls from locked-out videos
+
+### 🔧 **Implementation Details**
+
+**Admin App** (`web/admin/src/App.tsx`):
+```typescript
+// Track online player count
+const [onlinePlayerCount, setOnlinePlayerCount] = useState(0);
+
+useEffect(() => {
+  const count = players.filter(p => p.status === 'online').length;
+  setOnlinePlayerCount(count);
+}, [players]);
+
+// Reject pause attempts when players online
+const handlePlayPause = (newState: PlayerState) => {
+  if (newState === 'paused' && onlinePlayerCount > 0) {
+    alert('Pause is disabled while any player is online (continuous playback mode)');
+    return;
+  }
+  // ... proceed with pause
+};
+```
+
+**Player App** (`web/player/src/App.tsx`):
+```typescript
+// Auto-resume pauses unless admin-paused AND not recently loading
+const shouldAutoResume = !adminPausedRef.current && recentlyLoadedRef.current;
+
+if (event.data === 2) { // PAUSED event
+  if (!videoHasPlayedRef.current) {
+    // Transient loading pause — auto-resume immediately
+    playerRef.current?.playVideo();
+  } else if (shouldAutoResume) {
+    // Recently loaded or unexpected pause — auto-resume
+    playerRef.current?.playVideo();
+  } else {
+    // Genuine pause (admin or offline) — report to DB
+    reportStatus('paused');
+  }
+}
+
+// Unexpected pause timeout: aggressive skip if stalled
+if (!videoHasPlayedRef.current) {
+  const msSinceLoad = Date.now() - loadStartTimeRef.current;
+  if (msSinceLoad < 2500) return; // Only 2.5s grace period
+  advanceToNext('Video paused before playing (unexpected pause)');
+}
+```
+
+**UI State** (`web/admin/src/components/NowPlayingStage.tsx`):
+```typescript
+<Button
+  disabled={isSkipping || (isPaused && isPauseDisabled)}
+  title={isPauseDisabled && isPaused ? 'Pause disabled (player online)' : '...'}>
+  {isPaused ? 'Resume' : 'Pause'}
+</Button>
+```
+
+### 📊 **Timeline Comparison**
+
+| Event | Before Option B | After Option B |
+|-------|-----------------|-----------------|
+| Admin clicks pause | Pause allowed anytime | Button disabled when online |
+| YouTube fires PAUSED (transient) | Waits 3-5s → timeout skip | Auto-resume immediately |
+| YouTube API delayed (slow network) | May skip valid video | 8s "recently loaded" grace period |
+| Network latency | 3s stalled-pause timeout | 2.5s aggressive timeout |
+
+### 🚨 **What NOT to Change**
+
+**Recently-Loaded Timeout**: `RECENTLY_LOADED_TIMEOUT_OPTION_B_MS = 8000`
+- **Why 8s?** YouTube API sometimes takes 5-8s to reach PLAYING state on slower networks
+- **If changed to < 5s**: Valid videos will be skipped prematurely
+- **If changed to > 10s**: System tolerates too many false pauses
+
+**Unexpected Pause Timeout**: Currently `2500ms` (2.5 seconds)
+- **Why aggressive?** Player app is online by definition if code is executing
+- **If increased**: Dead air between songs (defeats radio mode)
+- **If decreased**: Valid buffering pauses trigger unnecessary skips
+
+**Admin Pause Button Logic**: Only disabled when `onlinePlayerCount > 0`
+- **Why filtered by online status?** When all players offline, admin can manually manage playback
+- **If always disabled**: Can't pause/manage during network issues
+- **If only disabled on specific player**: Can't enforce system-wide radio mode
+
+---
+
 ## The Fix
 
 ### 🎯 **Root Cause Identified**

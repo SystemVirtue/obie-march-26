@@ -2,6 +2,23 @@
 // Handles player status updates and heartbeat
 import { corsHeaders } from '../_shared/cors.ts';
 import { createServiceClient } from '../_shared/supabase-client.ts';
+
+// Helper: Log admin actions to system_logs for audit trail
+async function logAdminAction(supabase: any, action: string, player_id: string, payload: Record<string, any> = {}) {
+  try {
+    await supabase.from('system_logs').insert({
+      player_id: player_id,
+      event: `admin_${action}`,
+      severity: 'info',
+      payload: payload,
+      source: 'edge',
+    });
+  } catch (err) {
+    console.error('[player-control] Failed to log admin action:', err);
+    // Don't throw - logging failure shouldn't block the action itself
+  }
+}
+
 Deno.serve(async (req)=>{
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -202,6 +219,13 @@ Deno.serve(async (req)=>{
       // If idle: call queue_next directly (no fade needed, nothing is playing).
       // If playing/paused: let the Player handle the fade and then call queue_next.
       if (action === 'skip' && state === 'idle') {
+        // Log admin skip action
+        await logAdminAction(supabase, 'skip', player_id, {
+          pre_update_state: preUpdateState,
+          pre_update_media_id: preUpdateMediaId,
+          timestamp: new Date().toISOString()
+        });
+
         // Check if this player is the priority player before allowing queue progression
         const { data: player } = await supabase
           .from('players')
