@@ -165,11 +165,11 @@ Deno.serve(async (req) => {
     // Log error persistently to system_logs
     try {
       const supabase = createServiceClient();
-      await logEdgeError(supabase, error, {
+      await logEdgeError(supabase, error as Error | string, {
         location: 'queue-manager:main',
-        player_id: body?.player_id || undefined,
+        player_id: (error as any)?.player_id || undefined,
         details: {
-          action: body?.action || 'unknown'
+          action: 'queue_operation'
         }
       });
     } catch (logErr) {
