@@ -24,7 +24,6 @@ import { usePlayerHeartbeat } from './hooks/usePlayerHeartbeat';
 import { useKaraokeLyrics } from './hooks/useKaraokeLyrics';
 import {
   IS_ENDING_FALLBACK_MS,
-  RECENTLY_LOADED_TIMEOUT_MS,
   FADE_DURATION_MS
 } from '../../shared/constants';
 
