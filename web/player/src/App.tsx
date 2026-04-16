@@ -7,7 +7,6 @@ import {
   supabase,
   subscribeToPlayerStatus,
   subscribeToPlayerSettings,
-  subscribeToPlayer,
   callPlayerControl,
   callQueueManager,
   callPlaylistManager,
@@ -16,7 +15,6 @@ import {
   type PlayerStatus,
   type MediaItem,
   type PlayerSettings,
-  type Player,
 } from '@shared/supabase-client';
 import { YTM_BASE, YTM_APP_ID, getYtmToken, saveYtmToken, ytmFetch } from './utils/ytm';
 import { extractYouTubeId } from './utils/youtube';
@@ -52,7 +50,6 @@ function App() {
   const [status, setStatus] = useState<PlayerStatus | null>(null);
   const [currentMedia, setCurrentMedia] = useState<MediaItem | null>(null);
   const [settings, setSettings] = useState<PlayerSettings | null>(null);
-  const [isPlayerOnline, setIsPlayerOnline] = useState(false); // Option B: Track if player is online; disable pause when true
   const [isSlavePlayer, setIsSlavePlayer] = useState(false); // Track if this is a slave player
   const [playerReady, setPlayerReady] = useState(false); // Track if YouTube player is ready
   const [ytApiReady, setYtApiReady] = useState(false); // Track if YouTube API is loaded
@@ -491,10 +488,10 @@ function App() {
         // stuck in 'paused'. The status-sync effect then enforces that by calling
         // pauseVideo() — causing the video to freeze indefinitely.
         // 
-        // Option B logic:
-        // - If player is ONLINE + pause occurs: Always auto-resume (no pause allowed)
-        // - If player is OFFLINE + pause occurs: Either resume recently-loaded or allow genuine pause
-        const shouldAutoResume = (isPlayerOnline && !adminPausedRef.current) || (recentlyLoadedRef.current && !adminPausedRef.current);
+        // Option B logic (Pause Only When Offline):
+        // - Player app is inherently "online" if executing code, so always auto-resume
+        //   unless admin explicitly paused or if recently loaded (transient pause)
+        const shouldAutoResume = !adminPausedRef.current && recentlyLoadedRef.current;
         
         if (shouldAutoResume && playerRef.current && typeof playerRef.current.playVideo === 'function') {
           try {
@@ -504,7 +501,7 @@ function App() {
             reportStatus('paused');
           }
         } else {
-          // No auto-resume: player is offline, video not recently loaded, and not admin pause.
+          // No auto-resume: admin paused or not recently loaded
           reportStatus('paused');
         }
       }
@@ -521,7 +518,7 @@ function App() {
       // BUFFERING
       reportStatus('loading');
     }
-  }, [reportStatus, reportEndedAndNext, fadeIn, isPlayerOnline]);
+  }, [reportStatus, reportEndedAndNext, fadeIn]);
 
   // Handle playback errors — any YouTube player error skips immediately to the next video.
   // Error codes:
@@ -816,19 +813,6 @@ function App() {
     if (!identityReady || !activePlayerId) return;
     const settingsSub = subscribeToPlayerSettings(PLAYER_ID, setSettings);
     return () => settingsSub.unsubscribe();
-  }, [identityReady, activePlayerId, PLAYER_ID]);
-
-  // Option B: Subscribe to player online status for pause enforcement
-  useEffect(() => {
-    if (!identityReady || !activePlayerId) return;
-    const playerSub = subscribeToPlayer(PLAYER_ID, (player: Player) => {
-      const online = player.status === 'online';
-      setIsPlayerOnline(online);
-      if (online !== isPlayerOnline) {
-        console.log(`[Player] Online status changed: ${online ? 'ONLINE' : 'OFFLINE'} (pause ${online ? 'DISABLED' : 'ALLOWED'})`);
-      }
-    });
-    return () => playerSub.unsubscribe();
   }, [identityReady, activePlayerId, PLAYER_ID]);
 
   // Derive current player mode; keep a ref in sync for use inside subscription callbacks
@@ -1274,27 +1258,21 @@ function App() {
       // This fires when an error (e.g. embedding block, network issue, YT API lag) causes the
       // player to land in 'paused' rather than 'loading'. Since the video has
       // never entered 'playing' state, this is not a user-initiated pause.
-      // Option B: Auto-advance after ~2.5-3s to enforce continuous playback (radio mode).
+      // Option B: Auto-advance after ~2.5s to enforce continuous playback (radio mode).
+      // We use an aggressive timeout because the player app is inherently "online" if executing code.
       //
       // Guard: if a queue advance is already in-flight (e.g. this is the initial
       // loading pause right after a skip/end advances the queue), skip the timer.
       // The normal PLAYING event will clear isEndingRef once the video starts.
       if (isEndingRef.current) {
         console.log('[Player] Unexpected pause while queue advance in-flight — suppressing guard (skip/end in progress)');
-      } else if (isPlayerOnline) {
-        // Option B: If player is online, be aggressive about skipping stalled pauses
-        console.warn('[Player] Video paused before playing (online mode) — will auto-advance in 2.5s (Option B)');
-        unexpectedPauseTimeoutRef.current = window.setTimeout(() => {
-          unexpectedPauseTimeoutRef.current = null;
-          advanceToNext('Video paused before playing (unexpected pause - Option B online)');
-        }, 2500);
       } else {
-        // Player is offline: allow more time for buffers and network recovery
-        console.warn('[Player] Video paused before playing (offline mode) — will auto-advance in 3s (Option B)');
+        // Option B: Always use aggressive timeout for stalled pauses (player is online by virtue of executing code)
+        console.warn('[Player] Video paused before playing — will auto-advance in 2.5s (Option B)');
         unexpectedPauseTimeoutRef.current = window.setTimeout(() => {
           unexpectedPauseTimeoutRef.current = null;
-          advanceToNext('Video paused before playing (unexpected pause - Option B offline)');
-        }, 3000);
+          advanceToNext('Video paused before playing (unexpected pause - Option B)');
+        }, 2500);
       }
 
     } else if (status.state !== 'paused') {
@@ -1312,7 +1290,7 @@ function App() {
         unexpectedPauseTimeoutRef.current = null;
       }
     };
-  }, [status?.state, isPlayerOnline]);
+  }, [status?.state]);
 
   useEffect(() => {
     if (!status || status.state !== 'idle' || !currentMedia || isSlavePlayer) return;
