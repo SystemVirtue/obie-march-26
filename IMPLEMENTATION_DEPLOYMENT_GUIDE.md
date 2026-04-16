@@ -221,10 +221,9 @@ After deployment, verify:
 |-----------|---------|------|--------|
 | player-control | +20 lines logging | MINIMAL ✅ | Ready |
 | queue-manager | +15 lines logging | MINIMAL ✅ | Ready |
-| kiosk-handler | +15 lines logging | MINIMAL ✅ | Ready |
 | error-logger (new) | +70 lines utility | ZERO ✅ | Ready |
 | Migrations (2 new) | +50 lines schema | LOW ✅ | Ready |
-| **TOTAL** | **+170 lines** | **NO API CHANGES** | **PRODUCTION READY** |
+| **TOTAL** | **+155 lines** | **NO API CHANGES** | **PRODUCTION READY** |
 
 ---
 

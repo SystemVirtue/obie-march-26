@@ -58,7 +58,7 @@ Located at project root:
   - Logs `player_online` and `player_offline` events on status changes
   - Only triggers on actual status change (no heartbeat noise)
 
-#### Edge Function Modifications (3 files)
+#### Edge Function Modifications (2 files)
 - `supabase/functions/player-control/index.ts` ✅
   - Added `logAdminAction()` helper function
   - Logs `admin_skip` events with pre-update state
@@ -69,10 +69,7 @@ Located at project root:
   - Enhanced error handler with persistent logging
   - Logs `edge_error:queue-manager` on failures
 
-- `supabase/functions/kiosk-handler/index.ts` ✅
-  - Imports error-logger utilities
-  - Enhanced error handler with persistent logging
-  - Logs `edge_error:kiosk-handler` on failures
+**Note**: kiosk-handler reverted to original state to preserve production safety (existing error handling unchanged)
 
 #### Shared Utility (1 new file)
 - `supabase/functions/_shared/error-logger.ts` ✅
@@ -171,8 +168,9 @@ supabase/migrations/0051_player_online_offline_logging.sql      ✅ NEW
 supabase/functions/_shared/error-logger.ts                      ✅ NEW
 supabase/functions/player-control/index.ts                      ✅ MODIFIED
 supabase/functions/queue-manager/index.ts                       ✅ MODIFIED
-supabase/functions/kiosk-handler/index.ts                       ✅ MODIFIED
 ```
+
+**Note**: kiosk-handler remains unmodified (reverted for production safety)
 
 ---
 
