@@ -71,6 +71,7 @@ function App() {
   useEffect(() => { isSkippingRef.current = isSkipping; }, [isSkipping]);
 
   const [players, setPlayers] = useState<Player[]>([]);
+  const [onlinePlayerCount, setOnlinePlayerCount] = useState(0); // Option B: Track online players to disable pause
   const [kioskSessions, setKioskSessions] = useState<KioskSession[]>([]);
   const [activePlaylistName, setActivePlaylistName] = useState<string | null>(null);
 
@@ -226,6 +227,15 @@ function App() {
     return () => subs.forEach(s => s.unsubscribe());
   }, [user, availableJukeboxes]);
 
+  // Option B: Track online player count for pause button disable logic
+  useEffect(() => {
+    const count = players.filter(p => p.status === 'online').length;
+    setOnlinePlayerCount(count);
+    if (count > 0) {
+      console.log(`[Admin] ${count} player(s) online — pause disabled (Option B)`);
+    }
+  }, [players]);
+
   // Kiosk sessions — scoped to the currently-viewed jukebox.
   // Realtime fires on any row change; 60 s interval is a fallback in case
   // the realtime event is missed (e.g. first heartbeat after page load).
@@ -299,7 +309,13 @@ function App() {
 
   const handlePlayPause = async () => {
     try {
+      // Option B: Reject pause attempts when any player is online
       const newState = status?.state === 'playing' ? 'paused' : 'playing';
+      if (newState === 'paused' && onlinePlayerCount > 0) {
+        console.warn(`[Admin] Pause attempt rejected: ${onlinePlayerCount} player(s) online (Option B)`);
+        alert('Pause is disabled while any player is online (continuous playback mode)');
+        return;
+      }
       await callPlayerControl({ player_id: activePlayerId ?? PLAYER_ID, state: newState, action: 'update' });
     } catch (e) { console.error(e); }
   };
@@ -354,7 +370,8 @@ function App() {
       <NowPlayingStage status={status} queue={queue} settings={settings}
         players={players} activePlayerId={activePlayerId ?? undefined}
         kioskSessions={kioskSessions} activePlaylistName={activePlaylistName}
-        onPlayPause={handlePlayPause} onSkip={handleSkip} isSkipping={isSkipping} onRemove={handleRemove} />
+        onPlayPause={handlePlayPause} onSkip={handleSkip} isSkipping={isSkipping} onRemove={handleRemove}
+        isPauseDisabled={onlinePlayerCount > 0} />
 
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         <Sidebar view={view} setView={setView} queue={queue} user={user}

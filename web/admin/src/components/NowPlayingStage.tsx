@@ -18,10 +18,11 @@ function kioskNetworkLabel(session: KioskSession): string {
     : 'Online · Network';
 }
 
-export function NowPlayingStage({ status, queue, settings, players, activePlayerId, kioskSessions, activePlaylistName, onPlayPause, onSkip, isSkipping, onRemove }: {
+export function NowPlayingStage({ status, queue, settings, players, activePlayerId, kioskSessions, activePlaylistName, onPlayPause, onSkip, isSkipping, onRemove, isPauseDisabled }: {
   status: PlayerStatus | null; queue: QueueItem[]; settings: PlayerSettings | null;
   players?: Player[]; activePlayerId?: string; kioskSessions?: KioskSession[]; activePlaylistName?: string | null;
   onPlayPause: () => void; onSkip: () => void; isSkipping: boolean; onRemove: (id: string) => void;
+  isPauseDisabled?: boolean;
 }) {
   const [showPauseConfirm, setShowPauseConfirm] = useState(false);
   const cm = status?.current_media;
@@ -263,16 +264,16 @@ export function NowPlayingStage({ status, queue, settings, players, activePlayer
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.3)', flexShrink: 0 }}>{fmtDuration(cm?.duration)}</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <button onClick={handlePlayPauseClick} disabled={isSkipping}
-              title={isSkipping ? 'Skipping…' : isPlaying ? 'Pause playback' : 'Resume playback'}
+            <button onClick={handlePlayPauseClick} disabled={isSkipping || (isPaused && isPauseDisabled)}
+              title={isSkipping ? 'Skipping…' : isPauseDisabled && isPaused ? 'Pause disabled (player online)' : isPlaying ? 'Pause playback' : 'Resume playback'}
               style={{ width: 44, height: 44, borderRadius: '50%', border: 'none',
-                cursor: isSkipping ? 'default' : 'pointer', flexShrink: 0,
+                cursor: (isSkipping || (isPaused && isPauseDisabled)) ? 'default' : 'pointer', flexShrink: 0,
                 display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18,
-                background: isSkipping ? 'rgba(255,255,255,0.08)' : isPlaying ? '#dc2626' : '#16a34a',
-                color: isSkipping ? 'rgba(255,255,255,0.25)' : isPlaying ? '#facc15' : '#fff',
-                boxShadow: isSkipping ? 'none' : isPlaying ? '0 4px 18px rgba(220,38,38,0.45)' : '0 4px 18px rgba(22,163,74,0.45)',
+                background: isSkipping || (isPaused && isPauseDisabled) ? 'rgba(255,255,255,0.08)' : isPlaying ? '#dc2626' : '#16a34a',
+                color: isSkipping || (isPaused && isPauseDisabled) ? 'rgba(255,255,255,0.25)' : isPlaying ? '#facc15' : '#fff',
+                boxShadow: isSkipping || (isPaused && isPauseDisabled) ? 'none' : isPlaying ? '0 4px 18px rgba(220,38,38,0.45)' : '0 4px 18px rgba(22,163,74,0.45)',
                 transition: 'background 0.2s, box-shadow 0.2s, color 0.2s',
-                opacity: isSkipping ? 0.45 : 1 }}>
+                opacity: isSkipping || (isPaused && isPauseDisabled) ? 0.45 : 1 }}>
               {isPlaying ? '⏸' : '▶'}
             </button>
             <button onClick={onSkip} disabled={isSkipping} style={{ width: 34, height: 34, borderRadius: 9, border: 'none', cursor: isSkipping ? 'default' : 'pointer',

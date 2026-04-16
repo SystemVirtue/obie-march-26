@@ -7,6 +7,7 @@ import {
   supabase,
   subscribeToPlayerStatus,
   subscribeToPlayerSettings,
+  subscribeToPlayer,
   callPlayerControl,
   callQueueManager,
   callPlaylistManager,
@@ -15,6 +16,7 @@ import {
   type PlayerStatus,
   type MediaItem,
   type PlayerSettings,
+  type Player,
 } from '@shared/supabase-client';
 import { YTM_BASE, YTM_APP_ID, getYtmToken, saveYtmToken, ytmFetch } from './utils/ytm';
 import { extractYouTubeId } from './utils/youtube';
@@ -27,6 +29,9 @@ import {
   RECENTLY_LOADED_TIMEOUT_MS,
   FADE_DURATION_MS
 } from '../../shared/constants';
+
+// Option B: Extended timeout to reduce false positives on slow YouTube API loads
+const RECENTLY_LOADED_TIMEOUT_OPTION_B_MS = 8000; // Increased from ~3000 to handle slower networks
 
 const DEFAULT_PLAYER_ID = import.meta.env.VITE_PLAYER_ID || '00000000-0000-0000-0000-000000000001';
 const PLAYER_JUKEBOX_STORAGE_KEY = 'obie_player_jukebox_slug';
@@ -47,6 +52,7 @@ function App() {
   const [status, setStatus] = useState<PlayerStatus | null>(null);
   const [currentMedia, setCurrentMedia] = useState<MediaItem | null>(null);
   const [settings, setSettings] = useState<PlayerSettings | null>(null);
+  const [isPlayerOnline, setIsPlayerOnline] = useState(false); // Option B: Track if player is online; disable pause when true
   const [isSlavePlayer, setIsSlavePlayer] = useState(false); // Track if this is a slave player
   const [playerReady, setPlayerReady] = useState(false); // Track if YouTube player is ready
   const [ytApiReady, setYtApiReady] = useState(false); // Track if YouTube API is loaded
@@ -460,15 +466,13 @@ function App() {
       }
     } else if (event.data === 2) {
       // PAUSED
+      // Option B: Player-online continuous playback enforcement
+      // If player is online, never allow pause — auto-resume immediately.
+      // This implements radio-like continuous playback: error => auto-resume; stalled => skip.
 
       // If the video hasn't played yet, this is a transient loading pause (YouTube
       // fires PAUSED right after loadVideoById before playVideo() has been called).
-      // Don't write 'paused' to the DB — it would trigger the unexpected-pause
-      // guard in the status-watch effect and cause a double-advance after a skip.
-      // Instead, always attempt playVideo() — recentlyLoadedRef may already be
-      // false if playVideo() was called in response to a previous PAUSED event on
-      // this same load, but the video still hasn't started; gating on it silently
-      // swallows the event and leaves the player permanently paused.
+      // Auto-resume without reporting to DB.
       if (!videoHasPlayedRef.current) {
         if (playerRef.current && typeof playerRef.current.playVideo === 'function') {
           try {
@@ -479,19 +483,20 @@ function App() {
           }
         }
       } else {
-        // Video has played before — could be a genuine user/admin pause OR an unexpected
-        // mid-load pause (e.g. YouTube briefly plays then re-pauses during buffering start).
+        // Video has played before — could be a genuine pause OR unexpected mid-load pause.
         //
         // IMPORTANT: Do NOT call reportStatus('paused') before playVideo() when we intend
-        // to immediately resume.  If we do, the 'paused' DB write can arrive at the server
+        // to immediately resume. If we do, the 'paused' DB write can arrive at the server
         // AFTER the subsequent 'playing' write (HTTP jitter), leaving the DB permanently
-        // stuck in 'paused'.  The status-sync effect then enforces that by calling
+        // stuck in 'paused'. The status-sync effect then enforces that by calling
         // pauseVideo() — causing the video to freeze indefinitely.
-        //
-        // Fix: attempt auto-play first when the video was recently loaded; only report
-        // 'paused' to the DB if we are NOT going to immediately call playVideo().
-        // Only auto-resume if this wasn't an admin pause
-        if (recentlyLoadedRef.current && !adminPausedRef.current && playerRef.current && typeof playerRef.current.playVideo === 'function') {
+        // 
+        // Option B logic:
+        // - If player is ONLINE + pause occurs: Always auto-resume (no pause allowed)
+        // - If player is OFFLINE + pause occurs: Either resume recently-loaded or allow genuine pause
+        const shouldAutoResume = (isPlayerOnline && !adminPausedRef.current) || (recentlyLoadedRef.current && !adminPausedRef.current);
+        
+        if (shouldAutoResume && playerRef.current && typeof playerRef.current.playVideo === 'function') {
           try {
             playerRef.current.playVideo();
             recentlyLoadedRef.current = false;
@@ -499,7 +504,7 @@ function App() {
             reportStatus('paused');
           }
         } else {
-          // No recent load — this is a genuine pause (user or admin).
+          // No auto-resume: player is offline, video not recently loaded, and not admin pause.
           reportStatus('paused');
         }
       }
@@ -508,15 +513,15 @@ function App() {
       // Guard: YouTube fires stale ENDED events 2-3 s after loadVideoById for the
       // previous video.  These arrive after the new video's PLAYING event has
       // already reset isEndingRef, so isEndingRef alone cannot block them.
-      // Reject any ENDED that arrives within 5 s of loading the current video.
+      // Option B: Use extended timeout to account for slower YouTube API loads.
       const msSinceLoad = Date.now() - lastVideoLoadTimeRef.current;
-      if (msSinceLoad < RECENTLY_LOADED_TIMEOUT_MS) return;
+      if (msSinceLoad < RECENTLY_LOADED_TIMEOUT_OPTION_B_MS) return;
       reportEndedAndNext();
     } else if (event.data === 3) {
       // BUFFERING
       reportStatus('loading');
     }
-  }, [reportStatus, reportEndedAndNext, fadeIn]);
+  }, [reportStatus, reportEndedAndNext, fadeIn, isPlayerOnline]);
 
   // Handle playback errors — any YouTube player error skips immediately to the next video.
   // Error codes:
@@ -811,6 +816,19 @@ function App() {
     if (!identityReady || !activePlayerId) return;
     const settingsSub = subscribeToPlayerSettings(PLAYER_ID, setSettings);
     return () => settingsSub.unsubscribe();
+  }, [identityReady, activePlayerId, PLAYER_ID]);
+
+  // Option B: Subscribe to player online status for pause enforcement
+  useEffect(() => {
+    if (!identityReady || !activePlayerId) return;
+    const playerSub = subscribeToPlayer(PLAYER_ID, (player: Player) => {
+      const online = player.status === 'online';
+      setIsPlayerOnline(online);
+      if (online !== isPlayerOnline) {
+        console.log(`[Player] Online status changed: ${online ? 'ONLINE' : 'OFFLINE'} (pause ${online ? 'DISABLED' : 'ALLOWED'})`);
+      }
+    });
+    return () => playerSub.unsubscribe();
   }, [identityReady, activePlayerId, PLAYER_ID]);
 
   // Derive current player mode; keep a ref in sync for use inside subscription callbacks
@@ -1253,21 +1271,29 @@ function App() {
 
     } else if (status.state === 'paused' && !videoHasPlayedRef.current) {
       // ── Unexpected pause: video paused before it ever played ──────────────
-      // This fires when an error (e.g. embedding block, network issue) causes the
+      // This fires when an error (e.g. embedding block, network issue, YT API lag) causes the
       // player to land in 'paused' rather than 'loading'. Since the video has
-      // never entered 'playing' state, this is not a user-initiated pause —
-      // auto-advance after 3 seconds.
+      // never entered 'playing' state, this is not a user-initiated pause.
+      // Option B: Auto-advance after ~2.5-3s to enforce continuous playback (radio mode).
       //
       // Guard: if a queue advance is already in-flight (e.g. this is the initial
       // loading pause right after a skip/end advances the queue), skip the timer.
       // The normal PLAYING event will clear isEndingRef once the video starts.
       if (isEndingRef.current) {
         console.log('[Player] Unexpected pause while queue advance in-flight — suppressing guard (skip/end in progress)');
-      } else {
-        console.warn('[Player] Video paused before it ever played — unexpected pause, will auto-advance in 3s');
+      } else if (isPlayerOnline) {
+        // Option B: If player is online, be aggressive about skipping stalled pauses
+        console.warn('[Player] Video paused before playing (online mode) — will auto-advance in 2.5s (Option B)');
         unexpectedPauseTimeoutRef.current = window.setTimeout(() => {
           unexpectedPauseTimeoutRef.current = null;
-          advanceToNext('Video paused before playing (unexpected pause)');
+          advanceToNext('Video paused before playing (unexpected pause - Option B online)');
+        }, 2500);
+      } else {
+        // Player is offline: allow more time for buffers and network recovery
+        console.warn('[Player] Video paused before playing (offline mode) — will auto-advance in 3s (Option B)');
+        unexpectedPauseTimeoutRef.current = window.setTimeout(() => {
+          unexpectedPauseTimeoutRef.current = null;
+          advanceToNext('Video paused before playing (unexpected pause - Option B offline)');
         }, 3000);
       }
 
@@ -1286,7 +1312,7 @@ function App() {
         unexpectedPauseTimeoutRef.current = null;
       }
     };
-  }, [status?.state]);
+  }, [status?.state, isPlayerOnline]);
 
   useEffect(() => {
     if (!status || status.state !== 'idle' || !currentMedia || isSlavePlayer) return;
