@@ -349,9 +349,12 @@ END;
 $$;
 
 GRANT EXECUTE ON FUNCTION public.kiosk_request_enqueue(UUID, UUID, TEXT) TO authenticated, anon, service_role;
--- Keep the old 2-arg signature working (e.g. any direct DB callers).
-CREATE OR REPLACE FUNCTION public.kiosk_request_enqueue(UUID, UUID)
+-- Drop old 2-arg signature and recreate as a forwarding wrapper.
+-- DROP + recreate avoids the "cannot change name of input parameter" error
+-- when the old function had named parameters.
+DROP FUNCTION IF EXISTS public.kiosk_request_enqueue(UUID, UUID);
+CREATE FUNCTION public.kiosk_request_enqueue(p_session_id UUID, p_media_item_id UUID)
 RETURNS UUID LANGUAGE SQL SECURITY DEFINER SET search_path = public AS $$
-  SELECT public.kiosk_request_enqueue($1, $2, NULL);
+  SELECT public.kiosk_request_enqueue(p_session_id, p_media_item_id, NULL);
 $$;
 GRANT EXECUTE ON FUNCTION public.kiosk_request_enqueue(UUID, UUID) TO authenticated, anon, service_role;

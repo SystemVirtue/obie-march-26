@@ -3,12 +3,28 @@
 -- were published but never subscribed to via Realtime, causing unnecessary WAL processing
 -- and contributing to connection pool exhaustion.
 
-ALTER PUBLICATION supabase_realtime DROP TABLE IF EXISTS public.media_items;
-ALTER PUBLICATION supabase_realtime DROP TABLE IF EXISTS public.players;
-ALTER PUBLICATION supabase_realtime DROP TABLE IF EXISTS public.playlist_items;
-ALTER PUBLICATION supabase_realtime DROP TABLE IF EXISTS public.playlists;
-ALTER PUBLICATION supabase_realtime DROP TABLE IF EXISTS public.r2_files;
-ALTER PUBLICATION supabase_realtime DROP TABLE IF EXISTS public.system_logs;
+-- ALTER PUBLICATION does not support IF EXISTS, so we use a DO block to silently
+-- skip tables that are not currently in the publication.
+DO $$
+DECLARE
+  t TEXT;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    'public.media_items',
+    'public.players',
+    'public.playlist_items',
+    'public.playlists',
+    'public.r2_files',
+    'public.system_logs'
+  ] LOOP
+    BEGIN
+      EXECUTE format('ALTER PUBLICATION supabase_realtime DROP TABLE %s', t);
+    EXCEPTION
+      WHEN undefined_object  THEN NULL;  -- table not in publication
+      WHEN undefined_table   THEN NULL;  -- table doesn't exist
+    END;
+  END LOOP;
+END $$;
 
 -- Remaining in publication (actively subscribed by frontend):
 --   app_config       (all apps - version reload)
