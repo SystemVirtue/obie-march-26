@@ -316,7 +316,7 @@ function App() {
     playPauseInFlightRef.current = true;
     try {
       const newState = currentState === 'playing' ? 'paused' : 'playing';
-      await callPlayerControl({
+      const result = await callPlayerControl({
         player_id: activePlayerId ?? PLAYER_ID,
         state: newState,
         action: 'update',
@@ -324,6 +324,11 @@ function App() {
         // changed (i.e. the other admin console got there first).
         expected_state: currentState,
       } as any);
+      if ((result as any)?.noop) {
+        // Another admin console already changed state — Realtime will correct
+        // this UI within ~200ms. Log but don't error; no user action needed.
+        console.info('[Admin] Play/pause noop — state already changed by another console');
+      }
     } catch (e) {
       console.error('[Admin] Play/pause failed:', e);
     } finally {
@@ -341,7 +346,7 @@ function App() {
     if (currentMediaId) {
       setQueue(prev => prev.filter(q => q.media_item_id !== currentMediaId));
     }
-    try { await callPlayerControl({ player_id: activePlayerId ?? PLAYER_ID, state: 'idle', action: 'skip' }); }
+    try { await callPlayerControl({ player_id: activePlayerId ?? PLAYER_ID, state: 'idle', action: 'skip', expected_media_id: currentMediaId } as any); }
     catch (e) { console.error(e); setIsSkipping(false); }
     setTimeout(() => setIsSkipping(false), 3000);
   };

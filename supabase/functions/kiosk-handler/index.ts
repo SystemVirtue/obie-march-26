@@ -4,6 +4,7 @@ import { corsHeaders } from '../_shared/cors.ts';
 import { createServiceClient } from '../_shared/supabase-client.ts';
 import { callYouTubeScraperWithFallback } from '../_shared/youtube-scraper-caller.ts';
 import { validateYouTubeUrl } from '../_shared/validation.ts';
+import { validateAuth, unauthorizedResponse } from '../_shared/auth.ts';
 
 Deno.serve(async (req)=>{
   // Handle CORS preflight
@@ -12,6 +13,7 @@ Deno.serve(async (req)=>{
       headers: corsHeaders
     });
   }
+  if (!validateAuth(req)) return unauthorizedResponse();
   try {
     const serviceRoleToken = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? Deno.env.get('SERVICE_ROLE_JWT');
     const anonJwt = Deno.env.get('SUPABASE_ANON_KEY');
@@ -67,51 +69,19 @@ Deno.serve(async (req)=>{
         });
       }
 
-      // Try to resume the most recent session for this player
-      const { data: existingSessions, error: fetchErr } = await supabase
-        .from('kiosk_sessions')
-        .select('*')
-        .eq('player_id', player.id)
-        .order('last_active', { ascending: false, nullsFirst: false })
-        .order('created_at', { ascending: false });
+      // Atomic session resume + orphan credit rollup via DB function.
+      // kiosk_init_session() locks all session rows for this player in a single
+      // FOR UPDATE query, preventing the lost-update race where a concurrent
+      // coin insertion could be overwritten by the rollup computation.
+      const { data: resumedSession, error: initErr } = await supabase.rpc('kiosk_init_session', {
+        p_player_id: player.id,
+      });
 
-      if (!fetchErr && existingSessions && existingSessions.length > 0) {
-        const resumeSession = existingSessions[0];
+      if (initErr) throw initErr;
 
-        // Roll credits from orphaned sessions into the resumed one
-        let rolledCredits = 0;
-        const orphanIds: string[] = [];
-        for (let i = 1; i < existingSessions.length; i++) {
-          rolledCredits += existingSessions[i].credits || 0;
-          orphanIds.push(existingSessions[i].session_id);
-        }
-
-        if (rolledCredits > 0) {
-          await supabase
-            .from('kiosk_sessions')
-            .update({ credits: (resumeSession.credits || 0) + rolledCredits, last_active: new Date().toISOString() })
-            .eq('session_id', resumeSession.session_id);
-          resumeSession.credits = (resumeSession.credits || 0) + rolledCredits;
-          console.log(`Rolled ${rolledCredits} credits from ${orphanIds.length} orphaned session(s)`);
-        } else {
-          await supabase
-            .from('kiosk_sessions')
-            .update({ last_active: new Date().toISOString() })
-            .eq('session_id', resumeSession.session_id);
-        }
-        resumeSession.last_active = new Date().toISOString();
-
-        // Clean up orphaned sessions
-        if (orphanIds.length > 0) {
-          await supabase
-            .from('kiosk_sessions')
-            .delete()
-            .in('session_id', orphanIds);
-          console.log(`Deleted ${orphanIds.length} orphaned session(s)`);
-        }
-
-        console.log('Resumed session:', resumeSession.session_id, 'credits:', resumeSession.credits);
-        return new Response(JSON.stringify({ session: resumeSession }), {
+      if (resumedSession) {
+        console.log('Resumed session:', resumedSession.session_id, 'credits:', resumedSession.credits);
+        return new Response(JSON.stringify({ session: resumedSession }), {
           status: 200,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
@@ -178,7 +148,7 @@ Deno.serve(async (req)=>{
     }
     // Handle atomic request enqueue: deduct credits (unless freeplay) and enqueue as priority
     if (action === 'request') {
-      const { session_id, url, player_id, media_item_id } = body;
+      const { session_id, url, player_id, media_item_id, idempotency_key } = body;
       if (!session_id || (!url && !media_item_id)) {
         return new Response(JSON.stringify({
           error: 'session_id and either url or media_item_id are required for request action'
@@ -331,10 +301,14 @@ Deno.serve(async (req)=>{
       }
 
       try {
-        // Call DB RPC which performs an atomic debit-and-enqueue
+        // Call DB RPC which performs an atomic debit-and-enqueue.
+        // p_idempotency_key ensures that a network retry of the same request
+        // returns the existing queue_id rather than inserting a duplicate entry
+        // and deducting credits a second time.
         const { data: queueId, error: rpcError } = await supabase.rpc('kiosk_request_enqueue', {
-          p_session_id: session_id,
-          p_media_item_id: mediaItemId
+          p_session_id:      session_id,
+          p_media_item_id:   mediaItemId,
+          p_idempotency_key: idempotency_key ?? null,
         });
         if (rpcError) {
           console.error('kiosk_request_enqueue error:', rpcError);

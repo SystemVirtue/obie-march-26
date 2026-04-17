@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  supabase,
   subscribeToKioskSession,
   subscribeToPlayerSettings,
   subscribeToPlayerStatus,
@@ -134,6 +135,28 @@ export function useKioskSession({ defaultPlayerId, storageKey }: UseKioskSession
       sub.unsubscribe();
     };
   }, [identityReady, activePlayerId, playerId, session?.session_id]);
+
+  // Polling fallback: re-fetch the session every 10 s so credit balance stays
+  // correct even when the Realtime subscription drops (network glitch, rate
+  // limit, etc.).  The Realtime callback fires instantly on credit changes;
+  // this poll is only the safety net for the stale-credits case.
+  useEffect(() => {
+    if (!session?.session_id) return;
+    const sessionId = session.session_id;
+    const interval = setInterval(async () => {
+      try {
+        const { data } = await supabase
+          .from('kiosk_sessions')
+          .select('*')
+          .eq('session_id', sessionId)
+          .single();
+        if (data) setSession(data as KioskSession);
+      } catch {
+        // Silently ignore poll errors — Realtime is the primary mechanism.
+      }
+    }, 10_000);
+    return () => clearInterval(interval);
+  }, [session?.session_id]);
 
   useEffect(() => {
     if (!identityReady || !activePlayerId) return;

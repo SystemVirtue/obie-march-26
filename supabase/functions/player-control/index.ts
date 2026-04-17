@@ -2,6 +2,7 @@
 // Handles player status updates and heartbeat
 import { corsHeaders } from '../_shared/cors.ts';
 import { createServiceClient } from '../_shared/supabase-client.ts';
+import { validateAuth, unauthorizedResponse } from '../_shared/auth.ts';
 Deno.serve(async (req)=>{
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -9,12 +10,13 @@ Deno.serve(async (req)=>{
       headers: corsHeaders
     });
   }
+  if (!validateAuth(req)) return unauthorizedResponse();
   try {
     // Create Supabase client with service role key to bypass RLS
     const supabase = createServiceClient();
     // Parse request body
     const body = await req.json();
-    const { player_id, state, progress, action = 'update', session_id, stored_player_id, current_media_id, expected_state } = body;
+    const { player_id, state, progress, action = 'update', session_id, current_media_id, expected_state, expected_media_id } = body;
     if (!player_id) {
       return new Response(JSON.stringify({
         error: 'player_id is required'
@@ -43,106 +45,34 @@ Deno.serve(async (req)=>{
       });
     }
 
-    // Handle session registration for priority player mechanism
+    // Handle session registration for priority player mechanism.
+    // Uses the atomic claim_priority_player() DB function (migration 000004)
+    // which holds an advisory lock, eliminating the three-query race condition.
     if (action === 'register_session') {
       if (!session_id) {
         return new Response(JSON.stringify({
           error: 'session_id is required for register_session'
         }), {
           status: 400,
-          headers: {
-            ...corsHeaders,
-            'Content-Type': 'application/json'
-          }
-        });
-      }
-
-      // Check if this player was previously priority (stored_player_id matches)
-      if (stored_player_id === player_id) {
-        // This player was previously priority - restore priority status
-        const { error: updateError } = await supabase
-          .from('players')
-          .update({ priority_player_id: player_id })
-          .eq('id', player_id);
-
-        if (updateError) throw updateError;
-
-        console.log(`[player-control] Player ${player_id} restored as priority player (session: ${session_id})`);
-        return new Response(JSON.stringify({
-          success: true,
-          is_priority: true,
-          restored: true
-        }), {
-          status: 200,
-          headers: {
-            ...corsHeaders,
-            'Content-Type': 'application/json'
-          }
-        });
-      }
-
-      // Check if there's already a priority player
-      const { data: existingPriority } = await supabase
-        .from('players')
-        .select('priority_player_id')
-        .eq('id', player_id)
-        .single();
-
-      const currentPriorityId = existingPriority?.priority_player_id ?? null;
-
-      // Allow claim/reclaim if: no priority player set, OR this player WAS the priority player.
-      // A page reload clears localStorage, so we can't rely solely on stored_player_id —
-      // the DB record is the authoritative source for whether this player should be priority.
-      if (!currentPriorityId || currentPriorityId === player_id) {
-        // Check if any players are currently playing (only block if another player is active)
-        const { data: playingPlayers } = await supabase
-          .from('player_status')
-          .select('player_id, state')
-          .eq('state', 'playing');
-
-        const otherPlayerPlaying = playingPlayers?.some((p: any) => p.player_id !== player_id) ?? false;
-
-        if (!otherPlayerPlaying) {
-          // Safe to claim / reclaim priority
-          const { error: updateError } = await supabase
-            .from('players')
-            .update({ priority_player_id: player_id })
-            .eq('id', player_id);
-
-          if (updateError) throw updateError;
-
-          const verb = currentPriorityId === player_id ? 'reclaimed' : 'registered as';
-          console.log(`[player-control] Player ${player_id} ${verb} priority player (session: ${session_id})`);
-          return new Response(JSON.stringify({
-            success: true,
-            is_priority: true,
-            restored: currentPriorityId === player_id,
-          }), {
-            status: 200,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-          });
-        } else {
-          // Another player is actively playing — become slave
-          console.log(`[player-control] Player ${player_id} registered as slave (another player is playing, session: ${session_id})`);
-          return new Response(JSON.stringify({
-            success: true,
-            is_priority: false
-          }), {
-            status: 200,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-          });
-        }
-      } else {
-        // A different player holds priority
-        console.log(`[player-control] Player ${player_id} registered as slave (priority held by ${currentPriorityId}, session: ${session_id})`);
-        return new Response(JSON.stringify({
-          success: true,
-          is_priority: false
-        }), {
-          status: 200,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       }
+
+      const { data: isPriority, error: claimError } = await supabase.rpc('claim_priority_player', {
+        p_player_id:   player_id,
+        p_session_id:  session_id,
+      });
+
+      if (claimError) throw claimError;
+
+      console.log(`[player-control] Player ${player_id} register_session → is_priority=${!!isPriority} (session: ${session_id})`);
+      return new Response(JSON.stringify({
+        success: true,
+        is_priority: !!isPriority,
+      }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
     }
     // Handle reset priority player
     if (action === 'reset_priority') {
@@ -202,6 +132,17 @@ Deno.serve(async (req)=>{
           .single();
         preUpdateState = currentStatus?.state ?? null;
         preUpdateMediaId = currentStatus?.current_media_id ?? null;
+
+        // Compare-and-swap guard for skip: if the caller sends expected_media_id,
+        // reject the skip if the song has already changed (e.g. a second admin
+        // console clicked Skip 50ms later — same guard pattern as play/pause CAS).
+        if (expected_media_id && preUpdateMediaId && expected_media_id !== preUpdateMediaId) {
+          console.log(`[player-control] Skip CAS rejected: expected=${expected_media_id} actual=${preUpdateMediaId} — stale skip ignored`);
+          return new Response(JSON.stringify({ success: true, noop: true, reason: 'media_changed' }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
       }
 
       const updateData: Record<string, unknown> = {

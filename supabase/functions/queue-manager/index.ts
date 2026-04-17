@@ -1,6 +1,7 @@
 import { corsHeaders } from "../_shared/cors.ts";
 import { createServiceClient } from "../_shared/supabase-client.ts";
 import { validateUUID } from "../_shared/validation.ts";
+import { validateAuth, unauthorizedResponse } from "../_shared/auth.ts";
 
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 100;
@@ -16,6 +17,7 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
+  if (!validateAuth(req)) return unauthorizedResponse();
 
   try {
     const supabase = createServiceClient();
