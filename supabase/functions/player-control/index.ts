@@ -76,17 +76,19 @@ Deno.serve(async (req)=>{
     }
     // Handle reset priority player
     if (action === 'reset_priority') {
+      // Clear both pointer columns so the next player to call register_session
+      // can claim master without the stale session_id blocking it.
       const { error: resetError } = await supabase
         .from('players')
-        .update({ priority_player_id: null })
+        .update({ priority_player_id: null, priority_session_id: null })
         .eq('id', player_id);
 
       if (resetError) throw resetError;
 
-      console.log(`[player-control] Priority player reset for player ${player_id}`);
+      console.log(`[player-control] Priority player reset for player ${player_id} — next player to register becomes master`);
       return new Response(JSON.stringify({
         success: true,
-        message: 'Priority player reset'
+        message: 'Priority player reset — next player to load becomes master'
       }), {
         status: 200,
         headers: {

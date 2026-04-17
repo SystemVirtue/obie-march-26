@@ -93,6 +93,15 @@ function App() {
       setIsSlavePlayer(false);
       localStorage.setItem('obie_priority_player_id', PLAYER_ID);
     }, [PLAYER_ID]),
+    onPriorityLost: useCallback(() => {
+      // Admin clicked "Reset Priority Player" (or another session claimed master).
+      // Demote this player to slave immediately — stops queue progression and
+      // shows the SLAVE watermark. The new master will take over within one
+      // heartbeat cycle (≤ 30 s) without requiring a page reload on either end.
+      console.log('[App] Lost master — demoting to slave');
+      setIsSlavePlayer(true);
+      localStorage.removeItem('obie_priority_player_id');
+    }, []),
   });
 
   // ── Karaoke ────────────────────────────────────────────────────────────────

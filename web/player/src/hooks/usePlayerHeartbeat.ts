@@ -21,9 +21,11 @@ type UsePlayerHeartbeatArgs = {
   playerId: string;
   /** Called when a slave player successfully reclaims master after failover */
   onPriorityReclaimed?: () => void;
+  /** Called when the master player detects it has lost priority (e.g. after Reset Priority Player) */
+  onPriorityLost?: () => void;
 };
 
-export function usePlayerHeartbeat({ isSlavePlayer, playerId, onPriorityReclaimed }: UsePlayerHeartbeatArgs) {
+export function usePlayerHeartbeat({ isSlavePlayer, playerId, onPriorityReclaimed, onPriorityLost }: UsePlayerHeartbeatArgs) {
   const prevStateRef    = useRef<PlayerStatus['state'] | undefined>(undefined);
   const channelRef      = useRef<RealtimeChannel | null>(null);
   const isSlaveRef      = useRef(isSlavePlayer);
@@ -44,21 +46,51 @@ export function usePlayerHeartbeat({ isSlavePlayer, playerId, onPriorityReclaime
         return;
       }
 
-      // ── Priority auto-reclaim ─────────────────────────────────────────────
-      // Only attempt if we're currently a slave and no reclaim is in-flight.
-      // Migration 000003 clears priority_player_id when the master goes offline.
-      // We detect this by checking the players table after every heartbeat.
-      if (!isSlaveRef.current || reclaimInFlight.current) return;
-
+      // ── Priority check after every heartbeat ─────────────────────────────
+      // Read the DB once per heartbeat cycle.  Both the master self-demotion
+      // check and the slave reclaim check need the same row, so we fetch it
+      // once and branch on isSlaveRef.current below.
+      let priorityPlayerId: string | null = null;
+      let prioritySessionId: string | null = null;
       try {
         const { data: row } = await supabase
           .from('players')
-          .select('priority_player_id')
+          .select('priority_player_id, priority_session_id')
           .eq('id', playerId)
           .single();
+        priorityPlayerId  = (row as any)?.priority_player_id  ?? null;
+        prioritySessionId = (row as any)?.priority_session_id ?? null;
+      } catch (e) {
+        console.warn('[Player] Heartbeat DB check failed:', e);
+        return;
+      }
 
+      if (!isSlaveRef.current) {
+        // ── Master self-demotion ────────────────────────────────────────────
+        // The admin may have clicked "Reset Priority Player", which clears
+        // priority_player_id in the DB.  A new player will then claim master.
+        // We detect this here so the OLD master immediately stops driving the
+        // queue and shows the SLAVE watermark — no page reload needed.
+        const stillMaster =
+          priorityPlayerId === playerId &&
+          (prioritySessionId === sessionIdRef.current || prioritySessionId === null);
+
+        if (!stillMaster) {
+          console.log('[Player] Lost priority — demoting to slave');
+          onPriorityLost?.();
+        }
+        return;
+      }
+
+      // ── Slave auto-reclaim ────────────────────────────────────────────────
+      // Only attempt if we're currently a slave and no reclaim is in-flight.
+      // Migration 000003/000004 clears priority_player_id when the master goes
+      // offline; migration 000005 also clears it on an explicit reset.
+      if (reclaimInFlight.current) return;
+
+      try {
         // Master pointer cleared → try to claim it
-        if ((row as { priority_player_id: string | null } | null)?.priority_player_id !== null) return;
+        if (priorityPlayerId !== null) return;
 
         reclaimInFlight.current = true;
         console.log('[Player] Priority player gone — attempting reclaim...');
