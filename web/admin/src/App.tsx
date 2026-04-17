@@ -69,6 +69,9 @@ function App() {
   const [isSkipping,  setIsSkipping]  = useState(false);
   const isSkippingRef = useRef(false);
   useEffect(() => { isSkippingRef.current = isSkipping; }, [isSkipping]);
+  // Debounce guard: prevents two admin consoles (or a double-click) from
+  // sending conflicting play/pause writes within the same 400ms window.
+  const playPauseInFlightRef = useRef(false);
 
   const [players, setPlayers] = useState<Player[]>([]);
   const [kioskSessions, setKioskSessions] = useState<KioskSession[]>([]);
@@ -298,10 +301,36 @@ function App() {
   };
 
   const handlePlayPause = async () => {
+    // Guard 1: don't allow during a skip
+    if (isSkipping) return;
+    // Guard 2: debounce — block if a play/pause call is already in-flight.
+    // This absorbs double-clicks and near-simultaneous clicks from two open
+    // admin consoles. 400ms covers the Supabase Realtime round-trip so the
+    // second console's UI updates before it can fire a conflicting write.
+    if (playPauseInFlightRef.current) return;
+    // Guard 3: only valid from playing or paused — ignore clicks during
+    // loading/idle/error where toggling makes no sense.
+    const currentState = status?.state;
+    if (currentState !== 'playing' && currentState !== 'paused') return;
+
+    playPauseInFlightRef.current = true;
     try {
-      const newState = status?.state === 'playing' ? 'paused' : 'playing';
-      await callPlayerControl({ player_id: activePlayerId ?? PLAYER_ID, state: newState, action: 'update' });
-    } catch (e) { console.error(e); }
+      const newState = currentState === 'playing' ? 'paused' : 'playing';
+      await callPlayerControl({
+        player_id: activePlayerId ?? PLAYER_ID,
+        state: newState,
+        action: 'update',
+        // Compare-and-swap: server rejects the write if DB state has already
+        // changed (i.e. the other admin console got there first).
+        expected_state: currentState,
+      } as any);
+    } catch (e) {
+      console.error('[Admin] Play/pause failed:', e);
+    } finally {
+      // Hold the lock for 400ms — long enough for Realtime to deliver the
+      // state change to both consoles, preventing a toggle-loop.
+      setTimeout(() => { playPauseInFlightRef.current = false; }, 400);
+    }
   };
 
   const handleSkip = async () => {

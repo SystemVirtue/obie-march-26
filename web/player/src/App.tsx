@@ -82,7 +82,18 @@ function App() {
   });
 
   // ── Heartbeat / status reporting ───────────────────────────────────────────
-  const { reportStatus } = usePlayerHeartbeat({ isSlavePlayer, playerId: PLAYER_ID });
+  const { reportStatus } = usePlayerHeartbeat({
+    isSlavePlayer,
+    playerId: PLAYER_ID,
+    onPriorityReclaimed: useCallback(() => {
+      // Dead master's priority_player_id was cleared by DB failover trigger,
+      // and we've successfully reclaimed master. Flip slave flag so this player
+      // resumes driving queue progression immediately — no page reload needed.
+      console.log('[App] Reclaimed master — re-enabling queue progression');
+      setIsSlavePlayer(false);
+      localStorage.setItem('obie_priority_player_id', PLAYER_ID);
+    }, [PLAYER_ID]),
+  });
 
   // ── Karaoke ────────────────────────────────────────────────────────────────
   useKaraokeLyrics({

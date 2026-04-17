@@ -1,3 +1,16 @@
+/**
+ * usePlayerHeartbeat — keepalive + priority auto-reclaim
+ *
+ * Changes from original:
+ *   - After each heartbeat, slave players check whether priority_player_id
+ *     was just cleared by the DB failover trigger (dead master). If so,
+ *     they immediately attempt register_session to reclaim master.
+ *   - onPriorityReclaimed callback lets App.tsx flip isSlavePlayer→false
+ *     and re-enable queue progression without a page reload.
+ *   - Session ID is stable across heartbeat cycles (stored in a ref) so
+ *     register_session re-attempts are idempotent.
+ */
+
 import { useCallback, useEffect, useRef } from 'react';
 import { supabase, callPlayerControl, type PlayerStatus } from '@shared/supabase-client';
 import { HEARTBEAT_INTERVAL_MS } from '../../../shared/constants';
@@ -6,25 +19,73 @@ import type { RealtimeChannel } from '@supabase/supabase-js';
 type UsePlayerHeartbeatArgs = {
   isSlavePlayer: boolean;
   playerId: string;
+  /** Called when a slave player successfully reclaims master after failover */
+  onPriorityReclaimed?: () => void;
 };
 
-export function usePlayerHeartbeat({ isSlavePlayer, playerId }: UsePlayerHeartbeatArgs) {
-  const prevStateRef = useRef<PlayerStatus['state'] | undefined>(undefined);
-  const channelRef = useRef<RealtimeChannel | null>(null);
+export function usePlayerHeartbeat({ isSlavePlayer, playerId, onPriorityReclaimed }: UsePlayerHeartbeatArgs) {
+  const prevStateRef    = useRef<PlayerStatus['state'] | undefined>(undefined);
+  const channelRef      = useRef<RealtimeChannel | null>(null);
+  const isSlaveRef      = useRef(isSlavePlayer);
+  const sessionIdRef    = useRef<string>(crypto.randomUUID());
+  const reclaimInFlight = useRef(false);
 
-  // Send a heartbeat every 30 s so players.status stays 'online' and the admin
-  // Connected Devices panel can detect disconnects. Both priority and slave
-  // players heartbeat — the server-side player_heartbeat() handles multi-device.
+  // Keep isSlaveRef in sync so the heartbeat closure always sees current value
+  useEffect(() => { isSlaveRef.current = isSlavePlayer; }, [isSlavePlayer]);
+
   useEffect(() => {
     if (!playerId) return;
-    const send = () => callPlayerControl({ player_id: playerId, action: 'heartbeat' })
-      .catch(e => console.warn('[player] heartbeat failed', e));
+
+    const send = async () => {
+      try {
+        await callPlayerControl({ player_id: playerId, action: 'heartbeat' });
+      } catch (e) {
+        console.warn('[Player] Heartbeat failed:', e);
+        return;
+      }
+
+      // ── Priority auto-reclaim ─────────────────────────────────────────────
+      // Only attempt if we're currently a slave and no reclaim is in-flight.
+      // Migration 000003 clears priority_player_id when the master goes offline.
+      // We detect this by checking the players table after every heartbeat.
+      if (!isSlaveRef.current || reclaimInFlight.current) return;
+
+      try {
+        const { data: row } = await supabase
+          .from('players')
+          .select('priority_player_id')
+          .eq('id', playerId)
+          .single();
+
+        // Master pointer cleared → try to claim it
+        if ((row as { priority_player_id: string | null } | null)?.priority_player_id !== null) return;
+
+        reclaimInFlight.current = true;
+        console.log('[Player] Priority player gone — attempting reclaim...');
+
+        const result = await callPlayerControl({
+          player_id:  playerId,
+          action:     'register_session',
+          session_id: sessionIdRef.current,
+        });
+
+        if (result.is_priority) {
+          console.log('[Player] ✓ Reclaimed master after priority player died');
+          onPriorityReclaimed?.();
+        }
+      } catch (e) {
+        console.warn('[Player] Reclaim attempt failed:', e);
+      } finally {
+        reclaimInFlight.current = false;
+      }
+    };
+
     send(); // immediate on mount
     const id = setInterval(send, HEARTBEAT_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [playerId]);
+  }, [playerId, onPriorityReclaimed]);
 
-  // Establish a broadcast channel for sending live progress without DB writes.
+  // Broadcast channel for live progress reports (priority players only)
   useEffect(() => {
     if (isSlavePlayer) return;
 
@@ -48,7 +109,7 @@ export function usePlayerHeartbeat({ isSlavePlayer, playerId }: UsePlayerHeartbe
     const isProgressOnly = state === prevStateRef.current && progress !== undefined;
 
     if (isProgressOnly && channelRef.current) {
-      // Pure progress heartbeat — broadcast without hitting the DB or WAL.
+      // Pure progress update — broadcast without a DB write
       channelRef.current.send({
         type: 'broadcast',
         event: 'progress',
@@ -57,7 +118,7 @@ export function usePlayerHeartbeat({ isSlavePlayer, playerId }: UsePlayerHeartbe
       return;
     }
 
-    // State change — write to DB so it persists and admin commands are visible.
+    // State change — write to DB
     console.log('[Player] Reporting status:', { state, progress });
     prevStateRef.current = state;
     try {

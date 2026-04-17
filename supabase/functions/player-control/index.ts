@@ -14,7 +14,7 @@ Deno.serve(async (req)=>{
     const supabase = createServiceClient();
     // Parse request body
     const body = await req.json();
-    const { player_id, state, progress, action = 'update', session_id, stored_player_id, current_media_id } = body;
+    const { player_id, state, progress, action = 'update', session_id, stored_player_id, current_media_id, expected_state } = body;
     if (!player_id) {
       return new Response(JSON.stringify({
         error: 'player_id is required'
@@ -168,6 +168,27 @@ Deno.serve(async (req)=>{
 
     // Handle status update
     if (action === 'update' || action === 'ended' || action === 'skip') {
+      // ── Compare-and-swap guard for play/pause ────────────────────────────
+      // If the caller sends expected_state, verify the DB still matches before
+      // writing. This prevents two admin consoles racing — the second console's
+      // stale click arrives with expected_state='playing' but the DB already
+      // says 'paused' (first console won), so we return a no-op instead of
+      // toggling back.
+      if (action === 'update' && expected_state !== undefined) {
+        const { data: currentStatus } = await supabase
+          .from('player_status')
+          .select('state')
+          .eq('player_id', player_id)
+          .single();
+
+        if (currentStatus?.state !== expected_state) {
+          console.log(`[player-control] CAS rejected: expected=${expected_state} actual=${currentStatus?.state} — stale admin click ignored`);
+          return new Response(JSON.stringify({ success: true, noop: true, reason: 'cas_mismatch' }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+      }
       // For skip: capture current player state AND current_media_id BEFORE updating,
       // so we can decide whether the player needs to fade out or whether it's already
       // idle, and so the server-side advance can pass an idempotency key to queue_next.
