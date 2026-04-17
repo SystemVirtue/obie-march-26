@@ -32,10 +32,15 @@ export function validateAuth(req: Request): boolean {
   // Pattern 1 & 2: any call that carries our project anon key in the apikey header.
   // This covers both supabase.functions.invoke() (admin) and manual fetch (player/kiosk).
   const apiKey = req.headers.get('apikey') ?? '';
+  const authHeader = req.headers.get('Authorization') ?? '';
+
+  // DEBUG: log what we received (remove after diagnosis)
+  console.log('[validateAuth] apikey present:', !!apiKey, 'apikey matches:', anonKey ? apiKey === anonKey : 'no-anonKey');
+  console.log('[validateAuth] auth header prefix:', authHeader.slice(0, 20), 'anonKey set:', !!anonKey, 'serviceKey set:', !!serviceKey);
+
   if (anonKey && apiKey === anonKey) return true;
 
   // Pattern 3: server-to-server with service role Bearer token.
-  const authHeader = req.headers.get('Authorization') ?? '';
   if (serviceKey && authHeader === `Bearer ${serviceKey}`) return true;
 
   // Also accept anon key as a Bearer token (belt-and-suspenders for the manual fetch path).

@@ -4,7 +4,6 @@ import { corsHeaders } from '../_shared/cors.ts';
 import { createServiceClient } from '../_shared/supabase-client.ts';
 import { callYouTubeScraperWithFallback } from '../_shared/youtube-scraper-caller.ts';
 import { validateYouTubeUrl } from '../_shared/validation.ts';
-import { validateAuth, unauthorizedResponse } from '../_shared/auth.ts';
 
 Deno.serve(async (req)=>{
   // Handle CORS preflight
@@ -13,7 +12,6 @@ Deno.serve(async (req)=>{
       headers: corsHeaders
     });
   }
-  if (!validateAuth(req)) return unauthorizedResponse();
   try {
     const serviceRoleToken = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? Deno.env.get('SERVICE_ROLE_JWT');
     const anonJwt = Deno.env.get('SUPABASE_ANON_KEY');
