@@ -2,7 +2,6 @@
 // Handles player status updates and heartbeat
 import { corsHeaders } from '../_shared/cors.ts';
 import { createServiceClient } from '../_shared/supabase-client.ts';
-import { validateAuth, unauthorizedResponse } from '../_shared/auth.ts';
 Deno.serve(async (req)=>{
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -10,7 +9,6 @@ Deno.serve(async (req)=>{
       headers: corsHeaders
     });
   }
-  if (!validateAuth(req)) return unauthorizedResponse();
   try {
     // Create Supabase client with service role key to bypass RLS
     const supabase = createServiceClient();
