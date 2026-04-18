@@ -5,6 +5,17 @@ import { createServiceClient } from '../_shared/supabase-client.ts';
 import { callYouTubeScraperWithFallback } from '../_shared/youtube-scraper-caller.ts';
 import { validateYouTubeUrl } from '../_shared/validation.ts';
 
+// Helper: Extract error message from unknown error type
+function getErrorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === 'string') return err;
+  if (err && typeof err === 'object' && 'message' in err) {
+    const msg = (err as any).message;
+    return typeof msg === 'string' ? msg : String(err);
+  }
+  return String(err);
+}
+
 Deno.serve(async (req)=>{
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -134,7 +145,7 @@ Deno.serve(async (req)=>{
       } catch (err) {
         console.error('Kiosk handler search error:', err);
         return new Response(JSON.stringify({
-          error: err.message
+          error: getErrorMessage(err)
         }), {
           status: 500,
           headers: {
@@ -222,7 +233,8 @@ Deno.serve(async (req)=>{
               payload: {
                 reason: 'Invalid video data from YouTube scraper',
                 video
-              }
+              },
+              source: 'edge'
             });
             return new Response(JSON.stringify({
               error: 'Invalid video data from YouTube scraper.',
@@ -259,7 +271,8 @@ Deno.serve(async (req)=>{
                 error: mediaError,
                 video,
                 sourceId
-              }
+              },
+              source: 'edge'
             });
             return new Response(JSON.stringify({
               error: 'Failed to create media item',
@@ -275,7 +288,7 @@ Deno.serve(async (req)=>{
         } catch (scrapeError) {
           console.error('Scraping error:', scrapeError);
           return new Response(JSON.stringify({
-            error: 'Failed to process video URL'
+            error: getErrorMessage(scrapeError)
           }), {
             status: 500,
             headers: {
@@ -346,7 +359,8 @@ Deno.serve(async (req)=>{
             queue_id: queueId,
             title: mediaItem?.title || 'Unknown',
             artist: mediaItem?.artist || 'Unknown'
-          }
+          },
+          source: 'edge'
         });
 
         return new Response(JSON.stringify({
@@ -361,7 +375,7 @@ Deno.serve(async (req)=>{
       } catch (err) {
         console.error('Kiosk handler request error:', err);
         return new Response(JSON.stringify({
-          error: err.message
+          error: getErrorMessage(err)
         }), {
           status: 500,
           headers: {
@@ -460,7 +474,7 @@ Deno.serve(async (req)=>{
       } catch (err) {
         console.error('Check action error:', err);
         return new Response(JSON.stringify({
-          error: err.message
+          error: getErrorMessage(err)
         }), {
           status: 500,
           headers: {
@@ -520,7 +534,7 @@ Deno.serve(async (req)=>{
         });
       } catch (err) {
         console.error('R2 search error:', err);
-        return new Response(JSON.stringify({ error: err.message }), {
+        return new Response(JSON.stringify({ error: getErrorMessage(err) }), {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
@@ -614,6 +628,7 @@ Deno.serve(async (req)=>{
             title: r2File.title || r2File.file_name,
             artist: r2File.artist || null,
           },
+          source: 'edge'
         });
 
         return new Response(JSON.stringify({ queue_id: queueId }), {
@@ -622,7 +637,7 @@ Deno.serve(async (req)=>{
         });
       } catch (err) {
         console.error('R2 request error:', err);
-        return new Response(JSON.stringify({ error: err.message }), {
+        return new Response(JSON.stringify({ error: getErrorMessage(err) }), {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
@@ -795,7 +810,8 @@ Deno.serve(async (req)=>{
             player_id,
             event: 'admin_request',
             severity: 'info',
-            payload: { media_item_id: mediaItemId, queue_id: queueId, source: r2_file_id ? 'r2' : 'youtube' },
+            payload: { media_item_id: mediaItemId, queue_id: queueId, source_type: r2_file_id ? 'r2' : 'youtube' },
+            source: 'edge'
           });
         }
 
@@ -805,7 +821,7 @@ Deno.serve(async (req)=>{
         });
       } catch (err) {
         console.error('admin_request error:', err);
-        return new Response(JSON.stringify({ error: err.message }), {
+        return new Response(JSON.stringify({ error: getErrorMessage(err) }), {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
@@ -869,7 +885,7 @@ Deno.serve(async (req)=>{
       } catch (err) {
         console.error('Credit action error:', err);
         return new Response(JSON.stringify({
-          error: err.message
+          error: getErrorMessage(err)
         }), {
           status: 500,
           headers: {
@@ -891,7 +907,7 @@ Deno.serve(async (req)=>{
   } catch (error) {
     console.error('Kiosk handler error:', error);
     return new Response(JSON.stringify({
-      error: error.message
+      error: getErrorMessage(error)
     }), {
       status: 500,
       headers: {

@@ -1,6 +1,11 @@
 import { corsHeaders } from "../_shared/cors.ts";
 import { createServiceClient } from "../_shared/supabase-client.ts";
 import { validateUUID } from "../_shared/validation.ts";
+<<<<<<< HEAD
+=======
+import { logEdgeError } from "../_shared/error-logger.ts";
+
+>>>>>>> development
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 100;
 
@@ -158,6 +163,21 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     console.error("Queue manager error:", error);
+    
+    // Log error persistently to system_logs
+    try {
+      const supabase = createServiceClient();
+      await logEdgeError(supabase, error as Error | string, {
+        location: 'queue-manager:main',
+        player_id: (error as any)?.player_id || undefined,
+        details: {
+          action: 'queue_operation'
+        }
+      });
+    } catch (logErr) {
+      console.error('Failed to log queue-manager error:', logErr);
+    }
+    
     return new Response(
       JSON.stringify({ error: (error as Error)?.message ?? String(error) }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
