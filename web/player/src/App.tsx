@@ -74,6 +74,11 @@ function App() {
   const containerRef   = useRef<HTMLDivElement>(null);
   const hasInitRef     = useRef(false);
   const autoRadioRef   = useRef(false);
+  // Stable session ID for this browser tab — generated once on mount, shared
+  // between register_session (init) and usePlayerHeartbeat (self-demotion check).
+  // Previously each generated its own UUID, causing a mismatch that made the
+  // heartbeat demote master to slave after the first cycle (~30 s).
+  const sessionIdRef   = useRef<string>(crypto.randomUUID());
 
   // ── Fade ───────────────────────────────────────────────────────────────────
   const { fadeOut, fadeIn, snapSilent } = useFade({
@@ -85,6 +90,7 @@ function App() {
   const { reportStatus } = usePlayerHeartbeat({
     isSlavePlayer,
     playerId: PLAYER_ID,
+    sessionId: sessionIdRef.current,
     onPriorityReclaimed: useCallback(() => {
       // Dead master's priority_player_id was cleared by DB failover trigger,
       // and we've successfully reclaimed master. Flip slave flag so this player
@@ -228,13 +234,12 @@ function App() {
       try {
         await initializePlayerPlaylist(PLAYER_ID);
 
-        const sessionId      = crypto.randomUUID();
         const storedPlayerId = localStorage.getItem('obie_priority_player_id');
 
         const result = await callPlayerControl({
           player_id:        PLAYER_ID,
           action:           'register_session',
-          session_id:       sessionId,
+          session_id:       sessionIdRef.current,  // same UUID used by heartbeat
           stored_player_id: storedPlayerId ?? undefined,
         });
 

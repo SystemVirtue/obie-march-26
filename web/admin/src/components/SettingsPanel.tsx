@@ -69,9 +69,23 @@ export function SettingsPanel({ view, settings, prefs, playerId }: { view: ViewI
     try { await updateAllCredits(playerId, 'clear'); setCredits(0); }
     catch (e) { console.error(e); } finally { setCreditsLoading(false); }
   };
-  const handleResetPriorityPlayer = async () => {
-    try { await callPlayerControl({ player_id: playerId, action: 'reset_priority' }); }
-    catch (e) { console.error(e); }
+  const [priorityResetState, setPriorityResetState] = useState<'idle' | 'confirm' | 'done' | 'error'>('idle');
+
+  const handleResetPriorityPlayer = () => {
+    setPriorityResetState('confirm');
+  };
+
+  const handleResetPriorityConfirm = async () => {
+    setPriorityResetState('idle');
+    try {
+      await callPlayerControl({ player_id: playerId, action: 'reset_priority' });
+      setPriorityResetState('done');
+      setTimeout(() => setPriorityResetState('idle'), 4000);
+    } catch (e) {
+      console.error(e);
+      setPriorityResetState('error');
+      setTimeout(() => setPriorityResetState('idle'), 3000);
+    }
   };
 
   const handleScanLocalMedia = async () => {
@@ -258,10 +272,59 @@ export function SettingsPanel({ view, settings, prefs, playerId }: { view: ViewI
           )}
 
           {/* Priority player reset */}
-          <div style={{ marginTop: 16, padding: 18, borderRadius: 14, background: 'rgba(255,255,255,0.025)', border: '1px solid var(--border)' }}>
+          <div style={{ marginTop: 16, padding: 18, borderRadius: 14, background: 'rgba(255,255,255,0.025)', border: '1px solid var(--border)', position: 'relative' }}>
             <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, color: '#fff', marginBottom: 6 }}>Priority Player</div>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)', marginBottom: 12 }}>Clears priority designation. The next player to initialise will claim it.</div>
-            <Btn variant="ghost" onClick={handleResetPriorityPlayer}>🔄 Reset Priority Player</Btn>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)', marginBottom: 12 }}>
+              Clears the current master designation. The next Player endpoint to refresh or connect will assume MASTER status.
+            </div>
+
+            <Btn variant="ghost" onClick={handleResetPriorityPlayer} disabled={priorityResetState !== 'idle'}>
+              🔄 Reset Priority Player
+            </Btn>
+
+            {/* Confirmation popover */}
+            {priorityResetState === 'confirm' && (
+              <div style={{
+                position: 'absolute', bottom: 'calc(100% + 8px)', left: 0, right: 0,
+                background: '#1a1a2e', border: '1px solid rgba(245,158,11,0.5)',
+                borderRadius: 12, padding: '16px 18px', zIndex: 100,
+                boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+              }}>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: 13, color: '#f59e0b', fontWeight: 600, marginBottom: 8 }}>
+                  Reset Priority Player?
+                </div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'rgba(255,255,255,0.7)', marginBottom: 14, lineHeight: 1.5 }}>
+                  The next PLAYER to refresh / connect will assume MASTER status.
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button onClick={handleResetPriorityConfirm} style={{
+                    flex: 1, padding: '8px 0', borderRadius: 8, border: 'none',
+                    background: '#f59e0b', color: '#000', fontFamily: 'var(--font-mono)',
+                    fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                  }}>OK</button>
+                  <button onClick={() => setPriorityResetState('idle')} style={{
+                    flex: 1, padding: '8px 0', borderRadius: 8,
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    background: 'transparent', color: 'rgba(255,255,255,0.6)',
+                    fontFamily: 'var(--font-mono)', fontSize: 12, cursor: 'pointer',
+                  }}>Cancel</button>
+                </div>
+              </div>
+            )}
+
+            {/* Success banner */}
+            {priorityResetState === 'done' && (
+              <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', fontFamily: 'var(--font-mono)', fontSize: 11, color: '#4ade80' }}>
+                ✓ Priority cleared — the next Player to connect will assume MASTER status.
+              </div>
+            )}
+
+            {/* Error banner */}
+            {priorityResetState === 'error' && (
+              <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', fontFamily: 'var(--font-mono)', fontSize: 11, color: '#f87171' }}>
+                ✗ Reset failed — check console for details.
+              </div>
+            )}
           </div>
         </div>
       </div>
