@@ -163,17 +163,30 @@ Deno.serve(async (req)=>{
     }
     // Handle reset priority player
     if (action === 'reset_priority') {
-      const { error: resetError } = await supabase
+      // Get player jukebox_id for scoped reset
+      const { data: playerData, error: playerError } = await supabase
         .from('players')
-        .update({ priority_player_id: null, priority_session_id: null })
-        .eq('id', player_id);
+        .select('jukebox_id')
+        .eq('id', player_id)
+        .single();
+
+      if (playerError || !playerData?.jukebox_id) {
+        throw new Error('Could not find player jukebox_id');
+      }
+
+      // Call function to reset priority with flag
+      const { data: resetResult, error: resetError } = await supabase
+        .rpc('admin_reset_priority_player', {
+          p_jukebox_id: playerData.jukebox_id
+        });
 
       if (resetError) throw resetError;
 
-      console.log(`[player-control] Priority player reset for player ${player_id}`);
+      console.log(`[player-control] Priority player reset for jukebox ${playerData.jukebox_id}. Results:`, resetResult);
       return new Response(JSON.stringify({
         success: true,
-        message: 'Priority player reset'
+        message: 'Priority player reset - reassignment blocked until flag cleared',
+        reset_flag_active: true
       }), {
         status: 200,
         headers: {

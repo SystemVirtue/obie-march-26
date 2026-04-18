@@ -64,16 +64,22 @@ DECLARE
   v_priority_id      UUID;
   v_priority_session TEXT;
   v_other_playing    BOOLEAN;
+  v_reset_flag       BOOLEAN;
 BEGIN
   -- Serialise all priority elections for this player.  Two tabs opening
   -- simultaneously will queue here; exactly one will claim master.
   PERFORM pg_advisory_xact_lock(hashtext(p_player_id::text));
 
-  SELECT priority_player_id, priority_session_id
-  INTO   v_priority_id, v_priority_session
+  SELECT priority_player_id, priority_session_id, reset_priority_player
+  INTO   v_priority_id, v_priority_session, v_reset_flag
   FROM   players
   WHERE  id = p_player_id
   FOR UPDATE;
+
+  -- If reset flag is TRUE, prevent any reassignment
+  IF v_reset_flag THEN
+    RETURN FALSE;
+  END IF;
 
   -- This session is already master — idempotent re-claim (e.g. heartbeat retry).
   IF v_priority_id = p_player_id AND v_priority_session = p_session_id THEN
@@ -112,7 +118,8 @@ BEGIN
   -- Grant master to this player + session.
   UPDATE players
   SET    priority_player_id  = p_player_id,
-         priority_session_id = p_session_id
+         priority_session_id = p_session_id,
+         reset_priority_player = FALSE  -- Clear reset flag when priority is assigned
   WHERE  id = p_player_id;
 
   RETURN TRUE;
