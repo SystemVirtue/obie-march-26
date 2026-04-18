@@ -5,17 +5,6 @@ import { createServiceClient } from '../_shared/supabase-client.ts';
 import { callYouTubeScraperWithFallback } from '../_shared/youtube-scraper-caller.ts';
 import { validateYouTubeUrl } from '../_shared/validation.ts';
 
-// Helper: Extract error message from unknown error type
-function getErrorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  if (typeof err === 'string') return err;
-  if (err && typeof err === 'object' && 'message' in err) {
-    const msg = (err as any).message;
-    return typeof msg === 'string' ? msg : String(err);
-  }
-  return String(err);
-}
-
 Deno.serve(async (req)=>{
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -78,19 +67,51 @@ Deno.serve(async (req)=>{
         });
       }
 
-      // Atomic session resume + orphan credit rollup via DB function.
-      // kiosk_init_session() locks all session rows for this player in a single
-      // FOR UPDATE query, preventing the lost-update race where a concurrent
-      // coin insertion could be overwritten by the rollup computation.
-      const { data: resumedSession, error: initErr } = await supabase.rpc('kiosk_init_session', {
-        p_player_id: player.id,
-      });
+      // Try to resume the most recent session for this player
+      const { data: existingSessions, error: fetchErr } = await supabase
+        .from('kiosk_sessions')
+        .select('*')
+        .eq('player_id', player.id)
+        .order('last_active', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false });
 
-      if (initErr) throw initErr;
+      if (!fetchErr && existingSessions && existingSessions.length > 0) {
+        const resumeSession = existingSessions[0];
 
-      if (resumedSession) {
-        console.log('Resumed session:', resumedSession.session_id, 'credits:', resumedSession.credits);
-        return new Response(JSON.stringify({ session: resumedSession }), {
+        // Roll credits from orphaned sessions into the resumed one
+        let rolledCredits = 0;
+        const orphanIds: string[] = [];
+        for (let i = 1; i < existingSessions.length; i++) {
+          rolledCredits += existingSessions[i].credits || 0;
+          orphanIds.push(existingSessions[i].session_id);
+        }
+
+        if (rolledCredits > 0) {
+          await supabase
+            .from('kiosk_sessions')
+            .update({ credits: (resumeSession.credits || 0) + rolledCredits, last_active: new Date().toISOString() })
+            .eq('session_id', resumeSession.session_id);
+          resumeSession.credits = (resumeSession.credits || 0) + rolledCredits;
+          console.log(`Rolled ${rolledCredits} credits from ${orphanIds.length} orphaned session(s)`);
+        } else {
+          await supabase
+            .from('kiosk_sessions')
+            .update({ last_active: new Date().toISOString() })
+            .eq('session_id', resumeSession.session_id);
+        }
+        resumeSession.last_active = new Date().toISOString();
+
+        // Clean up orphaned sessions
+        if (orphanIds.length > 0) {
+          await supabase
+            .from('kiosk_sessions')
+            .delete()
+            .in('session_id', orphanIds);
+          console.log(`Deleted ${orphanIds.length} orphaned session(s)`);
+        }
+
+        console.log('Resumed session:', resumeSession.session_id, 'credits:', resumeSession.credits);
+        return new Response(JSON.stringify({ session: resumeSession }), {
           status: 200,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
@@ -145,7 +166,7 @@ Deno.serve(async (req)=>{
       } catch (err) {
         console.error('Kiosk handler search error:', err);
         return new Response(JSON.stringify({
-          error: getErrorMessage(err)
+          error: err.message
         }), {
           status: 500,
           headers: {
@@ -157,7 +178,7 @@ Deno.serve(async (req)=>{
     }
     // Handle atomic request enqueue: deduct credits (unless freeplay) and enqueue as priority
     if (action === 'request') {
-      const { session_id, url, player_id, media_item_id, idempotency_key } = body;
+      const { session_id, url, player_id, media_item_id } = body;
       if (!session_id || (!url && !media_item_id)) {
         return new Response(JSON.stringify({
           error: 'session_id and either url or media_item_id are required for request action'
@@ -233,8 +254,7 @@ Deno.serve(async (req)=>{
               payload: {
                 reason: 'Invalid video data from YouTube scraper',
                 video
-              },
-              source: 'edge'
+              }
             });
             return new Response(JSON.stringify({
               error: 'Invalid video data from YouTube scraper.',
@@ -271,8 +291,7 @@ Deno.serve(async (req)=>{
                 error: mediaError,
                 video,
                 sourceId
-              },
-              source: 'edge'
+              }
             });
             return new Response(JSON.stringify({
               error: 'Failed to create media item',
@@ -288,7 +307,7 @@ Deno.serve(async (req)=>{
         } catch (scrapeError) {
           console.error('Scraping error:', scrapeError);
           return new Response(JSON.stringify({
-            error: getErrorMessage(scrapeError)
+            error: 'Failed to process video URL'
           }), {
             status: 500,
             headers: {
@@ -312,14 +331,10 @@ Deno.serve(async (req)=>{
       }
 
       try {
-        // Call DB RPC which performs an atomic debit-and-enqueue.
-        // p_idempotency_key ensures that a network retry of the same request
-        // returns the existing queue_id rather than inserting a duplicate entry
-        // and deducting credits a second time.
+        // Call DB RPC which performs an atomic debit-and-enqueue
         const { data: queueId, error: rpcError } = await supabase.rpc('kiosk_request_enqueue', {
-          p_session_id:      session_id,
-          p_media_item_id:   mediaItemId,
-          p_idempotency_key: idempotency_key ?? null,
+          p_session_id: session_id,
+          p_media_item_id: mediaItemId
         });
         if (rpcError) {
           console.error('kiosk_request_enqueue error:', rpcError);
@@ -359,8 +374,7 @@ Deno.serve(async (req)=>{
             queue_id: queueId,
             title: mediaItem?.title || 'Unknown',
             artist: mediaItem?.artist || 'Unknown'
-          },
-          source: 'edge'
+          }
         });
 
         return new Response(JSON.stringify({
@@ -375,7 +389,7 @@ Deno.serve(async (req)=>{
       } catch (err) {
         console.error('Kiosk handler request error:', err);
         return new Response(JSON.stringify({
-          error: getErrorMessage(err)
+          error: err.message
         }), {
           status: 500,
           headers: {
@@ -474,7 +488,7 @@ Deno.serve(async (req)=>{
       } catch (err) {
         console.error('Check action error:', err);
         return new Response(JSON.stringify({
-          error: getErrorMessage(err)
+          error: err.message
         }), {
           status: 500,
           headers: {
@@ -534,7 +548,7 @@ Deno.serve(async (req)=>{
         });
       } catch (err) {
         console.error('R2 search error:', err);
-        return new Response(JSON.stringify({ error: getErrorMessage(err) }), {
+        return new Response(JSON.stringify({ error: err.message }), {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
@@ -628,7 +642,6 @@ Deno.serve(async (req)=>{
             title: r2File.title || r2File.file_name,
             artist: r2File.artist || null,
           },
-          source: 'edge'
         });
 
         return new Response(JSON.stringify({ queue_id: queueId }), {
@@ -637,7 +650,7 @@ Deno.serve(async (req)=>{
         });
       } catch (err) {
         console.error('R2 request error:', err);
-        return new Response(JSON.stringify({ error: getErrorMessage(err) }), {
+        return new Response(JSON.stringify({ error: err.message }), {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
@@ -810,8 +823,7 @@ Deno.serve(async (req)=>{
             player_id,
             event: 'admin_request',
             severity: 'info',
-            payload: { media_item_id: mediaItemId, queue_id: queueId, source_type: r2_file_id ? 'r2' : 'youtube' },
-            source: 'edge'
+            payload: { media_item_id: mediaItemId, queue_id: queueId, source: r2_file_id ? 'r2' : 'youtube' },
           });
         }
 
@@ -821,7 +833,7 @@ Deno.serve(async (req)=>{
         });
       } catch (err) {
         console.error('admin_request error:', err);
-        return new Response(JSON.stringify({ error: getErrorMessage(err) }), {
+        return new Response(JSON.stringify({ error: err.message }), {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
@@ -885,7 +897,7 @@ Deno.serve(async (req)=>{
       } catch (err) {
         console.error('Credit action error:', err);
         return new Response(JSON.stringify({
-          error: getErrorMessage(err)
+          error: err.message
         }), {
           status: 500,
           headers: {
@@ -907,7 +919,7 @@ Deno.serve(async (req)=>{
   } catch (error) {
     console.error('Kiosk handler error:', error);
     return new Response(JSON.stringify({
-      error: getErrorMessage(error)
+      error: error.message
     }), {
       status: 500,
       headers: {

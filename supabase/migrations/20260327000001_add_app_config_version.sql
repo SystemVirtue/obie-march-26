@@ -14,22 +14,14 @@ VALUES ('app_version', TO_CHAR(NOW(), 'YYYYMMDDHH24MISS'), NOW())
 ON CONFLICT (key) DO NOTHING;
 
 -- Enable Realtime on app_config so frontends get instant push notifications
-DO $$
-BEGIN
-  ALTER PUBLICATION supabase_realtime ADD TABLE app_config;
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $$;
+ALTER PUBLICATION supabase_realtime ADD TABLE app_config;
 
 -- RLS: anyone can read, only service_role can write
 ALTER TABLE app_config ENABLE ROW LEVEL SECURITY;
 
-DO $$
-BEGIN
-  CREATE POLICY "Anyone can read app_config"
-    ON app_config FOR SELECT
-    USING (true);
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $$;
+CREATE POLICY "Anyone can read app_config"
+  ON app_config FOR SELECT
+  USING (true);
 
 -- Helper function to bump the version (call after deploy)
 CREATE OR REPLACE FUNCTION bump_app_version()

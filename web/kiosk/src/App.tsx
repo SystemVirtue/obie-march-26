@@ -103,10 +103,6 @@ function App() {
       if (!selectedResult || !session || isConfirming) return;
 
       setIsConfirming(true);
-      // Generate idempotency key once per user action.  If the network times out
-      // and the UI retries, the same key is reused so the server deduplicates
-      // rather than inserting the same song twice and deducting credits again.
-      const idempotencyKey = crypto.randomUUID();
       try {
         let res: any;
         if (selectedResult.source === 'cloudflare') {
@@ -118,8 +114,8 @@ function App() {
             player_id: PLAYER_ID,
           });
         } else {
-          // YouTube video — pass idempotency_key so server can deduplicate retries.
-          res = await callKioskHandler({ session_id: session.session_id, action: 'request', url: selectedResult.url, player_id: PLAYER_ID, idempotency_key: idempotencyKey } as any);
+          // YouTube video — use existing request action
+          res = await callKioskHandler({ session_id: session.session_id, action: 'request', url: selectedResult.url, player_id: PLAYER_ID });
         }
         if (res?.error) {
           alert('Failed to add to priority queue: ' + (res.error.message || res.error));

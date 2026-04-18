@@ -45,13 +45,11 @@ BEGIN
   -- This runs from the live player's heartbeat so any surviving player will
   -- trigger it within 30 seconds of the master dying.
   -- Guard: only act when WE are not the priority player (avoids self-clearing).
-  -- ALSO GUARD: Do NOT reassign if reset_priority_player flag is TRUE (admin reset in progress)
   UPDATE players AS p
   SET priority_player_id = NULL
   WHERE p.id                    = p_player_id        -- acting from our own player row
     AND p.priority_player_id   IS NOT NULL            -- a priority player is set
     AND p.priority_player_id   != p_player_id         -- and it's not us
-    AND p.reset_priority_player = FALSE               -- and reset flag is not active
     AND EXISTS (
       SELECT 1 FROM players dead
       WHERE dead.id     = p.priority_player_id

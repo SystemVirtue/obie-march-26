@@ -2,7 +2,6 @@ import { useState, useRef, useCallback } from 'react';
 import {
   supabase,
   callPlaylistManager,
-  loadPlaylist,
   callYouTubeScraper,
 } from '@shared/supabase-client';
 import { PREDEFINED_PLAYLISTS } from '../types';
@@ -221,71 +220,16 @@ export function ScriptsPanel({ playerId }: { playerId: string }) {
   };
 
   const runRefreshJukebox = async (_: string, log: (e: ScriptLog) => void) => {
-    // ── Step 1: Read current player state so we can resume from the right position ──
-    log({ ts: now(), text: 'Reading current player state…', level: 'info' });
+    log({ ts: now(), text: 'Resetting player status to idle…', level: 'info' });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: currentStatus, error: statusReadErr } = await (supabase as any)
-      .from('player_status')
-      .select('state, now_playing_index, current_media_id')
-      .eq('player_id', playerId)
-      .maybeSingle();
-    if (statusReadErr) log({ ts: now(), text: `Warning reading status: ${statusReadErr.message}`, level: 'err' });
-    const resumeIndex: number = Math.max(0, (currentStatus?.now_playing_index ?? 0));
-    log({ ts: now(), text: `  Current state: ${currentStatus?.state ?? 'unknown'}, resuming from playlist index ${resumeIndex}`, level: 'info' });
+    const { error: statusErr } = await (supabase as any).from('player_status').update({
+      state: 'idle',
+      progress: 0,
+      last_updated: new Date().toISOString(),
+    }).eq('player_id', playerId);
+    if (statusErr) log({ ts: now(), text: `Warning: ${statusErr.message}`, level: 'err' });
+    else log({ ts: now(), text: '✓ Player status reset to idle', level: 'ok' });
 
-    // ── Step 2: Read the active playlist for this player ──
-    log({ ts: now(), text: 'Looking up active playlist…', level: 'info' });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: playerRow, error: playerErr } = await (supabase as any)
-      .from('players')
-      .select('active_playlist_id')
-      .eq('id', playerId)
-      .maybeSingle();
-    if (playerErr) log({ ts: now(), text: `Warning reading player: ${playerErr.message}`, level: 'err' });
-    const activePlaylistId: string | null = playerRow?.active_playlist_id ?? null;
-    if (!activePlaylistId) {
-      log({ ts: now(), text: '✗ No active playlist found — cannot reload queue', level: 'err' });
-    } else {
-      log({ ts: now(), text: `  Active playlist: ${activePlaylistId}`, level: 'info' });
-    }
-
-    // ── Step 3: Clear the entire queue (normal + priority) so nothing stale remains ──
-    log({ ts: now(), text: 'Clearing existing queue…', level: 'info' });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: clearErr } = await (supabase as any)
-      .from('queue')
-      .delete()
-      .eq('player_id', playerId);
-    if (clearErr) log({ ts: now(), text: `Warning clearing queue: ${clearErr.message}`, level: 'err' });
-    else log({ ts: now(), text: '✓ Queue cleared', level: 'ok' });
-
-    // ── Step 4: Reload active playlist into the queue from the previous position ──
-    if (activePlaylistId) {
-      log({ ts: now(), text: `Reloading playlist from index ${resumeIndex}…`, level: 'info' });
-      try {
-        await loadPlaylist(playerId, activePlaylistId, resumeIndex);
-        log({ ts: now(), text: '✓ Playlist reloaded into queue', level: 'ok' });
-      } catch (e: unknown) {
-        log({ ts: now(), text: `✗ Playlist reload failed: ${e instanceof Error ? e.message : String(e)}`, level: 'err' });
-      }
-    }
-
-    // ── Step 5: Force-advance to first queue item (starts playback) ──
-    log({ ts: now(), text: 'Advancing to first queue item to force-play…', level: 'info' });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: nextItem, error: nextErr } = await (supabase as any).rpc('queue_next', {
-      p_player_id: playerId,
-      p_expected_media_id: null,
-    });
-    if (nextErr) {
-      log({ ts: now(), text: `Note: queue_next: ${nextErr.message}`, level: 'info' });
-    } else if (nextItem && nextItem.length > 0) {
-      log({ ts: now(), text: `✓ Now loading: ${nextItem[0].title ?? '(unknown)'}`, level: 'ok' });
-    } else {
-      log({ ts: now(), text: 'Note: queue was empty after reload — player will idle', level: 'info' });
-    }
-
-    // ── Step 6: Reset ancillary state ──
     log({ ts: now(), text: 'Resetting coin acceptor connection flag…', level: 'info' });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error: coinErr } = await (supabase as any).from('player_settings').update({
@@ -293,7 +237,15 @@ export function ScriptsPanel({ playerId }: { playerId: string }) {
       kiosk_coin_acceptor_device_id: null,
     }).eq('player_id', playerId);
     if (coinErr) log({ ts: now(), text: `Warning: ${coinErr.message}`, level: 'err' });
-    else log({ ts: now(), text: '✓ Coin acceptor reset', level: 'ok' });
+    else log({ ts: now(), text: '✓ Coin acceptor connection reset', level: 'ok' });
+
+    log({ ts: now(), text: 'Touching kiosk session timestamps…', level: 'info' });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: sessErr } = await (supabase as any).from('kiosk_sessions').update({
+      last_active: new Date().toISOString(),
+    }).eq('player_id', playerId);
+    if (sessErr) log({ ts: now(), text: `Warning: ${sessErr.message}`, level: 'err' });
+    else log({ ts: now(), text: '✓ Kiosk sessions refreshed', level: 'ok' });
 
     log({ ts: now(), text: 'All reset steps complete. Reloading admin console in 2 seconds…', level: 'ok' });
     await delay(2000);
@@ -305,7 +257,7 @@ export function ScriptsPanel({ playerId }: { playerId: string }) {
       <PanelHeader title="Functions & Scripts" subtitle="Invoke server-side operations via Supabase Edge Functions" />
       <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
         <ScriptCard icon="🔃" name="refresh-jukebox" category="System"
-          desc="Clear the queue, reload the active playlist from the current position, and force-play. Use when the player is stuck on loading/idle or the queue is stale. Reloads admin console after reset."
+          desc="Reset player state, coin acceptor, and kiosk sessions. Use when Supabase is out of sync, the player is stalled, or realtime subscriptions are broken. Reloads admin console after reset."
           onRun={runRefreshJukebox}
         />
         <ScriptCard icon="📥" name="import-single-playlist" category="Playlists"

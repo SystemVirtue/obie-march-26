@@ -69,9 +69,11 @@ function App() {
   const [isSkipping,  setIsSkipping]  = useState(false);
   const isSkippingRef = useRef(false);
   useEffect(() => { isSkippingRef.current = isSkipping; }, [isSkipping]);
+  // Debounce guard: prevents two admin consoles (or a double-click) from
+  // sending conflicting play/pause writes within the same 400ms window.
+  const playPauseInFlightRef = useRef(false);
 
   const [players, setPlayers] = useState<Player[]>([]);
-  const [onlinePlayerCount, setOnlinePlayerCount] = useState(0); // Option B: Track online players to disable pause
   const [kioskSessions, setKioskSessions] = useState<KioskSession[]>([]);
   const [activePlaylistName, setActivePlaylistName] = useState<string | null>(null);
 
@@ -227,15 +229,6 @@ function App() {
     return () => subs.forEach(s => s.unsubscribe());
   }, [user, availableJukeboxes]);
 
-  // Option B: Track online player count for pause button disable logic
-  useEffect(() => {
-    const count = players.filter(p => p.status === 'online').length;
-    setOnlinePlayerCount(count);
-    if (count > 0) {
-      console.log(`[Admin] ${count} player(s) online — pause disabled (Option B)`);
-    }
-  }, [players]);
-
   // Kiosk sessions — scoped to the currently-viewed jukebox.
   // Realtime fires on any row change; 60 s interval is a fallback in case
   // the realtime event is missed (e.g. first heartbeat after page load).
@@ -308,16 +301,36 @@ function App() {
   };
 
   const handlePlayPause = async () => {
+    // Guard 1: don't allow during a skip
+    if (isSkipping) return;
+    // Guard 2: debounce — block if a play/pause call is already in-flight.
+    // This absorbs double-clicks and near-simultaneous clicks from two open
+    // admin consoles. 400ms covers the Supabase Realtime round-trip so the
+    // second console's UI updates before it can fire a conflicting write.
+    if (playPauseInFlightRef.current) return;
+    // Guard 3: only valid from playing or paused — ignore clicks during
+    // loading/idle/error where toggling makes no sense.
+    const currentState = status?.state;
+    if (currentState !== 'playing' && currentState !== 'paused') return;
+
+    playPauseInFlightRef.current = true;
     try {
-      // Option B: Reject pause attempts when any player is online
-      const newState = status?.state === 'playing' ? 'paused' : 'playing';
-      if (newState === 'paused' && onlinePlayerCount > 0) {
-        console.warn(`[Admin] Pause attempt rejected: ${onlinePlayerCount} player(s) online (Option B)`);
-        alert('Pause is disabled while any player is online (continuous playback mode)');
-        return;
-      }
-      await callPlayerControl({ player_id: activePlayerId ?? PLAYER_ID, state: newState, action: 'update' });
-    } catch (e) { console.error(e); }
+      const newState = currentState === 'playing' ? 'paused' : 'playing';
+      await callPlayerControl({
+        player_id: activePlayerId ?? PLAYER_ID,
+        state: newState,
+        action: 'update',
+        // Compare-and-swap: server rejects the write if DB state has already
+        // changed (i.e. the other admin console got there first).
+        expected_state: currentState,
+      } as any);
+    } catch (e) {
+      console.error('[Admin] Play/pause failed:', e);
+    } finally {
+      // Hold the lock for 400ms — long enough for Realtime to deliver the
+      // state change to both consoles, preventing a toggle-loop.
+      setTimeout(() => { playPauseInFlightRef.current = false; }, 400);
+    }
   };
 
   const handleSkip = async () => {
@@ -370,8 +383,7 @@ function App() {
       <NowPlayingStage status={status} queue={queue} settings={settings}
         players={players} activePlayerId={activePlayerId ?? undefined}
         kioskSessions={kioskSessions} activePlaylistName={activePlaylistName}
-        onPlayPause={handlePlayPause} onSkip={handleSkip} isSkipping={isSkipping} onRemove={handleRemove}
-        isPauseDisabled={onlinePlayerCount > 0} />
+        onPlayPause={handlePlayPause} onSkip={handleSkip} isSkipping={isSkipping} onRemove={handleRemove} />
 
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         <Sidebar view={view} setView={setView} queue={queue} user={user}

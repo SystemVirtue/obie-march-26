@@ -137,13 +137,12 @@ CREATE OR REPLACE FUNCTION log_event(
   p_player_id UUID,
   p_event TEXT,
   p_severity TEXT DEFAULT 'info',
-  p_payload JSONB DEFAULT '{}',
-  p_source TEXT DEFAULT 'system'
+  p_payload JSONB DEFAULT '{}'
 )
 RETURNS void AS $$
 BEGIN
-  INSERT INTO system_logs (player_id, event, severity, payload, source)
-  VALUES (p_player_id, p_event, p_severity, p_payload, p_source);
+  INSERT INTO system_logs (player_id, event, severity, payload)
+  VALUES (p_player_id, p_event, p_severity, p_payload);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
@@ -470,38 +469,38 @@ ALTER TABLE player_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE kiosk_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE system_logs ENABLE ROW LEVEL SECURITY;
 
--- Admin has full access (authenticated users and service role for Edge Functions)
+-- Admin has full access (authenticated users)
 CREATE POLICY "Admin full access to players"
   ON players FOR ALL
-  USING (auth.role() IN ('authenticated', 'service_role'));
+  USING (auth.role() = 'authenticated');
 
 CREATE POLICY "Admin full access to playlists"
   ON playlists FOR ALL
-  USING (auth.role() IN ('authenticated', 'service_role'));
+  USING (auth.role() = 'authenticated');
 
 CREATE POLICY "Admin full access to playlist_items"
   ON playlist_items FOR ALL
-  USING (auth.role() IN ('authenticated', 'service_role'));
+  USING (auth.role() = 'authenticated');
 
 CREATE POLICY "Admin full access to media_items"
   ON media_items FOR ALL
-  USING (auth.role() IN ('authenticated', 'service_role'));
+  USING (auth.role() = 'authenticated');
 
 CREATE POLICY "Admin full access to queue"
   ON queue FOR ALL
-  USING (auth.role() IN ('authenticated', 'service_role'));
+  USING (auth.role() = 'authenticated');
 
 CREATE POLICY "Admin full access to player_status"
   ON player_status FOR ALL
-  USING (auth.role() IN ('authenticated', 'service_role'));
+  USING (auth.role() = 'authenticated');
 
 CREATE POLICY "Admin full access to player_settings"
   ON player_settings FOR ALL
-  USING (auth.role() IN ('authenticated', 'service_role'));
+  USING (auth.role() = 'authenticated');
 
 CREATE POLICY "Admin full access to system_logs"
   ON system_logs FOR SELECT
-  USING (auth.role() IN ('authenticated', 'service_role'));
+  USING (auth.role() = 'authenticated');
 
 -- Kiosk can read limited data (anon access)
 CREATE POLICY "Kiosk can read own session"

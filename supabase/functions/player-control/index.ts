@@ -2,23 +2,6 @@
 // Handles player status updates and heartbeat
 import { corsHeaders } from '../_shared/cors.ts';
 import { createServiceClient } from '../_shared/supabase-client.ts';
-
-// Helper: Log admin actions to system_logs for audit trail
-async function logAdminAction(supabase: any, action: string, player_id: string, payload: Record<string, any> = {}) {
-  try {
-    await supabase.from('system_logs').insert({
-      player_id: player_id,
-      event: `admin_${action}`,
-      severity: 'info',
-      payload: payload,
-      source: 'edge',
-    });
-  } catch (err) {
-    console.error('[player-control] Failed to log admin action:', err);
-    // Don't throw - logging failure shouldn't block the action itself
-  }
-}
-
 Deno.serve(async (req)=>{
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -31,7 +14,7 @@ Deno.serve(async (req)=>{
     const supabase = createServiceClient();
     // Parse request body
     const body = await req.json();
-    const { player_id, state, progress, action = 'update', session_id, stored_player_id, current_media_id } = body;
+    const { player_id, state, progress, action = 'update', session_id, stored_player_id, current_media_id, expected_state } = body;
     if (!player_id) {
       return new Response(JSON.stringify({
         error: 'player_id is required'
@@ -79,7 +62,7 @@ Deno.serve(async (req)=>{
         // This player was previously priority - restore priority status
         const { error: updateError } = await supabase
           .from('players')
-          .update({ priority_player_id: player_id, priority_session_id: session_id })
+          .update({ priority_player_id: player_id })
           .eq('id', player_id);
 
         if (updateError) throw updateError;
@@ -123,7 +106,7 @@ Deno.serve(async (req)=>{
           // Safe to claim / reclaim priority
           const { error: updateError } = await supabase
             .from('players')
-            .update({ priority_player_id: player_id, priority_session_id: session_id })
+            .update({ priority_player_id: player_id })
             .eq('id', player_id);
 
           if (updateError) throw updateError;
@@ -163,30 +146,17 @@ Deno.serve(async (req)=>{
     }
     // Handle reset priority player
     if (action === 'reset_priority') {
-      // Get player jukebox_id for scoped reset
-      const { data: playerData, error: playerError } = await supabase
+      const { error: resetError } = await supabase
         .from('players')
-        .select('jukebox_id')
-        .eq('id', player_id)
-        .single();
-
-      if (playerError || !playerData?.jukebox_id) {
-        throw new Error('Could not find player jukebox_id');
-      }
-
-      // Call function to reset priority with flag
-      const { data: resetResult, error: resetError } = await supabase
-        .rpc('admin_reset_priority_player', {
-          p_jukebox_id: playerData.jukebox_id
-        });
+        .update({ priority_player_id: null })
+        .eq('id', player_id);
 
       if (resetError) throw resetError;
 
-      console.log(`[player-control] Priority player reset for jukebox ${playerData.jukebox_id}. Results:`, resetResult);
+      console.log(`[player-control] Priority player reset for player ${player_id}`);
       return new Response(JSON.stringify({
         success: true,
-        message: 'Priority player reset - reassignment blocked until flag cleared',
-        reset_flag_active: true
+        message: 'Priority player reset'
       }), {
         status: 200,
         headers: {
@@ -198,6 +168,27 @@ Deno.serve(async (req)=>{
 
     // Handle status update
     if (action === 'update' || action === 'ended' || action === 'skip') {
+      // ── Compare-and-swap guard for play/pause ────────────────────────────
+      // If the caller sends expected_state, verify the DB still matches before
+      // writing. This prevents two admin consoles racing — the second console's
+      // stale click arrives with expected_state='playing' but the DB already
+      // says 'paused' (first console won), so we return a no-op instead of
+      // toggling back.
+      if (action === 'update' && expected_state !== undefined) {
+        const { data: currentStatus } = await supabase
+          .from('player_status')
+          .select('state')
+          .eq('player_id', player_id)
+          .single();
+
+        if (currentStatus?.state !== expected_state) {
+          console.log(`[player-control] CAS rejected: expected=${expected_state} actual=${currentStatus?.state} — stale admin click ignored`);
+          return new Response(JSON.stringify({ success: true, noop: true, reason: 'cas_mismatch' }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+      }
       // For skip: capture current player state AND current_media_id BEFORE updating,
       // so we can decide whether the player needs to fade out or whether it's already
       // idle, and so the server-side advance can pass an idempotency key to queue_next.
@@ -232,13 +223,6 @@ Deno.serve(async (req)=>{
       // If idle: call queue_next directly (no fade needed, nothing is playing).
       // If playing/paused: let the Player handle the fade and then call queue_next.
       if (action === 'skip' && state === 'idle') {
-        // Log admin skip action
-        await logAdminAction(supabase, 'skip', player_id, {
-          pre_update_state: preUpdateState,
-          pre_update_media_id: preUpdateMediaId,
-          timestamp: new Date().toISOString()
-        });
-
         // Check if this player is the priority player before allowing queue progression
         const { data: player } = await supabase
           .from('players')
