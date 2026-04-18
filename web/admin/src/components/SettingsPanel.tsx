@@ -69,14 +69,14 @@ export function SettingsPanel({ view, settings, prefs, playerId }: { view: ViewI
     try { await updateAllCredits(playerId, 'clear'); setCredits(0); }
     catch (e) { console.error(e); } finally { setCreditsLoading(false); }
   };
-  const [priorityResetState, setPriorityResetState] = useState<'idle' | 'confirm' | 'done' | 'error'>('idle');
+  const [priorityResetState, setPriorityResetState] = useState<'idle' | 'confirm' | 'loading' | 'done' | 'error'>('idle');
 
   const handleResetPriorityPlayer = () => {
     setPriorityResetState('confirm');
   };
 
   const handleResetPriorityConfirm = async () => {
-    setPriorityResetState('idle');
+    setPriorityResetState('loading');
     try {
       await callPlayerControl({ player_id: playerId, action: 'reset_priority' });
       setPriorityResetState('done');
@@ -279,7 +279,7 @@ export function SettingsPanel({ view, settings, prefs, playerId }: { view: ViewI
             </div>
 
             <Btn variant="ghost" onClick={handleResetPriorityPlayer} disabled={priorityResetState !== 'idle'}>
-              🔄 Reset Priority Player
+              {priorityResetState === 'loading' ? '⏳ Resetting...' : '🔄 Reset Priority Player'}
             </Btn>
 
             {/* Confirmation popover */}
@@ -309,6 +309,14 @@ export function SettingsPanel({ view, settings, prefs, playerId }: { view: ViewI
                     fontFamily: 'var(--font-mono)', fontSize: 12, cursor: 'pointer',
                   }}>Cancel</button>
                 </div>
+              </div>
+            )}
+
+            {/* Loading banner */}
+            {priorityResetState === 'loading' && (
+              <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.3)', fontFamily: 'var(--font-mono)', fontSize: 11, color: '#60a5fa', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ animation: 'pulse 1s linear infinite', display: 'inline-block' }}>⟳</span>
+                Resetting priority — the next Player to connect will become MASTER...
               </div>
             )}
 
