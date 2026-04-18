@@ -70,12 +70,10 @@ Deno.serve(async (req)=>{
 
         if (!otherPlayerActive) {
           // No other player active — safe to restore priority
-          const { error: updateError } = await supabase
-            .from('players')
-            .update({ priority_player_id: player_id })
-            .eq('id', player_id);
-
-          if (updateError) throw updateError;
+      // Update ALL player rows to keep the global priority designation consistent
+      const { error: updateError } = await supabase
+        .from('players')
+        .update({ priority_player_id: player_id });
 
           console.log(`[player-control] Player ${player_id} restored as priority player (session: ${session_id})`);
           return new Response(JSON.stringify({
@@ -106,13 +104,13 @@ Deno.serve(async (req)=>{
       }
 
       // Check if there's already a priority player
-      const { data: existingPriority } = await supabase
+      // Query ANY player row to get the global priority designation (they should all be consistent)
+      const { data: players } = await supabase
         .from('players')
         .select('priority_player_id')
-        .eq('id', player_id)
-        .single();
+        .limit(1);
 
-      const currentPriorityId = existingPriority?.priority_player_id ?? null;
+      const currentPriorityId = players?.[0]?.priority_player_id ?? null;
 
       // Allow claim/reclaim if: no priority player set, OR this player WAS the priority player.
       // A page reload clears localStorage, so we can't rely solely on stored_player_id —
@@ -131,10 +129,10 @@ Deno.serve(async (req)=>{
 
         if (!otherPlayerActive) {
           // Safe to claim / reclaim priority
+          // Update ALL player rows to keep the global priority designation consistent
           const { error: updateError } = await supabase
             .from('players')
-            .update({ priority_player_id: player_id })
-            .eq('id', player_id);
+            .update({ priority_player_id: player_id });
 
           if (updateError) throw updateError;
 
@@ -173,17 +171,17 @@ Deno.serve(async (req)=>{
     }
     // Handle reset priority player
     if (action === 'reset_priority') {
+      // Clear priority_player_id from ALL player rows (it's a global master designation)
       const { error: resetError } = await supabase
         .from('players')
-        .update({ priority_player_id: null })
-        .eq('id', player_id);
+        .update({ priority_player_id: null });
 
       if (resetError) throw resetError;
 
-      console.log(`[player-control] Priority player reset for player ${player_id}`);
+      console.log(`[player-control] Priority player reset globally by admin ${player_id}`);
       return new Response(JSON.stringify({
         success: true,
-        message: 'Priority player reset'
+        message: 'Priority player reset — next player to connect will become MASTER'
       }), {
         status: 200,
         headers: {
