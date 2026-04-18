@@ -63,3 +63,6 @@ audit-playlists-vs-cloudflare.txt
 tests/.auth/
 playwright-report/
 test-results/
+
+# Claude worktree state (internal, not part of release)
+.claude/worktrees/
