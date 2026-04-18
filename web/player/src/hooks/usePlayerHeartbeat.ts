@@ -57,7 +57,7 @@ export function usePlayerHeartbeat({ isSlavePlayer, isSyncing = false, playerId,
       try {
         const { data: row } = await supabase
           .from('players')
-          .select('priority_player_id, priority_session_id')
+          .select('*')
           .eq('id', playerId)
           .single();
         priorityPlayerId = (row as any)?.priority_player_id ?? null;
