@@ -470,38 +470,38 @@ ALTER TABLE player_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE kiosk_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE system_logs ENABLE ROW LEVEL SECURITY;
 
--- Admin has full access (authenticated users)
+-- Admin has full access (authenticated users and service role for Edge Functions)
 CREATE POLICY "Admin full access to players"
   ON players FOR ALL
-  USING (auth.role() = 'authenticated');
+  USING (auth.role() IN ('authenticated', 'service_role'));
 
 CREATE POLICY "Admin full access to playlists"
   ON playlists FOR ALL
-  USING (auth.role() = 'authenticated');
+  USING (auth.role() IN ('authenticated', 'service_role'));
 
 CREATE POLICY "Admin full access to playlist_items"
   ON playlist_items FOR ALL
-  USING (auth.role() = 'authenticated');
+  USING (auth.role() IN ('authenticated', 'service_role'));
 
 CREATE POLICY "Admin full access to media_items"
   ON media_items FOR ALL
-  USING (auth.role() = 'authenticated');
+  USING (auth.role() IN ('authenticated', 'service_role'));
 
 CREATE POLICY "Admin full access to queue"
   ON queue FOR ALL
-  USING (auth.role() = 'authenticated');
+  USING (auth.role() IN ('authenticated', 'service_role'));
 
 CREATE POLICY "Admin full access to player_status"
   ON player_status FOR ALL
-  USING (auth.role() = 'authenticated');
+  USING (auth.role() IN ('authenticated', 'service_role'));
 
 CREATE POLICY "Admin full access to player_settings"
   ON player_settings FOR ALL
-  USING (auth.role() = 'authenticated');
+  USING (auth.role() IN ('authenticated', 'service_role'));
 
 CREATE POLICY "Admin full access to system_logs"
   ON system_logs FOR SELECT
-  USING (auth.role() = 'authenticated');
+  USING (auth.role() IN ('authenticated', 'service_role'));
 
 -- Kiosk can read limited data (anon access)
 CREATE POLICY "Kiosk can read own session"
