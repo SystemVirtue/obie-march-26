@@ -526,9 +526,10 @@ Deno.serve(async (req)=>{
       // Log the removal for operator visibility
       await supabase.from('system_logs').insert({
         player_id,
-        level:   'warn',
-        event:   'media_removed_unavailable',
-        details: { media_item_id }
+        severity: 'warn',
+        event:    'media_removed_unavailable',
+        payload:  { media_item_id },
+        source:   'edge'
       });
       return new Response(JSON.stringify({ success: true }), {
         status: 200,

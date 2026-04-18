@@ -255,9 +255,6 @@ export function NowPlayingStage({ status, queue, settings, players, activePlayer
         {/* Controls */}
         <div style={{ paddingBottom: 14 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 9 }}>
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.3)', flexShrink: 0 }}>
-              {fmtDuration((progress / 100) * (cm?.duration ?? 0))}
-            </span>
             <div style={{ flex: 1, height: 3, borderRadius: 99, background: 'rgba(255,255,255,0.1)', position: 'relative' }}>
               <div style={{ height: '100%', borderRadius: 99, background: 'linear-gradient(90deg,var(--accent),var(--accent-dark))', width: `${progress}%`, transition: 'width 2s linear' }} />
             </div>

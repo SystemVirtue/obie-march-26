@@ -12,6 +12,7 @@ import {
   callPlaylistManager,
   callRadioGenerator,
   initializePlayerPlaylist,
+  fetchMasterPlayerStatus,
   type PlayerStatus,
   type MediaItem,
   type PlayerSettings,
@@ -52,6 +53,10 @@ function App() {
   const [isSlavePlayer, setIsSlavePlayer] = useState(false); // Track if this is a slave player
   const [playerReady, setPlayerReady] = useState(false); // Track if YouTube player is ready
   const [ytApiReady, setYtApiReady] = useState(false); // Track if YouTube API is loaded
+  // Slave sync state
+  const [isSyncing, setIsSyncing] = useState(false); // True while seeking to master position
+  const [targetSeekSeconds, setTargetSeekSeconds] = useState<number | null>(null); // Where to seek to
+  const syncedMediaIdsRef = useRef<Set<string>>(new Set()); // Track which media IDs we've synced to prevent re-syncing
   const playerRef = useRef<any>(null);
   const playerDivRef = useRef<HTMLDivElement>(null);
   const hasInitialized = useRef(false);
@@ -66,6 +71,11 @@ function App() {
   const videoHasPlayedRef = useRef(false); // true once current video reaches YouTube state PLAYING; reset on new media
   const unexpectedPauseTimeoutRef = useRef<number | null>(null); // Timeout to auto-advance if paused before video ever played
   const adminPausedRef = useRef(false); // Track if pause was triggered by admin to prevent auto-resume
+  // Stable session ID for this browser tab — generated once on mount, shared
+  // between register_session (init) and usePlayerHeartbeat (priority checks).
+  // Previously each generated its own UUID, causing heartbeat to demote master
+  // to slave after first cycle (~30s). This ref ensures the same UUID is used.
+  const sessionIdRef = useRef<string>(crypto.randomUUID());
   // ── Local video fallback (yt-dlp) ──────────────────────────────────────────
   const [localPlaybackUrl, setLocalPlaybackUrl] = useState<string | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -91,7 +101,29 @@ function App() {
   const [ytmTestResult, setYtmTestResult] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle');
   const [ytmTestMsg, setYtmTestMsg] = useState<string | null>(null);
 
-  const { reportStatus } = usePlayerHeartbeat({ isSlavePlayer, playerId: PLAYER_ID });
+  const { reportStatus } = usePlayerHeartbeat({
+    isSlavePlayer,
+    isSyncing,
+    playerId: PLAYER_ID,
+    sessionId: sessionIdRef.current,
+    onPriorityReclaimed: useCallback(() => {
+      // Dead master's priority_player_id was cleared by DB failover trigger,
+      // and we've successfully reclaimed master. Flip slave flag so this player
+      // resumes driving queue progression immediately — no page reload needed.
+      console.log('[App] Reclaimed master — re-enabling queue progression');
+      setIsSlavePlayer(false);
+      localStorage.setItem('obie_priority_player_id', PLAYER_ID);
+    }, [PLAYER_ID]),
+    onPriorityLost: useCallback(() => {
+      // Admin clicked "Reset Priority Player" (or another session claimed master).
+      // Demote this player to slave immediately — stops queue progression and
+      // shows the SLAVE watermark. The new master will take over within one
+      // heartbeat cycle (≤ 30s) without requiring a page reload on either end.
+      console.log('[App] Lost master — demoting to slave');
+      setIsSlavePlayer(true);
+      localStorage.removeItem('obie_priority_player_id');
+    }, []),
+  });
 
   useKaraokeLyrics({
     enabled: !!settings?.karaoke_mode,
@@ -428,7 +460,34 @@ function App() {
   // YouTube Player event handlers
   const onPlayerReady = useCallback(() => {
     setPlayerReady(true);
-  }, []);
+
+    // Slave sync: Attempt to seek to master's current position
+    if (isSyncing && targetSeekSeconds !== null && playerRef.current) {
+      const seekSeconds = Math.floor(targetSeekSeconds);
+      console.log('[Slave Sync] YouTube player ready — seeking to', seekSeconds, 'seconds');
+
+      try {
+        playerRef.current.seekTo(seekSeconds, true); // true = allow seek ahead
+        console.log('[Slave Sync] YouTube seekTo() called, marking media as synced');
+        setIsSyncing(false);
+        setTargetSeekSeconds(null);
+      } catch (error) {
+        console.warn('[Slave Sync] YouTube seekTo() failed:', error);
+        // Fallback: just play without seeking
+        setIsSyncing(false);
+        setTargetSeekSeconds(null);
+      }
+
+      // Timeout: if seek doesn't confirm within 500ms, assume it failed (e.g., live stream)
+      const timeout = setTimeout(() => {
+        console.warn('[Slave Sync] YouTube seek confirmation timeout — assuming live stream or unsupported');
+        setIsSyncing(false);
+        setTargetSeekSeconds(null);
+      }, 500);
+
+      return () => clearTimeout(timeout);
+    }
+  }, [isSyncing, targetSeekSeconds]);
 
   const onPlayerStateChange = useCallback((event: { data: number }) => {
     // Ignore YouTube events when a Cloudflare/local video is active
@@ -607,15 +666,12 @@ function App() {
         }
 
         // Register this player instance as a potential priority player
-        const sessionId = crypto.randomUUID();
-        
-        // Check if this player was previously priority
         const storedPlayerId = localStorage.getItem('obie_priority_player_id');
         
         const sessionResult = await callPlayerControl({
           player_id: PLAYER_ID,
           action: 'register_session',
-          session_id: sessionId,
+          session_id: sessionIdRef.current,
           stored_player_id: storedPlayerId || undefined,
         });
 
@@ -635,6 +691,70 @@ function App() {
 
     initPlayer();
   }, [identityReady, activePlayerId, PLAYER_ID]);
+
+  // Slave player sync: Fetch master player status and seek to current position
+  // This runs once on app init if this is a slave player
+  useEffect(() => {
+    if (!identityReady || !activePlayerId || !isSlavePlayer) return;
+
+    const syncSlaveToMaster = async () => {
+      console.log('[Slave Sync] Attempting to sync with master player...');
+      const masterStatus = await fetchMasterPlayerStatus(PLAYER_ID);
+
+      if (!masterStatus) {
+        console.log('[Slave Sync] Master status unavailable, skipping sync');
+        return;
+      }
+
+      // Guard: only sync if master is actively playing
+      if (masterStatus.state !== 'playing') {
+        console.log('[Slave Sync] Master not playing, skipping sync');
+        return;
+      }
+
+      // Guard: only sync if progress is past the start
+      if (!masterStatus.progress || masterStatus.progress <= 0) {
+        console.log('[Slave Sync] Master at start of video, no sync needed');
+        return;
+      }
+
+      // Guard: don't re-sync the same media_id in this session
+      const mediaId = masterStatus.current_media_id;
+      if (!mediaId || syncedMediaIdsRef.current.has(mediaId)) {
+        console.log('[Slave Sync] Already synced this media_id, skipping');
+        return;
+      }
+
+      // Calculate target seek position (0 if duration unavailable)
+      const duration = masterStatus.current_media?.duration;
+      const elapsedSeconds = masterStatus.progress * (duration ?? 0);
+      console.log('[Slave Sync] Master at', {
+        progress: masterStatus.progress,
+        duration: duration ?? 'unknown',
+        elapsedSeconds: elapsedSeconds.toFixed(1),
+        source: masterStatus.source,
+      });
+
+      // Mark as synced to prevent re-sync on Realtime updates
+      syncedMediaIdsRef.current.add(mediaId);
+
+      // Store seek target and begin sync phase
+      setTargetSeekSeconds(elapsedSeconds);
+      setIsSyncing(true);
+
+      // Auto-clear sync state after 3 seconds (fail-safe)
+      setTimeout(() => {
+        setIsSyncing(false);
+        setTargetSeekSeconds(null);
+      }, 3000);
+    };
+
+    syncSlaveToMaster().catch(error => {
+      console.error('[Slave Sync] Sync failed:', error);
+      setIsSyncing(false);
+      setTargetSeekSeconds(null);
+    });
+  }, [identityReady, activePlayerId, isSlavePlayer, PLAYER_ID]);
 
   // NOTE: Shuffle-on-load is handled entirely by the load_playlist RPC (migration 0028).
   // When a playlist is loaded, load_playlist reads player_settings.shuffle and, if enabled,
@@ -1414,6 +1534,24 @@ function App() {
           autoPlay
           className="absolute inset-0 w-full h-full"
           style={{ objectFit: 'contain', background: 'black' }}
+          onLoadedMetadata={() => {
+            // Slave sync: Seek to master's position when metadata loads
+            if (isSyncing && targetSeekSeconds !== null && localVideoRef.current) {
+              const seekSeconds = targetSeekSeconds;
+              console.log('[Slave Sync] Local video metadata loaded — seeking to', seekSeconds.toFixed(1), 'seconds');
+              try {
+                localVideoRef.current.currentTime = seekSeconds;
+                localVideoRef.current.play().catch(() => {});
+                console.log('[Slave Sync] Local video seek complete, marking media as synced');
+                setIsSyncing(false);
+                setTargetSeekSeconds(null);
+              } catch (error) {
+                console.warn('[Slave Sync] Local video seek failed:', error);
+                setIsSyncing(false);
+                setTargetSeekSeconds(null);
+              }
+            }
+          }}
           onPlay={() => {
             const v = localVideoRef.current;
             console.log(`[Player][local-video] ▶ PLAY  src=${localPlaybackUrl}  duration=${v ? v.duration.toFixed(1) + 's' : '?'}`);
@@ -1455,6 +1593,16 @@ function App() {
             reportEndedAndNext(false);
           }}
         />
+      )}
+
+      {/* Slave Sync UI Overlay */}
+      {isSyncing && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/50 z-50 pointer-events-none">
+          <div className="flex flex-col items-center gap-4">
+            <div className="w-12 h-12 border-4 border-blue-400 border-t-transparent rounded-full animate-spin" />
+            <div className="text-white text-sm font-medium">Syncing with master...</div>
+          </div>
+        </div>
       )}
 
       {/* YTM Desktop Overlay */}

@@ -79,7 +79,7 @@ Deno.serve(async (req)=>{
         // This player was previously priority - restore priority status
         const { error: updateError } = await supabase
           .from('players')
-          .update({ priority_player_id: player_id })
+          .update({ priority_player_id: player_id, priority_session_id: session_id })
           .eq('id', player_id);
 
         if (updateError) throw updateError;
@@ -123,7 +123,7 @@ Deno.serve(async (req)=>{
           // Safe to claim / reclaim priority
           const { error: updateError } = await supabase
             .from('players')
-            .update({ priority_player_id: player_id })
+            .update({ priority_player_id: player_id, priority_session_id: session_id })
             .eq('id', player_id);
 
           if (updateError) throw updateError;
@@ -165,7 +165,7 @@ Deno.serve(async (req)=>{
     if (action === 'reset_priority') {
       const { error: resetError } = await supabase
         .from('players')
-        .update({ priority_player_id: null })
+        .update({ priority_player_id: null, priority_session_id: null })
         .eq('id', player_id);
 
       if (resetError) throw resetError;

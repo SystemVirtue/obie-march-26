@@ -17,6 +17,7 @@ export interface Player {
   last_heartbeat: string;
   active_playlist_id: string | null;
   priority_player_id: string | null;
+  priority_session_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -575,6 +576,49 @@ export function subscribeToPlayerBroadcast(
     })
     .subscribe();
   return channel;
+}
+
+/**
+ * Fetch master player status for slave sync initialization.
+ * Used by slave players to determine if/where to seek when first connecting.
+ */
+export async function fetchMasterPlayerStatus(playerId: string): Promise<PlayerStatus | null> {
+  try {
+    // Get this player's team to find the priority player
+    const { data: playerData, error: playerError } = await supabase
+      .from('players')
+      .select('priority_player_id')
+      .eq('id', playerId)
+      .maybeSingle();
+
+    if (playerError || !playerData) {
+      console.log('[Slave Sync] No priority player found for this team');
+      return null;
+    }
+
+    const priorityPlayerId = (playerData as any).priority_player_id;
+    if (!priorityPlayerId) {
+      console.log('[Slave Sync] No priority player set');
+      return null;
+    }
+
+    // Fetch the priority player's status with media details
+    const { data: masterStatus, error: statusError } = await supabase
+      .from('player_status')
+      .select('*, current_media:media_items(*)')
+      .eq('player_id', priorityPlayerId)
+      .maybeSingle();
+
+    if (statusError || !masterStatus) {
+      console.log('[Slave Sync] Failed to fetch master player status:', statusError);
+      return null;
+    }
+
+    return masterStatus as PlayerStatus;
+  } catch (error) {
+    console.error('[Slave Sync] Error fetching master player status:', error);
+    return null;
+  }
 }
 
 // =============================================================================
