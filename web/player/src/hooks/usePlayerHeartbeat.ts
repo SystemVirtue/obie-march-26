@@ -19,17 +19,18 @@ import type { RealtimeChannel } from '@supabase/supabase-js';
 type UsePlayerHeartbeatArgs = {
   isSlavePlayer: boolean;
   playerId: string;
+  /** Stable session ID for this browser tab — must be the same UUID used in register_session */
+  sessionId: string;
   /** Called when a slave player successfully reclaims master after failover */
   onPriorityReclaimed?: () => void;
   /** Called when the master player detects it has lost priority (e.g. after Reset Priority Player) */
   onPriorityLost?: () => void;
 };
 
-export function usePlayerHeartbeat({ isSlavePlayer, playerId, onPriorityReclaimed, onPriorityLost }: UsePlayerHeartbeatArgs) {
+export function usePlayerHeartbeat({ isSlavePlayer, playerId, sessionId, onPriorityReclaimed, onPriorityLost }: UsePlayerHeartbeatArgs) {
   const prevStateRef    = useRef<PlayerStatus['state'] | undefined>(undefined);
   const channelRef      = useRef<RealtimeChannel | null>(null);
   const isSlaveRef      = useRef(isSlavePlayer);
-  const sessionIdRef    = useRef<string>(crypto.randomUUID());
   const reclaimInFlight = useRef(false);
 
   // Keep isSlaveRef in sync so the heartbeat closure always sees current value
@@ -73,7 +74,7 @@ export function usePlayerHeartbeat({ isSlavePlayer, playerId, onPriorityReclaime
         // queue and shows the SLAVE watermark — no page reload needed.
         const stillMaster =
           priorityPlayerId === playerId &&
-          (prioritySessionId === sessionIdRef.current || prioritySessionId === null);
+          (prioritySessionId === sessionId || prioritySessionId === null);
 
         if (!stillMaster) {
           console.log('[Player] Lost priority — demoting to slave');
@@ -98,7 +99,7 @@ export function usePlayerHeartbeat({ isSlavePlayer, playerId, onPriorityReclaime
         const result = await callPlayerControl({
           player_id:  playerId,
           action:     'register_session',
-          session_id: sessionIdRef.current,
+          session_id: sessionId,
         });
 
         if (result.is_priority) {
