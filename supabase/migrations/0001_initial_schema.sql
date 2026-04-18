@@ -137,12 +137,13 @@ CREATE OR REPLACE FUNCTION log_event(
   p_player_id UUID,
   p_event TEXT,
   p_severity TEXT DEFAULT 'info',
-  p_payload JSONB DEFAULT '{}'
+  p_payload JSONB DEFAULT '{}',
+  p_source TEXT DEFAULT 'system'
 )
 RETURNS void AS $$
 BEGIN
-  INSERT INTO system_logs (player_id, event, severity, payload)
-  VALUES (p_player_id, p_event, p_severity, p_payload);
+  INSERT INTO system_logs (player_id, event, severity, payload, source)
+  VALUES (p_player_id, p_event, p_severity, p_payload, p_source);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
