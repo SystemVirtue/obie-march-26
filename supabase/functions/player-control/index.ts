@@ -94,15 +94,18 @@ Deno.serve(async (req)=>{
       // A page reload clears localStorage, so we can't rely solely on stored_player_id —
       // the DB record is the authoritative source for whether this player should be priority.
       if (!currentPriorityId || currentPriorityId === player_id) {
-        // Check if any players are currently playing (only block if another player is active)
-        const { data: playingPlayers } = await supabase
+        // Check if any players are currently active. Must check for ALL active states:
+        // loading (playlist/media loaded), buffering, playing, paused. Do NOT check just
+        // 'playing' — when a playlist is loaded, state flips to 'loading' and a second
+        // instance must not claim master during that transition window.
+        const { data: activePlayers } = await supabase
           .from('player_status')
           .select('player_id, state')
-          .eq('state', 'playing');
+          .in('state', ['loading', 'buffering', 'playing', 'paused']);
 
-        const otherPlayerPlaying = playingPlayers?.some((p: any) => p.player_id !== player_id) ?? false;
+        const otherPlayerActive = activePlayers?.some((p: any) => p.player_id !== player_id) ?? false;
 
-        if (!otherPlayerPlaying) {
+        if (!otherPlayerActive) {
           // Safe to claim / reclaim priority
           const { error: updateError } = await supabase
             .from('players')
@@ -122,8 +125,8 @@ Deno.serve(async (req)=>{
             headers: { ...corsHeaders, 'Content-Type': 'application/json' }
           });
         } else {
-          // Another player is actively playing — become slave
-          console.log(`[player-control] Player ${player_id} registered as slave (another player is playing, session: ${session_id})`);
+          // Another player is actively running — become slave
+          console.log(`[player-control] Player ${player_id} registered as slave (another player is active, session: ${session_id})`);
           return new Response(JSON.stringify({
             success: true,
             is_priority: false
