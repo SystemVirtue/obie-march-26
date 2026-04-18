@@ -58,27 +58,51 @@ Deno.serve(async (req)=>{
       }
 
       // Check if this player was previously priority (stored_player_id matches)
+      // But FIRST check if another player is currently active — can't restore while
+      // another master is running.
       if (stored_player_id === player_id) {
-        // This player was previously priority - restore priority status
-        const { error: updateError } = await supabase
-          .from('players')
-          .update({ priority_player_id: player_id })
-          .eq('id', player_id);
+        const { data: activePlayers } = await supabase
+          .from('player_status')
+          .select('player_id, state')
+          .in('state', ['loading', 'buffering', 'playing', 'paused']);
 
-        if (updateError) throw updateError;
+        const otherPlayerActive = activePlayers?.some((p: any) => p.player_id !== player_id) ?? false;
 
-        console.log(`[player-control] Player ${player_id} restored as priority player (session: ${session_id})`);
-        return new Response(JSON.stringify({
-          success: true,
-          is_priority: true,
-          restored: true
-        }), {
-          status: 200,
-          headers: {
-            ...corsHeaders,
-            'Content-Type': 'application/json'
-          }
-        });
+        if (!otherPlayerActive) {
+          // No other player active — safe to restore priority
+          const { error: updateError } = await supabase
+            .from('players')
+            .update({ priority_player_id: player_id })
+            .eq('id', player_id);
+
+          if (updateError) throw updateError;
+
+          console.log(`[player-control] Player ${player_id} restored as priority player (session: ${session_id})`);
+          return new Response(JSON.stringify({
+            success: true,
+            is_priority: true,
+            restored: true
+          }), {
+            status: 200,
+            headers: {
+              ...corsHeaders,
+              'Content-Type': 'application/json'
+            }
+          });
+        } else {
+          // Another player is active — become slave instead
+          console.log(`[player-control] Player ${player_id} cannot restore (another player is active), registering as slave (session: ${session_id})`);
+          return new Response(JSON.stringify({
+            success: true,
+            is_priority: false
+          }), {
+            status: 200,
+            headers: {
+              ...corsHeaders,
+              'Content-Type': 'application/json'
+            }
+          });
+        }
       }
 
       // Check if there's already a priority player
