@@ -79,6 +79,17 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
     const lastLoadTimeRef = useRef<number>(0);
     const STALE_ENDED_GUARD_MS = 5_000;
 
+    // When loadVideoById replaces the current video, YouTube fires a transient
+    // PAUSED event (the old video being stopped). If we let this reach the state
+    // machine it transitions to 'paused', triggering Effect 4's
+    // fadeOut().then(() => pause()) — which fires pauseVideo() on the NEW video
+    // 2 s later and stalls it mid-playback.
+    //
+    // Fix: set this flag true before loadVideoById; clear it on BUFFERING or
+    // PLAYING (the first real event from the new video). While true, suppress
+    // PAUSED so the machine stays in 'loading' through the transition.
+    const isLoadingNewVideoRef = useRef<boolean>(false);
+
     // ── YouTube IFrame API load ─────────────────────────────────────────────
     useEffect(() => {
       if (apiReadyRef.current) return;
@@ -106,14 +117,18 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
       const ytState = event.data;
 
       if (ytState === YT_PLAYING) {
+        isLoadingNewVideoRef.current = false; // New video confirmed playing
         dispatch({ type: 'YOUTUBE_PLAYING' });
         onPlaying(); // Notifies parent to trigger fade-in if isAfterSkip
       } else if (ytState === YT_PAUSED) {
-        // Note: YouTube fires PAUSED transitorily during load before playVideo() runs.
-        // The state machine handles this — YOUTUBE_PAUSED from LOADING state is ignored,
-        // so auto-play attempts (handled by the parent's loading guard) won't be blocked.
+        // While isLoadingNewVideoRef is true we are mid-swap: the PAUSED event
+        // is the old video being replaced, not a genuine pause. Dispatching it
+        // would move the machine to 'paused', starting a 2 s fadeOut that calls
+        // pauseVideo() on the new video once it starts playing. Suppress it.
+        if (isLoadingNewVideoRef.current) return;
         dispatch({ type: 'YOUTUBE_PAUSED' });
       } else if (ytState === YT_BUFFERING) {
+        isLoadingNewVideoRef.current = false; // New video started buffering — PAUSED now genuine
         dispatch({ type: 'YOUTUBE_BUFFERING' });
       } else if (ytState === YT_ENDED) {
         // Reject stale ENDED events from the previous video
@@ -152,7 +167,10 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
         lastLoadTimeRef.current = Date.now();
 
         if (ytPlayerRef.current?.loadVideoById) {
-          // Existing player — load new video
+          // Existing player — load new video.
+          // Set flag BEFORE loadVideoById so the transient PAUSED event fired
+          // by YouTube when it stops the old video is suppressed (see onStateChange).
+          isLoadingNewVideoRef.current = true;
           if (isAfterSkip) {
             ytPlayerRef.current.setVolume(0);
           } else {
