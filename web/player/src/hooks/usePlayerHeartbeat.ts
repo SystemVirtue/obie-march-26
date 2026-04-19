@@ -139,6 +139,53 @@ export function usePlayerHeartbeat({
     return () => clearInterval(id);
   }, [playerId, onPriorityLost, onPrioritySelectionPending, declinedClaimForRef]);
 
+  // ── Realtime subscription for instant priority change detection ────────────
+  // The players table is in the Realtime publication (re-added in migration
+  // 20260419000003). This fires immediately when the admin triggers a reset or
+  // when another player claims master — no need to wait for the next heartbeat.
+  useEffect(() => {
+    if (!playerId) return;
+
+    const channel = supabase
+      .channel(`priority-watch:${playerId}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'players', filter: `id=eq.${playerId}` },
+        (payload) => {
+          const row = payload.new as any;
+          const newPriorityId: string | null = row.priority_player_id ?? null;
+          const nowPending: boolean = row.priority_selection_pending ?? false;
+
+          if (!isSlaveRef.current) {
+            // Master: check if we've been demoted
+            if (newPriorityId !== playerId) {
+              console.log('[Player] Realtime: lost priority — demoting to slave');
+              onPriorityLost?.();
+            }
+            return;
+          }
+
+          // Slave: show claim modal if pending is now true
+          if (nowPending && newPriorityId !== null) {
+            const alreadyDeclined = declinedClaimForRef.current === newPriorityId;
+            if (!alreadyDeclined) {
+              console.log('[Player] Realtime: priority selection pending — showing claim modal');
+              onPrioritySelectionPending?.(newPriorityId);
+            }
+          }
+
+          // Slave: pending cleared (someone else claimed) — hide modal if open
+          if (!nowPending && newPriorityId !== playerId) {
+            // The claim has been made by another player; no action needed here.
+            // The next heartbeat will confirm slave status.
+          }
+        }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [playerId, onPriorityLost, onPrioritySelectionPending, declinedClaimForRef]);
+
   // Broadcast channel for live progress reports (priority players only)
   useEffect(() => {
     if (isSlavePlayer) return;

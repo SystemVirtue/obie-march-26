@@ -70,6 +70,20 @@ export function SettingsPanel({ view, settings, prefs, playerId }: { view: ViewI
     catch (e) { console.error(e); } finally { setCreditsLoading(false); }
   };
   const [priorityResetState, setPriorityResetState] = useState<'idle' | 'confirm' | 'loading' | 'done' | 'error'>('idle');
+  const [priorityLog, setPriorityLog] = useState<Array<{ id: string; event_type: string; player_id: string | null; previous_priority_id: string | null; notes: string | null; created_at: string }>>([]);
+
+  // Fetch recent priority events on mount and after each reset/claim
+  const fetchPriorityLog = async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (supabase as any)
+      .from('priority_player_events')
+      .select('id, event_type, player_id, previous_priority_id, notes, created_at')
+      .order('created_at', { ascending: false })
+      .limit(8);
+    if (data) setPriorityLog(data);
+  };
+
+  useEffect(() => { fetchPriorityLog(); }, []);
 
   const handleResetPriorityPlayer = () => {
     setPriorityResetState('confirm');
@@ -80,6 +94,7 @@ export function SettingsPanel({ view, settings, prefs, playerId }: { view: ViewI
     try {
       await callPlayerControl({ player_id: playerId, action: 'reset_priority' });
       setPriorityResetState('done');
+      fetchPriorityLog();
       setTimeout(() => setPriorityResetState('idle'), 4000);
     } catch (e) {
       console.error(e);
@@ -335,6 +350,37 @@ export function SettingsPanel({ view, settings, prefs, playerId }: { view: ViewI
             {priorityResetState === 'error' && (
               <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', fontFamily: 'var(--font-mono)', fontSize: 11, color: '#f87171' }}>
                 ✗ Reset failed — check console for details.
+              </div>
+            )}
+
+            {/* Priority event log */}
+            {priorityLog.length > 0 && (
+              <div style={{ marginTop: 14 }}>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.1em', color: 'rgba(255,255,255,0.28)', textTransform: 'uppercase', marginBottom: 6 }}>
+                  Priority Event Log
+                </div>
+                {priorityLog.map(ev => {
+                  const label = ev.event_type === 'claimed'
+                    ? '✓ Claimed'
+                    : ev.event_type === 'reset_requested'
+                    ? '🔄 Reset Requested'
+                    : '↩ Confirmed';
+                  const color = ev.event_type === 'claimed'
+                    ? '#4ade80'
+                    : ev.event_type === 'reset_requested'
+                    ? '#f59e0b'
+                    : '#a78bfa';
+                  const ts = new Date(ev.created_at).toLocaleString();
+                  return (
+                    <div key={ev.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '5px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color, flexShrink: 0, minWidth: 110 }}>{label}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        {ev.notes && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.5)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.notes}</div>}
+                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.25)', marginTop: 1 }}>{ts}</div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

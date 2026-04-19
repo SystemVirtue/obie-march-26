@@ -139,12 +139,27 @@ Deno.serve(async (req)=>{
 
     // Handle explicit master claim from a player (after user confirms the modal)
     if (action === 'claim_priority') {
+      // Capture previous master before the handoff (for the log)
+      const { data: before } = await supabase
+        .from('players')
+        .select('priority_player_id')
+        .limit(1);
+      const previousPriorityId = before?.[0]?.priority_player_id ?? null;
+
       const { error: claimError } = await supabase.rpc('claim_priority_player', {
         p_player_id: player_id
       });
       if (claimError) throw claimError;
 
-      console.log(`[player-control] Player ${player_id} claimed priority via explicit confirmation`);
+      // Log the claim
+      await supabase.from('priority_player_events').insert({
+        event_type:           'claimed',
+        player_id:            player_id,
+        previous_priority_id: previousPriorityId !== player_id ? previousPriorityId : null,
+        notes:                'Player confirmed as master via modal',
+      });
+
+      console.log(`[player-control] Player ${player_id} claimed priority (previous: ${previousPriorityId})`);
       return new Response(JSON.stringify({
         success: true,
         is_priority: true,
@@ -159,10 +174,24 @@ Deno.serve(async (req)=>{
     // until a new player explicitly claims via claim_priority. This ensures
     // there is always exactly one master at any given time.
     if (action === 'reset_priority') {
+      // Capture current master before the reset (for the log)
+      const { data: before } = await supabase
+        .from('players')
+        .select('priority_player_id')
+        .limit(1);
+      const currentPriorityId = before?.[0]?.priority_player_id ?? null;
+
       const { error: resetError } = await supabase.rpc('reset_priority_player_global');
       if (resetError) throw resetError;
 
-      console.log(`[player-control] Priority reset requested by admin — awaiting player confirmation`);
+      // Log the reset request
+      await supabase.from('priority_player_events').insert({
+        event_type: 'reset_requested',
+        player_id:  currentPriorityId,
+        notes:      'Admin triggered re-assignment',
+      });
+
+      console.log(`[player-control] Priority reset by admin — current master: ${currentPriorityId}, awaiting player confirmation`);
       return new Response(JSON.stringify({
         success: true,
         message: 'Priority reassignment pending — players will be prompted to claim master'
