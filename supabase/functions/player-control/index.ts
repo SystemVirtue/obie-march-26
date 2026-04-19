@@ -70,10 +70,12 @@ Deno.serve(async (req)=>{
 
         if (!otherPlayerActive) {
           // No other player active — safe to restore priority
-      // Update ALL player rows to keep the global priority designation consistent
-      const { error: updateError } = await supabase
-        .from('players')
-        .update({ priority_player_id: player_id });
+          // Update ALL player rows to keep the global priority designation consistent
+          const { error: updateError } = await supabase
+            .from('players')
+            .update({ priority_player_id: player_id });
+
+          if (updateError) throw updateError;
 
           console.log(`[player-control] Player ${player_id} restored as priority player (session: ${session_id})`);
           return new Response(JSON.stringify({
