@@ -8,6 +8,7 @@
 import { useEffect, useCallback } from 'react';
 import { useActor } from '@xstate/react';
 import { signOut, subscribeToAuth, createJukebox, getMyJukeboxes, getPlaylistById } from '@shared/supabase-client';
+import type { AuthUser } from '@shared/supabase-client';
 import { normalizeJukeboxSlug, getPathJukeboxSlug } from '@shared/jukebox-utils';
 import type { DragEndEvent } from '@dnd-kit/core';
 
@@ -38,10 +39,12 @@ function App() {
   });
 
   const ctx = snapshot.context;
-  const isAuthLoading    = snapshot.matches({ auth: 'loading' });
-  const isResolving      = snapshot.matches({ auth: 'resolving' });
-  const isAuthenticated  = snapshot.matches({ auth: 'authenticated' });
-  const isError          = snapshot.matches({ auth: 'error' });
+  // snapshot.matches() with parallel states requires the full nested value;
+  // reading snapshot.value directly is simpler and type-safe for parallel machines.
+  const sv = snapshot.value as Record<string, unknown>;
+  const isAuthLoading = sv.auth === 'loading';
+  const isResolving   = sv.auth === 'resolving';
+  const isError       = sv.auth === 'error';
 
   // ── Auth subscription (bridge Supabase auth → machine) ────────────────────
   useEffect(() => {
@@ -80,7 +83,7 @@ function App() {
     if (!slug) return;
     try {
       await createJukebox(slug, slug);
-      const refreshed = await getMyJukeboxes();
+      await getMyJukeboxes(); // Refresh is handled by SWITCH_JUKEBOX re-resolve
       send({ type: 'SWITCH_JUKEBOX', slug });
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to create jukebox');
@@ -96,7 +99,7 @@ function App() {
   );
 
   if (!ctx.user) return (
-    <LoginForm onSignIn={(user) => send({ type: 'AUTH_CHANGE', user })} />
+    <LoginForm onSignIn={(user: AuthUser) => send({ type: 'AUTH_CHANGE', user })} />
   );
 
   if (isError && ctx.resolveError) return (
