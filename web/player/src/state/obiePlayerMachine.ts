@@ -185,25 +185,34 @@ export const heartbeatActor = fromCallback<ObiePlayerEvent, HeartbeatActorInput>
   ({ input, sendBack }) => {
     const { playerId } = input;
 
+    // Explicit types because Supabase's generated types can't infer partial selects
+    type PlayerRow = {
+      priority_player_id:        string | null;
+      priority_selection_pending: boolean;
+      status:                    string | null;
+    };
+
     const tick = async () => {
       try {
         await callPlayerControl({ player_id: playerId, action: 'heartbeat' });
 
-        const { data } = await supabase
+        const { data: rawData } = await supabase
           .from('players')
           .select('priority_player_id, priority_selection_pending, status')
           .eq('id', playerId)
           .single();
 
+        const data = rawData as PlayerRow | null;
         if (!data) return;
 
         // Check if current master is offline (for slave overlay)
         if (data.priority_player_id && data.priority_player_id !== playerId) {
-          const { data: masterRow } = await supabase
+          const { data: rawMaster } = await supabase
             .from('players')
             .select('status')
             .eq('id', data.priority_player_id)
             .single();
+          const masterRow = rawMaster as { status: string | null } | null;
           const offline = !masterRow || masterRow.status !== 'online';
           sendBack({ type: 'MASTER_OFFLINE_CHANGE', offline });
         }
