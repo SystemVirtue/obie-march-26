@@ -99,7 +99,6 @@ function App() {
   const { reportStatus, isMasterOffline: heartbeatMasterOffline } = usePlayerHeartbeat({
     isSlavePlayer,
     playerId: PLAYER_ID,
-    sessionId: sessionIdRef.current,
     declinedClaimForRef,
     onPriorityLost: useCallback(() => {
       // Another player has claimed master (or admin force-assigned it).

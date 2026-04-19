@@ -27,8 +27,6 @@ import type { RealtimeChannel } from '@supabase/supabase-js';
 type UsePlayerHeartbeatArgs = {
   isSlavePlayer: boolean;
   playerId: string;
-  /** Stable session ID for this browser tab — must be the same UUID used in register_session */
-  sessionId: string;
   /** Called when this player has lost priority (another player claimed master) */
   onPriorityLost?: () => void;
   /**
@@ -49,7 +47,6 @@ type UsePlayerHeartbeatArgs = {
 export function usePlayerHeartbeat({
   isSlavePlayer,
   playerId,
-  sessionId,
   onPriorityLost,
   onPrioritySelectionPending,
   declinedClaimForRef,
