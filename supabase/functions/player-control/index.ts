@@ -74,11 +74,11 @@ Deno.serve(async (req)=>{
       const selectionPending  = players?.[0]?.priority_selection_pending ?? false;
 
       // Case 1: This player IS the current master → confirm/restore master status.
-      // We call set_priority_player_global to ensure all rows are in sync (handles
-      // edge cases where rows diverged due to earlier partial updates).
+      // Use claim_priority_player (not set_priority_player_global) so that
+      // priority_selection_pending is always cleared when the master reconnects.
       if (currentPriorityId === player_id) {
-        const { error: updateError } = await supabase.rpc('set_priority_player_global', {
-          p_priority_player_id: player_id
+        const { error: updateError } = await supabase.rpc('claim_priority_player', {
+          p_player_id: player_id
         });
         if (updateError) throw updateError;
 
@@ -94,13 +94,15 @@ Deno.serve(async (req)=>{
       }
 
       // Case 2: Admin has triggered a reset → inform the player so it can show
-      // the claim-master modal. Do NOT auto-assign anything here.
+      // the claim-master modal. Return currentPriorityId so the frontend can
+      // record which master the user declines (prevents modal re-showing).
       if (selectionPending) {
-        console.log(`[player-control] Player ${player_id} registered as slave — priority selection pending`);
+        console.log(`[player-control] Player ${player_id} registered as slave — priority selection pending (current master: ${currentPriorityId})`);
         return new Response(JSON.stringify({
           success: true,
           is_priority: false,
           priority_selection_pending: true,
+          current_priority_id: currentPriorityId,
         }), {
           status: 200,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -108,9 +110,10 @@ Deno.serve(async (req)=>{
       }
 
       // Case 3: No priority player set yet (first-run / clean state) → claim master.
+      // Use claim_priority_player so priority_selection_pending is cleared atomically.
       if (!currentPriorityId) {
-        const { error: updateError } = await supabase.rpc('set_priority_player_global', {
-          p_priority_player_id: player_id
+        const { error: updateError } = await supabase.rpc('claim_priority_player', {
+          p_player_id: player_id
         });
         if (updateError) throw updateError;
 

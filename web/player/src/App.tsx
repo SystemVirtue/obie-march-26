@@ -272,10 +272,10 @@ function App() {
             localStorage.removeItem('obie_priority_player_id');
           }
           // Admin has pending priority reassignment — show the claim modal.
-          // We don't yet have the master ID at this point; store null so
-          // the decline handler records null (first-connect decline guard).
+          // Store the current master's ID so the decline guard can suppress
+          // re-shows for the same master on subsequent heartbeats.
           if (result.priority_selection_pending) {
-            pendingMasterIdRef.current = null;
+            pendingMasterIdRef.current = (result as any).current_priority_id ?? null;
             setShowPriorityModal(true);
           }
         }
