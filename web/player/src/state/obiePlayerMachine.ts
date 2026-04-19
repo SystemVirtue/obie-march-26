@@ -86,7 +86,7 @@ export type ObiePlayerEvent =
   | { type: 'SETTINGS_UPDATE'; settings: PlayerSettings }
   // ── Coordination (from heartbeatActor + realtimeActor) ──
   | { type: 'PRIORITY_LOST' }
-  | { type: 'PRIORITY_SELECTION_PENDING'; masterId: string }
+  | { type: 'PRIORITY_SELECTION_PENDING'; masterId: string | null }
   | { type: 'MASTER_OFFLINE_CHANGE'; offline: boolean }
   // ── Init result (from initActor) ──
   | { type: 'INIT_DONE'; isMaster: boolean; prioritySelectionPending: boolean; currentPriorityId: string | null }
@@ -114,6 +114,10 @@ export const realtimeActor = fromCallback<ObiePlayerEvent, RealtimeActorInput>(
   ({ input, sendBack }) => {
     const { playerId } = input;
     let prevState: string | null = null;
+    // Tracks whether this actor instance has observed itself as master at least
+    // once. Used to only send PRIORITY_LOST on a master→non-master transition,
+    // not on every update for players that were always slaves.
+    let wasMaster = false;
     let channel: RealtimeChannel;
 
     channel = supabase
@@ -155,16 +159,30 @@ export const realtimeActor = fromCallback<ObiePlayerEvent, RealtimeActorInput>(
 
       // ── players (priority watch) ───────────────────────────────────────────
       // Fires when admin resets priority or another player claims master.
+      // Requires: players table in Realtime publication + REPLICA IDENTITY FULL
+      // (both set in migrations 20260419000003 and 20260419000004).
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'players',
           filter: `id=eq.${playerId}` },
         (payload) => {
           const row = payload.new as { priority_player_id: string | null; priority_selection_pending: boolean };
-          if (row.priority_player_id !== playerId) {
+
+          // Track master status in closure so we only fire PRIORITY_LOST when
+          // this actor has observed a master→non-master transition, not on every
+          // update for players that were always slaves.
+          if (row.priority_player_id === playerId) {
+            wasMaster = true;
+          } else if (wasMaster) {
+            // Was master, now isn't — genuine demotion event
             sendBack({ type: 'PRIORITY_LOST' });
+            wasMaster = false;
           }
-          if (row.priority_selection_pending && row.priority_player_id) {
+
+          // Fire PRIORITY_SELECTION_PENDING whenever pending=true, regardless
+          // of whether priority_player_id is null. Null means no master exists —
+          // any player should be able to claim. The machine guard handles dedup.
+          if (row.priority_selection_pending) {
             sendBack({ type: 'PRIORITY_SELECTION_PENDING', masterId: row.priority_player_id });
           }
         }
@@ -217,11 +235,16 @@ export const heartbeatActor = fromCallback<ObiePlayerEvent, HeartbeatActorInput>
           sendBack({ type: 'MASTER_OFFLINE_CHANGE', offline });
         }
 
-        // Forward raw priority state — machine guards handle the business logic
+        // Forward priority state — machine guards enforce per-role behaviour.
+        // PRIORITY_LOST: send even for non-masters; the isCurrentMaster guard
+        // in the machine will discard it if this player is already a slave.
         if (data.priority_player_id !== playerId) {
           sendBack({ type: 'PRIORITY_LOST' });
         }
-        if (data.priority_selection_pending && data.priority_player_id) {
+        // Send PRIORITY_SELECTION_PENDING whenever pending=true, regardless of
+        // priority_player_id being null. Null means no master has been elected
+        // yet — all players should be offered the chance to claim.
+        if (data.priority_selection_pending) {
           sendBack({ type: 'PRIORITY_SELECTION_PENDING', masterId: data.priority_player_id });
         }
       } catch (e) {
