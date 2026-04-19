@@ -71,9 +71,9 @@ Deno.serve(async (req)=>{
         if (!otherPlayerActive) {
           // No other player active — safe to restore priority
           // Update ALL player rows to keep the global priority designation consistent
-          const { error: updateError } = await supabase
-            .from('players')
-            .update({ priority_player_id: player_id });
+          const { error: updateError } = await supabase.rpc('set_priority_player_global', {
+            p_priority_player_id: player_id
+          });
 
           if (updateError) throw updateError;
 
@@ -132,9 +132,9 @@ Deno.serve(async (req)=>{
         if (!otherPlayerActive) {
           // Safe to claim / reclaim priority
           // Update ALL player rows to keep the global priority designation consistent
-          const { error: updateError } = await supabase
-            .from('players')
-            .update({ priority_player_id: player_id });
+          const { error: updateError } = await supabase.rpc('set_priority_player_global', {
+            p_priority_player_id: player_id
+          });
 
           if (updateError) throw updateError;
 
@@ -174,9 +174,7 @@ Deno.serve(async (req)=>{
     // Handle reset priority player
     if (action === 'reset_priority') {
       // Clear priority_player_id from ALL player rows (it's a global master designation)
-      const { error: resetError } = await supabase
-        .from('players')
-        .update({ priority_player_id: null });
+      const { error: resetError } = await supabase.rpc('reset_priority_player_global');
 
       if (resetError) throw resetError;
 
