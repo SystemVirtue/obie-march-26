@@ -44,6 +44,13 @@ Deno.serve(async (req)=>{
     }
 
     // Handle session registration for priority player mechanism
+    //
+    // New rules (sticky priority):
+    //   - If this player already IS the priority player → confirm master.
+    //   - If priority_selection_pending = true → return pending flag so the
+    //     player can show a confirmation modal. Do NOT auto-claim.
+    //   - If no priority player set at all → first-run claim (initial setup).
+    //   - Otherwise → register as slave.
     if (action === 'register_session') {
       if (!session_id) {
         return new Response(JSON.stringify({
@@ -57,131 +64,108 @@ Deno.serve(async (req)=>{
         });
       }
 
-      // Check if this player was previously priority (stored_player_id matches)
-      // But FIRST check if another player is currently active — can't restore while
-      // another master is running.
-      if (stored_player_id === player_id) {
-        const { data: activePlayers } = await supabase
-          .from('player_status')
-          .select('player_id, state')
-          .in('state', ['loading', 'buffering', 'playing', 'paused']);
-
-        const otherPlayerActive = activePlayers?.some((p: any) => p.player_id !== player_id) ?? false;
-
-        if (!otherPlayerActive) {
-          // No other player active — safe to restore priority
-          // Update ALL player rows to keep the global priority designation consistent
-          const { error: updateError } = await supabase.rpc('set_priority_player_global', {
-            p_priority_player_id: player_id
-          });
-
-          if (updateError) throw updateError;
-
-          console.log(`[player-control] Player ${player_id} restored as priority player (session: ${session_id})`);
-          return new Response(JSON.stringify({
-            success: true,
-            is_priority: true,
-            restored: true
-          }), {
-            status: 200,
-            headers: {
-              ...corsHeaders,
-              'Content-Type': 'application/json'
-            }
-          });
-        } else {
-          // Another player is active — become slave instead
-          console.log(`[player-control] Player ${player_id} cannot restore (another player is active), registering as slave (session: ${session_id})`);
-          return new Response(JSON.stringify({
-            success: true,
-            is_priority: false
-          }), {
-            status: 200,
-            headers: {
-              ...corsHeaders,
-              'Content-Type': 'application/json'
-            }
-          });
-        }
-      }
-
-      // Check if there's already a priority player
-      // Query ANY player row to get the global priority designation (they should all be consistent)
+      // Read global priority state from any player row (all rows are kept consistent)
       const { data: players } = await supabase
         .from('players')
-        .select('priority_player_id')
+        .select('priority_player_id, priority_selection_pending')
         .limit(1);
 
       const currentPriorityId = players?.[0]?.priority_player_id ?? null;
+      const selectionPending  = players?.[0]?.priority_selection_pending ?? false;
 
-      // Allow claim/reclaim if: no priority player set, OR this player WAS the priority player.
-      // A page reload clears localStorage, so we can't rely solely on stored_player_id —
-      // the DB record is the authoritative source for whether this player should be priority.
-      if (!currentPriorityId || currentPriorityId === player_id) {
-        // Check if any players are currently active. Must check for ALL active states:
-        // loading (playlist/media loaded), buffering, playing, paused. Do NOT check just
-        // 'playing' — when a playlist is loaded, state flips to 'loading' and a second
-        // instance must not claim master during that transition window.
-        const { data: activePlayers } = await supabase
-          .from('player_status')
-          .select('player_id, state')
-          .in('state', ['loading', 'buffering', 'playing', 'paused']);
+      // Case 1: This player IS the current master → confirm/restore master status.
+      // We call set_priority_player_global to ensure all rows are in sync (handles
+      // edge cases where rows diverged due to earlier partial updates).
+      if (currentPriorityId === player_id) {
+        const { error: updateError } = await supabase.rpc('set_priority_player_global', {
+          p_priority_player_id: player_id
+        });
+        if (updateError) throw updateError;
 
-        const otherPlayerActive = activePlayers?.some((p: any) => p.player_id !== player_id) ?? false;
-
-        if (!otherPlayerActive) {
-          // Safe to claim / reclaim priority
-          // Update ALL player rows to keep the global priority designation consistent
-          const { error: updateError } = await supabase.rpc('set_priority_player_global', {
-            p_priority_player_id: player_id
-          });
-
-          if (updateError) throw updateError;
-
-          const verb = currentPriorityId === player_id ? 'reclaimed' : 'registered as';
-          console.log(`[player-control] Player ${player_id} ${verb} priority player (session: ${session_id})`);
-          return new Response(JSON.stringify({
-            success: true,
-            is_priority: true,
-            restored: currentPriorityId === player_id,
-          }), {
-            status: 200,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-          });
-        } else {
-          // Another player is actively running — become slave
-          console.log(`[player-control] Player ${player_id} registered as slave (another player is active, session: ${session_id})`);
-          return new Response(JSON.stringify({
-            success: true,
-            is_priority: false
-          }), {
-            status: 200,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-          });
-        }
-      } else {
-        // A different player holds priority
-        console.log(`[player-control] Player ${player_id} registered as slave (priority held by ${currentPriorityId}, session: ${session_id})`);
+        console.log(`[player-control] Player ${player_id} confirmed as priority player`);
         return new Response(JSON.stringify({
           success: true,
-          is_priority: false
+          is_priority: true,
+          priority_selection_pending: false,
         }), {
           status: 200,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       }
-    }
-    // Handle reset priority player
-    if (action === 'reset_priority') {
-      // Clear priority_player_id from ALL player rows (it's a global master designation)
-      const { error: resetError } = await supabase.rpc('reset_priority_player_global');
 
-      if (resetError) throw resetError;
+      // Case 2: Admin has triggered a reset → inform the player so it can show
+      // the claim-master modal. Do NOT auto-assign anything here.
+      if (selectionPending) {
+        console.log(`[player-control] Player ${player_id} registered as slave — priority selection pending`);
+        return new Response(JSON.stringify({
+          success: true,
+          is_priority: false,
+          priority_selection_pending: true,
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
 
-      console.log(`[player-control] Priority player reset globally by admin ${player_id}`);
+      // Case 3: No priority player set yet (first-run / clean state) → claim master.
+      if (!currentPriorityId) {
+        const { error: updateError } = await supabase.rpc('set_priority_player_global', {
+          p_priority_player_id: player_id
+        });
+        if (updateError) throw updateError;
+
+        console.log(`[player-control] Player ${player_id} claimed priority player (first run)`);
+        return new Response(JSON.stringify({
+          success: true,
+          is_priority: true,
+          priority_selection_pending: false,
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Case 4: Another player holds priority → register as slave.
+      console.log(`[player-control] Player ${player_id} registered as slave (priority held by ${currentPriorityId})`);
       return new Response(JSON.stringify({
         success: true,
-        message: 'Priority player reset — next player to connect will become MASTER'
+        is_priority: false,
+        priority_selection_pending: false,
+      }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // Handle explicit master claim from a player (after user confirms the modal)
+    if (action === 'claim_priority') {
+      const { error: claimError } = await supabase.rpc('claim_priority_player', {
+        p_player_id: player_id
+      });
+      if (claimError) throw claimError;
+
+      console.log(`[player-control] Player ${player_id} claimed priority via explicit confirmation`);
+      return new Response(JSON.stringify({
+        success: true,
+        is_priority: true,
+      }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      });
+    }
+
+    // Handle reset priority player
+    // NOTE: Does NOT clear priority_player_id — the old master remains master
+    // until a new player explicitly claims via claim_priority. This ensures
+    // there is always exactly one master at any given time.
+    if (action === 'reset_priority') {
+      const { error: resetError } = await supabase.rpc('reset_priority_player_global');
+      if (resetError) throw resetError;
+
+      console.log(`[player-control] Priority reset requested by admin — awaiting player confirmation`);
+      return new Response(JSON.stringify({
+        success: true,
+        message: 'Priority reassignment pending — players will be prompted to claim master'
       }), {
         status: 200,
         headers: {

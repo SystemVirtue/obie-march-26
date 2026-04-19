@@ -1,17 +1,25 @@
 /**
- * usePlayerHeartbeat — keepalive + priority auto-reclaim
+ * usePlayerHeartbeat — keepalive, priority self-demotion, and offline detection.
  *
- * Changes from original:
- *   - After each heartbeat, slave players check whether priority_player_id
- *     was just cleared by the DB failover trigger (dead master). If so,
- *     they immediately attempt register_session to reclaim master.
- *   - onPriorityReclaimed callback lets App.tsx flip isSlavePlayer→false
- *     and re-enable queue progression without a page reload.
- *   - Session ID is stable across heartbeat cycles (stored in a ref) so
- *     register_session re-attempts are idempotent.
+ * Priority assignment is now STICKY — auto-reclaim has been removed.
+ * A slave player will NEVER silently steal master. The only way to
+ * change master is:
+ *   1. Admin clicks "Reset Priority Player" (sets priority_selection_pending).
+ *   2. A player's user clicks "Yes" in the claim modal (calls claim_priority).
+ *
+ * This hook handles:
+ *   - 30s keepalive heartbeats.
+ *   - Master self-demotion: detects when the DB no longer lists this player
+ *     as master (e.g. another player just claimed it) and calls onPriorityLost.
+ *   - Pending detection: when the admin triggers a reset, slaves see
+ *     priority_selection_pending=true and get onPrioritySelectionPending called
+ *     so the UI can show the claim modal. A per-master-id decline guard prevents
+ *     the modal from re-appearing after the user clicks "No".
+ *   - Master-offline detection: reports isMasterOffline so slave UI can display
+ *     "SLAVE — MASTER OFFLINE" when the designated master has gone stale.
  */
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase, callPlayerControl, type PlayerStatus } from '@shared/supabase-client';
 import { HEARTBEAT_INTERVAL_MS } from '../../../shared/constants';
 import type { RealtimeChannel } from '@supabase/supabase-js';
@@ -21,17 +29,35 @@ type UsePlayerHeartbeatArgs = {
   playerId: string;
   /** Stable session ID for this browser tab — must be the same UUID used in register_session */
   sessionId: string;
-  /** Called when a slave player successfully reclaims master after failover */
-  onPriorityReclaimed?: () => void;
-  /** Called when the master player detects it has lost priority (e.g. after Reset Priority Player) */
+  /** Called when this player has lost priority (another player claimed master) */
   onPriorityLost?: () => void;
+  /**
+   * Called when priority_selection_pending becomes true (admin triggered reset).
+   * Receives the current master player ID so the caller can record which master
+   * the user declines, preventing re-triggers on subsequent heartbeats.
+   * Fires at most once per master-id so repeated heartbeats don't re-show the
+   * modal after the user has declined for the current master.
+   */
+  onPrioritySelectionPending?: (masterId: string) => void;
+  /**
+   * Ref set by the caller to the master player ID that the user most recently
+   * declined to claim. The hook reads this ref to suppress duplicate modal triggers.
+   */
+  declinedClaimForRef: React.RefObject<string | null>;
 };
 
-export function usePlayerHeartbeat({ isSlavePlayer, playerId, sessionId, onPriorityReclaimed, onPriorityLost }: UsePlayerHeartbeatArgs) {
-  const prevStateRef    = useRef<PlayerStatus['state'] | undefined>(undefined);
-  const channelRef      = useRef<RealtimeChannel | null>(null);
-  const isSlaveRef      = useRef(isSlavePlayer);
-  const reclaimInFlight = useRef(false);
+export function usePlayerHeartbeat({
+  isSlavePlayer,
+  playerId,
+  sessionId,
+  onPriorityLost,
+  onPrioritySelectionPending,
+  declinedClaimForRef,
+}: UsePlayerHeartbeatArgs) {
+  const prevStateRef = useRef<PlayerStatus['state'] | undefined>(undefined);
+  const channelRef   = useRef<RealtimeChannel | null>(null);
+  const isSlaveRef   = useRef(isSlavePlayer);
+  const [isMasterOffline, setIsMasterOffline] = useState(false);
 
   // Keep isSlaveRef in sync so the heartbeat closure always sees current value
   useEffect(() => { isSlaveRef.current = isSlavePlayer; }, [isSlavePlayer]);
@@ -47,35 +73,48 @@ export function usePlayerHeartbeat({ isSlavePlayer, playerId, sessionId, onPrior
         return;
       }
 
-      // ── Priority check after every heartbeat ─────────────────────────────
-      // Read the DB once per heartbeat cycle.  Both the master self-demotion
-      // check and the slave reclaim check need the same row, so we fetch it
-      // once and branch on isSlaveRef.current below.
+      // ── Read priority state after every heartbeat ─────────────────────────
       let priorityPlayerId: string | null = null;
-      let prioritySessionId: string | null = null;
+      let selectionPending = false;
+      let masterStatus: string | null = null;
+
       try {
         const { data: row } = await supabase
           .from('players')
-          .select('priority_player_id, priority_session_id')
+          .select('priority_player_id, priority_selection_pending')
           .eq('id', playerId)
           .single();
-        priorityPlayerId  = (row as any)?.priority_player_id  ?? null;
-        prioritySessionId = (row as any)?.priority_session_id ?? null;
+        priorityPlayerId = (row as any)?.priority_player_id  ?? null;
+        selectionPending = (row as any)?.priority_selection_pending ?? false;
       } catch (e) {
         console.warn('[Player] Heartbeat DB check failed:', e);
         return;
       }
 
-      if (!isSlaveRef.current) {
-        // ── Master self-demotion ────────────────────────────────────────────
-        // The admin may have clicked "Reset Priority Player", which clears
-        // priority_player_id in the DB.  A new player will then claim master.
-        // We detect this here so the OLD master immediately stops driving the
-        // queue and shows the SLAVE watermark — no page reload needed.
-        const stillMaster =
-          priorityPlayerId === playerId &&
-          (prioritySessionId === sessionId || prioritySessionId === null);
+      // ── Master-offline detection (slave only) ─────────────────────────────
+      // Fetch the master player's online status so the UI can show
+      // "SLAVE — MASTER OFFLINE" when the designated master has gone stale.
+      if (isSlaveRef.current && priorityPlayerId && priorityPlayerId !== playerId) {
+        try {
+          const { data: masterRow } = await supabase
+            .from('players')
+            .select('status')
+            .eq('id', priorityPlayerId)
+            .single();
+          masterStatus = (masterRow as any)?.status ?? null;
+        } catch {
+          // Non-fatal — leave masterStatus null
+        }
+        setIsMasterOffline(masterStatus === 'offline');
+      } else {
+        setIsMasterOffline(false);
+      }
 
+      if (!isSlaveRef.current) {
+        // ── Master self-demotion ──────────────────────────────────────────────
+        // Another player has claimed master (or admin force-assigned it).
+        // Detect this so the old master immediately stops driving the queue.
+        const stillMaster = priorityPlayerId === playerId;
         if (!stillMaster) {
           console.log('[Player] Lost priority — demoting to slave');
           onPriorityLost?.();
@@ -83,40 +122,25 @@ export function usePlayerHeartbeat({ isSlavePlayer, playerId, sessionId, onPrior
         return;
       }
 
-      // ── Slave auto-reclaim ────────────────────────────────────────────────
-      // Only attempt if we're currently a slave and no reclaim is in-flight.
-      // Migration 000003/000004 clears priority_player_id when the master goes
-      // offline; migration 000005 also clears it on an explicit reset.
-      if (reclaimInFlight.current) return;
+      // ── Pending-claim notification (slave only) ───────────────────────────
+      // When the admin resets priority, priority_selection_pending becomes true.
+      // We show the claim modal ONCE per master-id — if the user already
+      // declined for the current master, we stay silent until a new master is
+      // designated (i.e. someone claims it and a fresh reset happens).
+      if (selectionPending && priorityPlayerId !== null) {
+        const alreadyDeclinedForThisMaster =
+          declinedClaimForRef.current === priorityPlayerId;
 
-      try {
-        // Master pointer cleared → try to claim it
-        if (priorityPlayerId !== null) return;
-
-        reclaimInFlight.current = true;
-        console.log('[Player] Priority player gone — attempting reclaim...');
-
-        const result = await callPlayerControl({
-          player_id:  playerId,
-          action:     'register_session',
-          session_id: sessionId,
-        });
-
-        if (result.is_priority) {
-          console.log('[Player] ✓ Reclaimed master after priority player died');
-          onPriorityReclaimed?.();
+        if (!alreadyDeclinedForThisMaster) {
+          onPrioritySelectionPending?.(priorityPlayerId);
         }
-      } catch (e) {
-        console.warn('[Player] Reclaim attempt failed:', e);
-      } finally {
-        reclaimInFlight.current = false;
       }
     };
 
     send(); // immediate on mount
     const id = setInterval(send, HEARTBEAT_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [playerId, onPriorityReclaimed]);
+  }, [playerId, onPriorityLost, onPrioritySelectionPending, declinedClaimForRef]);
 
   // Broadcast channel for live progress reports (priority players only)
   useEffect(() => {
@@ -166,5 +190,5 @@ export function usePlayerHeartbeat({ isSlavePlayer, playerId, sessionId, onPrior
     }
   }, [isSlavePlayer, playerId]);
 
-  return { reportStatus };
+  return { reportStatus, isMasterOffline };
 }

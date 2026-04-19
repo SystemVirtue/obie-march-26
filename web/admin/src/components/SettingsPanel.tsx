@@ -274,12 +274,15 @@ export function SettingsPanel({ view, settings, prefs, playerId }: { view: ViewI
           {/* Priority player reset */}
           <div style={{ marginTop: 16, padding: 18, borderRadius: 14, background: 'rgba(255,255,255,0.025)', border: '1px solid var(--border)', position: 'relative' }}>
             <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, color: '#fff', marginBottom: 6 }}>Priority Player</div>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)', marginBottom: 12 }}>
-              Clears the current master designation. The next Player endpoint to refresh or connect will assume MASTER status.
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)', marginBottom: 12, lineHeight: 1.6 }}>
+              The current MASTER player remains active even if offline — priority is sticky.
+              Use this button to trigger a re-assignment: a confirmation pop-over will appear
+              on the next Player screen to connect, letting staff explicitly claim MASTER status.
+              The existing master remains in charge until a new one confirms.
             </div>
 
             <Btn variant="ghost" onClick={handleResetPriorityPlayer} disabled={priorityResetState !== 'idle'}>
-              {priorityResetState === 'loading' ? '⏳ Resetting...' : '🔄 Reset Priority Player'}
+              {priorityResetState === 'loading' ? '⏳ Resetting...' : '🔄 Re-Assign Priority Player'}
             </Btn>
 
             {/* Confirmation popover */}
@@ -291,10 +294,11 @@ export function SettingsPanel({ view, settings, prefs, playerId }: { view: ViewI
                 boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
               }}>
                 <div style={{ fontFamily: 'var(--font-display)', fontSize: 13, color: '#f59e0b', fontWeight: 600, marginBottom: 8 }}>
-                  Reset Priority Player?
+                  Re-Assign Priority Player?
                 </div>
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'rgba(255,255,255,0.7)', marginBottom: 14, lineHeight: 1.5 }}>
-                  The next PLAYER to refresh / connect will assume MASTER status.
+                  The current MASTER stays active until a player screen confirms the new assignment.
+                  A pop-over will appear on connecting Player screens asking staff to claim MASTER.
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button onClick={handleResetPriorityConfirm} style={{
@@ -316,14 +320,14 @@ export function SettingsPanel({ view, settings, prefs, playerId }: { view: ViewI
             {priorityResetState === 'loading' && (
               <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.3)', fontFamily: 'var(--font-mono)', fontSize: 11, color: '#60a5fa', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ animation: 'pulse 1s linear infinite', display: 'inline-block' }}>⟳</span>
-                Resetting priority — the next Player to connect will become MASTER...
+                Pending — Player screens will now be prompted to claim MASTER...
               </div>
             )}
 
             {/* Success banner */}
             {priorityResetState === 'done' && (
               <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', fontFamily: 'var(--font-mono)', fontSize: 11, color: '#4ade80' }}>
-                ✓ Priority cleared — the next Player to connect will assume MASTER status.
+                ✓ Re-assignment pending — Player screens will be prompted to confirm as MASTER.
               </div>
             )}
 

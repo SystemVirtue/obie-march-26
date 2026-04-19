@@ -17,6 +17,8 @@ export interface Player {
   last_heartbeat: string;
   active_playlist_id: string | null;
   priority_player_id: string | null;
+  /** True while the admin has triggered a reset and no player has yet claimed master */
+  priority_selection_pending: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -627,7 +629,7 @@ export async function callPlayerControl(params: {
   player_id: string;
   state?: 'idle' | 'playing' | 'paused' | 'error' | 'loading';
   progress?: number;
-  action?: 'heartbeat' | 'update' | 'ended' | 'skip' | 'register_session' | 'reset_priority';
+  action?: 'heartbeat' | 'update' | 'ended' | 'skip' | 'register_session' | 'reset_priority' | 'claim_priority';
   session_id?: string;
   stored_player_id?: string;
   current_media_id?: string;

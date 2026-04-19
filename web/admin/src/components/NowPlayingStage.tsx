@@ -145,12 +145,17 @@ export function NowPlayingStage({ status, queue, settings, players, activePlayer
               Connected Devices
             </div>
 
-            {/* One row per player device — hidden once heartbeat goes stale */}
-            {(players ?? []).filter(p => !isStale(p.last_heartbeat)).map(player => {
-              const isActive   = player.id === activePlayerId;
-              const isPriority = player.priority_player_id === player.id;
-              const roleLabel  = isPriority ? 'Priority' : 'Slave';
+            {/* One row per player device — shown even when offline (status dot changes colour) */}
+            {(players ?? []).map(player => {
+              const isActive        = player.id === activePlayerId;
+              const isPriority      = player.priority_player_id === player.id;
+              const isOffline       = isStale(player.last_heartbeat);
+              const selectionPending = (player as any).priority_selection_pending === true;
+              const roleLabel = isPriority
+                ? (isOffline ? 'Priority · Offline' : 'Priority')
+                : 'Slave';
               const roleColor  = isPriority ? '#a78bfa' : '#f59e0b';
+              const dotColor   = isOffline ? '#6b7280' : '#22c55e';
               const stateText  = isActive
                 ? (status?.state === 'playing' ? 'Playing'
                   : status?.state === 'paused'  ? 'Paused'
@@ -160,9 +165,9 @@ export function NowPlayingStage({ status, queue, settings, players, activePlayer
               return (
                 <div key={player.id} style={{ padding: '5px 8px', borderRadius: 8,
                   background: isActive ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.04)',
-                  marginBottom: 2 }}>
+                  marginBottom: 2, opacity: isOffline ? 0.65 : 1 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 2 }}>
-                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', flexShrink: 0 }} />
+                    <div style={{ width: 6, height: 6, borderRadius: '50%', background: dotColor, flexShrink: 0 }} />
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.5)',
                       textTransform: 'uppercase', letterSpacing: '0.06em', flex: 1 }}>
                       {player.jukebox_slug || player.name}
@@ -170,6 +175,13 @@ export function NowPlayingStage({ status, queue, settings, players, activePlayer
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: roleColor,
                       letterSpacing: '0.04em' }}>{roleLabel}</span>
                   </div>
+                  {/* Pending-selection badge */}
+                  {isPriority && selectionPending && (
+                    <div style={{ paddingLeft: 11, fontFamily: 'var(--font-mono)', fontSize: 9,
+                      color: '#f59e0b', letterSpacing: '0.04em' }}>
+                      ⏳ Re-assignment pending
+                    </div>
+                  )}
                   {stateText && (
                     <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9,
                       color: 'rgba(255,255,255,0.32)', paddingLeft: 11 }}>
@@ -223,7 +235,7 @@ export function NowPlayingStage({ status, queue, settings, players, activePlayer
             })()}
 
             {/* No-devices fallback */}
-            {!(players ?? []).filter(p => !isStale(p.last_heartbeat)).length &&
+            {!(players ?? []).length &&
              !(kioskSessions ?? []).filter(s => !isStale(s.last_active)).length && (
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.18)' }}>
                 No devices

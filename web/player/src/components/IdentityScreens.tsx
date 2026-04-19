@@ -36,8 +36,8 @@ export function JukeboxNamePrompt() {
   );
 }
 
-export function StatusOverlays({ state, playerReady, currentMedia, isSlavePlayer }: {
-  state?: string; playerReady: boolean; currentMedia: unknown; isSlavePlayer: boolean;
+export function StatusOverlays({ state, playerReady, currentMedia, isSlavePlayer, isMasterOffline }: {
+  state?: string; playerReady: boolean; currentMedia: unknown; isSlavePlayer: boolean; isMasterOffline?: boolean;
 }) {
   return (
     <>
@@ -74,7 +74,7 @@ export function StatusOverlays({ state, playerReady, currentMedia, isSlavePlayer
       {isSlavePlayer && (
         <div className="absolute bottom-0 left-0 right-0 flex justify-center items-end pb-4 pointer-events-none">
           <div className="text-5xl font-bold text-white pointer-events-none" style={{ fontFamily: 'Arial, sans-serif', opacity: 0.1 }}>
-            SLAVE
+            {isMasterOffline ? 'SLAVE — MASTER OFFLINE' : 'SLAVE'}
           </div>
         </div>
       )}

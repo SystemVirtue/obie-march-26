@@ -29,6 +29,7 @@ import {
 } from '@shared/supabase-client';
 
 import { ResolvingScreen, JukeboxNamePrompt, StatusOverlays } from './components/IdentityScreens';
+import { PriorityClaimModal } from './components/PriorityClaimModal';
 import { YouTubePlayer, type YouTubePlayerHandle  } from './players/YouTubePlayer';
 import { LocalVideoPlayer, type LocalVideoPlayerHandle } from './players/LocalVideoPlayer';
 import { YTMDesktopPlayer } from './players/YTMDesktopPlayer';
@@ -60,8 +61,16 @@ function App() {
   const [currentMedia, setCurrentMedia] = useState<MediaItem | null>(null);
   const [status, setStatus]             = useState<PlayerStatus | null>(null);
   const [settings, setSettings]         = useState<PlayerSettings | null>(null);
-  const [isSlavePlayer, setIsSlavePlayer] = useState(false);
-  const [localVideoUrl, setLocalVideoUrl]  = useState<string | null>(null);
+  const [isSlavePlayer, setIsSlavePlayer]       = useState(false);
+  const [showPriorityModal, setShowPriorityModal] = useState(false);
+  const [isMasterOffline, setIsMasterOffline]     = useState(false);
+  const [localVideoUrl, setLocalVideoUrl]          = useState<string | null>(null);
+  // Tracks which master player ID the user last declined to claim.
+  // Prevents the claim modal from re-appearing on subsequent heartbeats
+  // for the same master. Cleared when the master changes.
+  const declinedClaimForRef  = useRef<string | null>(null);
+  // Current master ID when the pending-selection modal was triggered.
+  const pendingMasterIdRef   = useRef<string | null>(null);
 
   // ── Derived ────────────────────────────────────────────────────────────────
   const playerMode  = settings?.player_mode ?? 'iframe';
@@ -87,19 +96,31 @@ function App() {
   });
 
   // ── Heartbeat / status reporting ───────────────────────────────────────────
-  const { reportStatus } = usePlayerHeartbeat({
+  const { reportStatus, isMasterOffline: heartbeatMasterOffline } = usePlayerHeartbeat({
     isSlavePlayer,
     playerId: PLAYER_ID,
     sessionId: sessionIdRef.current,
-    onPriorityReclaimed: useCallback(() => {
-      // Dead master's priority_player_id was cleared by DB failover trigger,
-      // and we've successfully reclaimed master. Flip slave flag so this player
-      // resumes driving queue progression immediately — no page reload needed.
-      console.log('[App] Reclaimed master — re-enabling queue progression');
-      setIsSlavePlayer(false);
-      localStorage.setItem('obie_priority_player_id', PLAYER_ID);
-    }, [PLAYER_ID]),
+    declinedClaimForRef,
+    onPriorityLost: useCallback(() => {
+      // Another player has claimed master (or admin force-assigned it).
+      // Demote this player to slave immediately — no page reload needed.
+      console.log('[App] Lost priority — demoting to slave');
+      setIsSlavePlayer(true);
+      localStorage.removeItem('obie_priority_player_id');
+    }, []),
+    onPrioritySelectionPending: useCallback((masterId: string) => {
+      // Admin triggered "Reset Priority Player".
+      // Record the master ID so we know which one the user is declining.
+      pendingMasterIdRef.current = masterId;
+      console.log('[App] Priority selection pending — showing claim modal');
+      setShowPriorityModal(true);
+    }, []),
   });
+
+  // Keep isMasterOffline state in sync with what the heartbeat reports
+  useEffect(() => {
+    setIsMasterOffline(heartbeatMasterOffline);
+  }, [heartbeatMasterOffline]);
 
   // ── Karaoke ────────────────────────────────────────────────────────────────
   useKaraokeLyrics({
@@ -247,8 +268,17 @@ function App() {
 
         if (result.is_priority) {
           localStorage.setItem('obie_priority_player_id', PLAYER_ID);
-        } else if (storedPlayerId === PLAYER_ID) {
-          localStorage.removeItem('obie_priority_player_id');
+        } else {
+          if (storedPlayerId === PLAYER_ID) {
+            localStorage.removeItem('obie_priority_player_id');
+          }
+          // Admin has pending priority reassignment — show the claim modal.
+          // We don't yet have the master ID at this point; store null so
+          // the decline handler records null (first-connect decline guard).
+          if (result.priority_selection_pending) {
+            pendingMasterIdRef.current = null;
+            setShowPriorityModal(true);
+          }
         }
       } catch (err) {
         console.error('[App] Initialization failed:', err);
@@ -327,7 +357,28 @@ function App() {
         playerReady={playback.phase !== 'idle'}
         currentMedia={currentMedia}
         isSlavePlayer={isSlavePlayer}
+        isMasterOffline={isMasterOffline}
       />
+
+      {/* Priority claim modal — appears on slaves when admin triggers reset */}
+      {showPriorityModal && (
+        <PriorityClaimModal
+          onClaim={async () => {
+            await callPlayerControl({ player_id: PLAYER_ID, action: 'claim_priority' });
+            setIsSlavePlayer(false);
+            setShowPriorityModal(false);
+            declinedClaimForRef.current = null;
+            localStorage.setItem('obie_priority_player_id', PLAYER_ID);
+            console.log('[App] Claimed master via modal confirmation');
+          }}
+          onDecline={() => {
+            // Record which master ID we declined for so we don't re-show
+            // on the next heartbeat cycle for the same master.
+            declinedClaimForRef.current = pendingMasterIdRef.current;
+            setShowPriorityModal(false);
+          }}
+        />
+      )}
     </div>
   );
 }
