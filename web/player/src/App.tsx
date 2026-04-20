@@ -125,12 +125,18 @@ function App() {
       }
 
       try {
+        const { data: freshStatus } = await supabase
+          .from('player_status')
+          .select('current_media_id')
+          .eq('player_id', PLAYER_ID)
+          .single();
+
         const result = await callPlayerControl({
           player_id:        PLAYER_ID,
           state:            'idle',
           progress:         1,
           action:           'ended',
-          current_media_id: ctx.currentMediaId ?? undefined,
+          current_media_id: freshStatus?.current_media_id ?? ctx.currentMediaId ?? undefined,
         });
 
         if (result?.next_item) {
