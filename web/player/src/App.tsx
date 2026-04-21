@@ -30,23 +30,23 @@ import {
 
 import { ResolvingScreen, JukeboxNamePrompt, StatusOverlays } from './components/IdentityScreens';
 import { PriorityClaimModal } from './components/PriorityClaimModal';
-import { YouTubePlayer, type YouTubePlayerHandle  } from './players/YouTubePlayer';
+import { YouTubePlayer, type YouTubePlayerHandle } from './players/YouTubePlayer';
 import { LocalVideoPlayer, type LocalVideoPlayerHandle } from './players/LocalVideoPlayer';
 import { YTMDesktopPlayer } from './players/YTMDesktopPlayer';
-import { usePlayerIdentity }  from './hooks/usePlayerIdentity';
+import { usePlayerIdentity } from './hooks/usePlayerIdentity';
 import { usePlayerHeartbeat } from './hooks/usePlayerHeartbeat';
-import { useKaraokeLyrics }   from './hooks/useKaraokeLyrics';
-import { usePlayerRealtime }  from './hooks/usePlayerRealtime';
-import { useQueueAdvance }    from './hooks/useQueueAdvance';
-import { useLoadingGuard }    from './hooks/useLoadingGuard';
-import { useFade }            from './hooks/useFade';
+import { useKaraokeLyrics } from './hooks/useKaraokeLyrics';
+import { usePlayerRealtime } from './hooks/usePlayerRealtime';
+import { useQueueAdvance } from './hooks/useQueueAdvance';
+import { useLoadingGuard } from './hooks/useLoadingGuard';
+import { useFade } from './hooks/useFade';
 import {
   playbackReducer,
   isAfterSkip as isAfterSkipPhase,
   type PlaybackPhase,
 } from './state/playbackMachine';
 
-const DEFAULT_PLAYER_ID          = import.meta.env.VITE_PLAYER_ID || '00000000-0000-0000-0000-000000000001';
+const DEFAULT_PLAYER_ID = import.meta.env.VITE_PLAYER_ID || '00000000-0000-0000-0000-000000000001';
 const PLAYER_JUKEBOX_STORAGE_KEY = 'obie_player_jukebox_slug';
 
 function App() {
@@ -57,37 +57,37 @@ function App() {
   });
 
   // ── Core state ─────────────────────────────────────────────────────────────
-  const [playback, dispatch]      = useReducer(playbackReducer, { phase: 'idle' } as PlaybackPhase);
+  const [playback, dispatch] = useReducer(playbackReducer, { phase: 'idle' } as PlaybackPhase);
   const [currentMedia, setCurrentMedia] = useState<MediaItem | null>(null);
-  const [status, setStatus]             = useState<PlayerStatus | null>(null);
-  const [settings, setSettings]         = useState<PlayerSettings | null>(null);
-  const [isSlavePlayer, setIsSlavePlayer]       = useState(false);
+  const [status, setStatus] = useState<PlayerStatus | null>(null);
+  const [settings, setSettings] = useState<PlayerSettings | null>(null);
+  const [isSlavePlayer, setIsSlavePlayer] = useState(false);
   const [showPriorityModal, setShowPriorityModal] = useState(false);
-  const [isMasterOffline, setIsMasterOffline]     = useState(false);
-  const [localVideoUrl, setLocalVideoUrl]          = useState<string | null>(null);
+  const [isMasterOffline, setIsMasterOffline] = useState(false);
+  const [localVideoUrl, setLocalVideoUrl] = useState<string | null>(null);
   // Tracks which master player ID the user last declined to claim.
   // Prevents the claim modal from re-appearing on subsequent heartbeats
   // for the same master. Cleared when the master changes.
-  const declinedClaimForRef  = useRef<string | null>(null);
+  const declinedClaimForRef = useRef<string | null>(null);
   // Current master ID when the pending-selection modal was triggered.
-  const pendingMasterIdRef   = useRef<string | null>(null);
+  const pendingMasterIdRef = useRef<string | null>(null);
 
   // ── Derived ────────────────────────────────────────────────────────────────
-  const playerMode  = settings?.player_mode ?? 'iframe';
-  const isYTMMode   = playerMode === 'ytm_desktop';
+  const playerMode = settings?.player_mode ?? 'iframe';
+  const isYTMMode = playerMode === 'ytm_desktop';
   const isLocalMode = !!localVideoUrl;
 
   // ── Refs ───────────────────────────────────────────────────────────────────
-  const ytPlayerRef    = useRef<YouTubePlayerHandle | null>(null);
+  const ytPlayerRef = useRef<YouTubePlayerHandle | null>(null);
   const localPlayerRef = useRef<LocalVideoPlayerHandle | null>(null);
-  const containerRef   = useRef<HTMLDivElement>(null);
-  const hasInitRef     = useRef(false);
-  const autoRadioRef   = useRef(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const hasInitRef = useRef(false);
+  const autoRadioRef = useRef(false);
   // Stable session ID for this browser tab — generated once on mount, shared
   // between register_session (init) and usePlayerHeartbeat (self-demotion check).
   // Previously each generated its own UUID, causing a mismatch that made the
   // heartbeat demote master to slave after the first cycle (~30 s).
-  const sessionIdRef   = useRef<string>(crypto.randomUUID());
+  const sessionIdRef = useRef<string>(crypto.randomUUID());
 
   // ── Fade ───────────────────────────────────────────────────────────────────
   const { fadeOut, fadeIn, snapSilent } = useFade({
@@ -109,7 +109,8 @@ function App() {
     }, []),
     onPrioritySelectionPending: useCallback((masterId: string) => {
       // Admin triggered "Reset Priority Player".
-      // Record the master ID so we know which one the user is declining.
+      // Clear the decline guard so the modal can be shown again for this reset.
+      declinedClaimForRef.current = null;
       pendingMasterIdRef.current = masterId;
       console.log('[App] Priority selection pending — showing claim modal');
       setShowPriorityModal(true);
@@ -135,8 +136,8 @@ function App() {
     isSlavePlayer,
     dispatch,
     fadeOut,
-    onNextMedia:   (media) => setCurrentMedia(media),
-    onQueueEmpty:  () => setCurrentMedia(null),
+    onNextMedia: (media) => setCurrentMedia(media),
+    onQueueEmpty: () => setCurrentMedia(null),
   });
 
   // Trigger advance when machine enters 'ending' and no call is in-flight
@@ -182,7 +183,7 @@ function App() {
     identityReady,
     activePlayerId,
     dispatch,
-    onStatusUpdate:   handleStatusUpdate,
+    onStatusUpdate: handleStatusUpdate,
     onSettingsUpdate: handleSettingsUpdate,
   });
 
@@ -191,7 +192,7 @@ function App() {
     playback,
     dispatch,
     getYTPlayerState: useCallback(() => ytPlayerRef.current?.getPlayerState() ?? null, []),
-    reportPlaying:    useCallback(() => reportStatus('playing'), [reportStatus]),
+    reportPlaying: useCallback(() => reportStatus('playing'), [reportStatus]),
   });
 
   // ── Load video when media changes ─────────────────────────────────────────
@@ -214,7 +215,7 @@ function App() {
         fadeOut().then(() => ytPlayerRef.current?.pause());
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playback.phase]);
 
   // ── Unplayable video removal ───────────────────────────────────────────────
@@ -257,9 +258,9 @@ function App() {
         const storedPlayerId = localStorage.getItem('obie_priority_player_id');
 
         const result = await callPlayerControl({
-          player_id:        PLAYER_ID,
-          action:           'register_session',
-          session_id:       sessionIdRef.current,  // same UUID used by heartbeat
+          player_id: PLAYER_ID,
+          action: 'register_session',
+          session_id: sessionIdRef.current,  // same UUID used by heartbeat
           stored_player_id: storedPlayerId ?? undefined,
         });
 
@@ -286,7 +287,7 @@ function App() {
   }, [identityReady, activePlayerId, PLAYER_ID]);
 
   // ── Early returns ──────────────────────────────────────────────────────────
-  if (!identityReady)  return <ResolvingScreen />;
+  if (!identityReady) return <ResolvingScreen />;
   if (!activePlayerId) return <JukeboxNamePrompt />;
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -324,8 +325,8 @@ function App() {
         <YTMDesktopPlayer
           currentMedia={currentMedia}
           dispatch={dispatch}
-          onAdminPause={() => {}}
-          onAdminResume={() => {}}
+          onAdminPause={() => { }}
+          onAdminResume={() => { }}
         />
       )}
 

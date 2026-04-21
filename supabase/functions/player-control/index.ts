@@ -185,14 +185,22 @@ Deno.serve(async (req)=>{
       const currentPriorityId = before?.[0]?.priority_player_id ?? null;
 
       const { error: resetError } = await supabase.rpc('reset_priority_player_global');
-      if (resetError) throw resetError;
+      if (resetError) {
+        console.error('[player-control] reset_priority_player_global RPC error:', resetError);
+        throw resetError;
+      }
 
-      // Log the reset request
-      await supabase.from('priority_player_events').insert({
-        event_type: 'reset_requested',
-        player_id:  currentPriorityId,
-        notes:      'Admin triggered re-assignment',
-      });
+      // Log the reset request (non-critical - don't fail if this errors)
+      try {
+        await supabase.from('priority_player_events').insert({
+          event_type: 'reset_requested',
+          player_id:  currentPriorityId,
+          notes:      'Admin triggered re-assignment',
+        });
+      } catch (logError) {
+        console.error('[player-control] Failed to log priority reset event (non-critical):', logError);
+        // Continue anyway - the reset succeeded even if logging failed
+      }
 
       console.log(`[player-control] Priority reset by admin — current master: ${currentPriorityId}, awaiting player confirmation`);
       return new Response(JSON.stringify({
