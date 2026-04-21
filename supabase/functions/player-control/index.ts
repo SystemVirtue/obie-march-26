@@ -408,7 +408,15 @@ Deno.serve(async (req)=>{
     });
   } catch (error) {
     console.error('Player control error:', error);
-    const message = error instanceof Error ? error.message : String(error);
+    let message = 'Unknown error';
+    if (error instanceof Error) {
+      message = error.message;
+    } else if (error && typeof error === 'object') {
+      // Handle Supabase error objects which are plain objects with message property
+      message = (error as any).message || JSON.stringify(error);
+    } else {
+      message = String(error);
+    }
     return new Response(JSON.stringify({
       error: 'Internal server error',
       message
