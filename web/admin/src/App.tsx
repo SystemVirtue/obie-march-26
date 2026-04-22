@@ -337,14 +337,22 @@ function App() {
 
   const handleSkip = async () => {
     if (isSkipping) return;
-    setIsSkipping(true);
-    // Optimistic: remove current item locally so it disappears immediately
+
+    // Check if there's actually something to skip
     const currentMediaId = status?.current_media_id;
     const currentQueueItem = queue.find(q => q.media_item_id === currentMediaId);
+
+    if (!currentQueueItem) {
+      console.warn('[Admin] Skip attempted but no queue item found');
+      return;
+    }
+
+    setIsSkipping(true);
+    // Optimistic: remove current item locally so it disappears immediately
     if (currentMediaId) {
       setQueue(prev => prev.filter(q => q.media_item_id !== currentMediaId));
     }
-    try { await callPlayerControl({ player_id: activePlayerId ?? PLAYER_ID, state: 'idle', action: 'skip', queue_id: currentQueueItem?.id }); }
+    try { await callPlayerControl({ player_id: activePlayerId ?? PLAYER_ID, state: 'idle', action: 'skip', queue_id: currentQueueItem.id }); }
     catch (e) { console.error(e); setIsSkipping(false); }
     setTimeout(() => setIsSkipping(false), 3000);
   };
