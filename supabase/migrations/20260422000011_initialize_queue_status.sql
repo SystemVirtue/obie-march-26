@@ -20,24 +20,24 @@ WHERE status IS NULL AND played_at IS NOT NULL;
 DO $$
 DECLARE
   player_record RECORD;
-  current_media_id UUID;
+  v_current_media_id UUID;
   queue_item_id UUID;
 BEGIN
   FOR player_record IN SELECT player_id, current_media_id FROM player_status WHERE current_media_id IS NOT NULL LOOP
-    current_media_id := player_record.current_media_id;
-    
+    v_current_media_id := player_record.current_media_id;
+
     -- Find the queue item for this media item that hasn't been played yet
     SELECT id INTO queue_item_id
     FROM queue
     WHERE player_id = player_record.player_id
-      AND media_item_id = current_media_id
+      AND media_item_id = v_current_media_id
       AND played_at IS NULL
     LIMIT 1;
-    
+
     -- If found, set it to playing status
     IF queue_item_id IS NOT NULL THEN
       UPDATE queue
-      SET 
+      SET
         status = 'playing',
         started_at = NOW(),
         version = 0
