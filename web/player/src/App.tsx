@@ -336,6 +336,11 @@ function App() {
       if (!isYTMMode && !isLocalMode) {
         fadeOut().then(() => ytPlayerRef.current?.pause());
       }
+    } else if (playback.phase === 'ending' && playback.reason === 'skip') {
+      // Fade out on skip before advancing to next video
+      if (!isYTMMode && !isLocalMode) {
+        fadeOut();
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playback.phase]);
