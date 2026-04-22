@@ -59,7 +59,8 @@ export function usePlayerIdentity({ defaultPlayerId, storageKey }: UsePlayerIden
 
         // Update last_refresh timestamp on initialization
         try {
-          await supabase
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (supabase as any)
             .from('players')
             .update({ last_refresh: new Date().toISOString() })
             .eq('id', resolved.player_id);
