@@ -265,27 +265,34 @@ export function subscribeToQueue(
   playerId: string,
   callback: (items: QueueItem[]) => void
 ): RealtimeSubscription<QueueItem> {
-  const fetchQueue = () => {
-    console.log('[subscribeToQueue] Fetching queue from database...');
-    supabase
-      .from('queue')
-      .select('id, player_id, type, media_item_id, position, requested_by, requested_at, expires_at, media_item:media_items(*)')
-      .eq('player_id', playerId)
-      .order('type', { ascending: false })
-      .order('position', { ascending: true })
-      .then(({ data }) => {
-        if (data) {
-          console.log('[subscribeToQueue] Fetched', data.length, 'items');
-          callback(data as QueueItem[]);
-        }
-      });
+  let refetchTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  const fetchQueue = async () => {
+    try {
+      console.log('[subscribeToQueue] Fetching queue from database...');
+      const { data, error } = await supabase
+        .from('queue')
+        .select('id, player_id, type, media_item_id, position, requested_by, requested_at, expires_at, media_item:media_items(*)')
+        .eq('player_id', playerId)
+        .order('type', { ascending: false })
+        .order('position', { ascending: true });
+      if (error) {
+        console.error('[subscribeToQueue] ❌ Database error:', error);
+        return;
+      }
+      console.log('[subscribeToQueue] 📊 Fetched', data?.length || 0, 'items from database');
+      if (data) {
+        callback(data as QueueItem[]);
+      }
+    } catch (err) {
+      console.error('[subscribeToQueue] ❌ Fetch failed:', err);
+    }
   };
   
   // Fetch initial queue
   fetchQueue();
 
   // Subscribe to changes
-  let refetchTimeout: ReturnType<typeof setTimeout> | null = null;
   return subscribeToTable<QueueItem>(
     'queue',
     { column: 'player_id', value: playerId },
