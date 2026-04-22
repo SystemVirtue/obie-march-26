@@ -1,7 +1,5 @@
 import { normalizeJukeboxSlug } from '@shared/jukebox-utils';
 
-const PLAYER_JUKEBOX_STORAGE_KEY = 'obie_player_jukebox_slug';
-
 export function ResolvingScreen() {
   return (
     <div className="relative w-screen h-screen bg-black flex items-center justify-center text-white">
@@ -24,7 +22,6 @@ export function JukeboxNamePrompt() {
             const entered = window.prompt('Enter Jukebox Name (e.g. OBIE):');
             const slug = normalizeJukeboxSlug(entered);
             if (!slug) return;
-            localStorage.setItem(PLAYER_JUKEBOX_STORAGE_KEY, slug);
             window.location.assign(`/${slug}`);
           }}
           className="px-5 py-3 rounded-lg bg-white text-black font-semibold hover:bg-gray-200"

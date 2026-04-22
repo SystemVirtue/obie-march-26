@@ -30,7 +30,8 @@ import {
   type PlayerSettings,
 } from '../../shared/supabase-client';
 
-import { ResolvingScreen, JukeboxNamePrompt, StatusOverlays } from './components/IdentityScreens';
+import { ResolvingScreen, StatusOverlays } from './components/IdentityScreens';
+import { JukeboxDashboard } from './components/JukeboxDashboard';
 import { YouTubePlayer, type YouTubePlayerHandle } from './players/YouTubePlayer';
 import { LocalVideoPlayer, type LocalVideoPlayerHandle } from './players/LocalVideoPlayer';
 import { YTMDesktopPlayer } from './players/YTMDesktopPlayer';
@@ -46,13 +47,11 @@ import {
 } from './state/playbackMachine';
 
 const DEFAULT_PLAYER_ID = import.meta.env.VITE_PLAYER_ID || '00000000-0000-0000-0000-000000000001';
-const PLAYER_JUKEBOX_STORAGE_KEY = 'obie_player_jukebox_slug';
 
 function App() {
   // ── Identity ───────────────────────────────────────────────────────────────
   const { activePlayerId, identityReady, playerId: PLAYER_ID } = usePlayerIdentity({
     defaultPlayerId: DEFAULT_PLAYER_ID,
-    storageKey: PLAYER_JUKEBOX_STORAGE_KEY,
   });
 
   // ── Core state ─────────────────────────────────────────────────────────────
@@ -62,7 +61,7 @@ function App() {
   const [settings, setSettings] = useState<PlayerSettings | null>(null);
   const [localVideoUrl, setLocalVideoUrl] = useState<string | null>(null);
   const [currentQueueId, setCurrentQueueId] = useState<string | null>(null);
-  const [identifyTag, setIdentifyTag] = useState<string | null>(null);
+  const [identifyOverlay, setIdentifyOverlay] = useState<{ displayName: string } | null>(null);
 
   // Debug logging for player state
   useEffect(() => {
@@ -322,38 +321,6 @@ function App() {
     return () => clearInterval(recoveryInterval);
   }, [PLAYER_ID]);
 
-  // ── Player table subscription for identify_tag ───────────────────────────────
-  useEffect(() => {
-    if (!PLAYER_ID) return;
-
-    const channel = supabase
-      .channel('player_identify')
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'players',
-          filter: `id=eq.${PLAYER_ID}`,
-        },
-        (payload) => {
-          const newRecord = payload.new as any;
-          console.log('[PLAYER] Player update received:', newRecord);
-
-          if (newRecord.identify_tag) {
-            setIdentifyTag(newRecord.identify_tag);
-            // Clear after 5 seconds
-            setTimeout(() => setIdentifyTag(null), 5000);
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [PLAYER_ID]);
-
   // ── Realtime subscriptions ─────────────────────────────────────────────────
   const handleStatusUpdate = useCallback(async (newStatus: PlayerStatus) => {
     setStatus(newStatus);
@@ -413,6 +380,42 @@ function App() {
       setLocalVideoUrl(null);
     }
   }, [currentMedia?.id, dispatch]);
+
+  // ── Identify overlay subscription ───────────────────────────────────────────
+  useEffect(() => {
+    if (!PLAYER_ID) return;
+
+    const channel = supabase
+      .channel('identify_events')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'event_log',
+          filter: `event_type=eq.identify_player AND player_id=eq.${PLAYER_ID}`,
+        },
+        (payload) => {
+          const newRecord = payload.new as any;
+          const displayName = newRecord.payload?.display_name || 'Player';
+          console.log('[IDENTIFY] Display overlay:', displayName);
+          setIdentifyOverlay({ displayName });
+
+          // Auto-hide after 5 seconds
+          setTimeout(() => {
+            setIdentifyOverlay(null);
+          }, 5000);
+        }
+      )
+      .subscribe();
+
+    console.log('[IDENTIFY] Subscription active for player:', PLAYER_ID);
+
+    return () => {
+      supabase.removeChannel(channel);
+      console.log('[IDENTIFY] Subscription removed');
+    };
+  }, [PLAYER_ID]);
 
   // ── Queue subscription for server-controlled progression ───────────────────
   useEffect(() => {
@@ -676,7 +679,7 @@ function App() {
 
   // ── Early returns ──────────────────────────────────────────────────────────
   if (!identityReady) return <ResolvingScreen />;
-  if (!activePlayerId) return <JukeboxNamePrompt />;
+  if (!activePlayerId) return <JukeboxDashboard />;
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
@@ -726,31 +729,6 @@ function App() {
         style={{ maxWidth: '160px', minWidth: '60px' }}
       />
 
-      {/* Identify Tag Overlay */}
-      {identifyTag && (
-        <div
-          style={{
-            position: 'absolute',
-            bottom: '60px',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            padding: '12px 24px',
-            borderRadius: 12,
-            background: 'rgba(0, 0, 0, 0.5)',
-            opacity: 0.5,
-            color: '#ffffff',
-            fontFamily: 'var(--font-display)',
-            fontSize: 24,
-            fontWeight: 700,
-            textShadow: '2px 2px 0 #000000, -2px -2px 0 #000000, 2px -2px 0 #000000, -2px 2px 0 #000000',
-            pointerEvents: 'none',
-            zIndex: 20,
-          }}
-        >
-          {identifyTag}
-        </div>
-      )}
-
       {/* Click blocker — allow click-to-play when paused, block otherwise */}
       <div
         className="absolute inset-0 w-full h-full cursor-default"
@@ -770,6 +748,28 @@ function App() {
         playerReady={playback.phase !== 'idle'}
         currentMedia={currentMedia}
       />
+
+      {/* Identify overlay */}
+      {identifyOverlay && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: '20%',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            color: 'white',
+            fontSize: '48px',
+            fontWeight: 'bold',
+            textShadow: '2px 2px 4px black, -2px -2px 4px black, 2px -2px 4px black, -2px 2px 4px black',
+            opacity: 0.5,
+            pointerEvents: 'none',
+            zIndex: 100,
+            fontFamily: 'var(--font-display)',
+          }}
+        >
+          {identifyOverlay.displayName}
+        </div>
+      )}
     </div>
   );
 }

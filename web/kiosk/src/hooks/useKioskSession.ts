@@ -16,10 +16,9 @@ import { HEARTBEAT_INTERVAL_MS, MAX_MARQUEE_ITEMS } from '../../../shared/consta
 
 type UseKioskSessionArgs = {
   defaultPlayerId: string;
-  storageKey: string;
 };
 
-export function useKioskSession({ defaultPlayerId, storageKey }: UseKioskSessionArgs) {
+export function useKioskSession({ defaultPlayerId }: UseKioskSessionArgs) {
   const [activePlayerId, setActivePlayerId] = useState<string | null>(null);
   const [activeJukeboxSlug, setActiveJukeboxSlug] = useState<string | null>(null);
   const [identityReady, setIdentityReady] = useState(false);
@@ -37,13 +36,7 @@ export function useKioskSession({ defaultPlayerId, storageKey }: UseKioskSession
     const resolveIdentity = async () => {
       try {
         const pathSlug = getPathJukeboxSlug();
-        const rememberedSlug = normalizeJukeboxSlug(localStorage.getItem(storageKey));
-        let candidateSlug = pathSlug || rememberedSlug;
-
-        if (!candidateSlug) {
-          const entered = window.prompt('Enter Jukebox Name (e.g. OBIE):');
-          candidateSlug = normalizeJukeboxSlug(entered);
-        }
+        let candidateSlug = pathSlug;
 
         if (!candidateSlug) {
           return;
@@ -52,7 +45,6 @@ export function useKioskSession({ defaultPlayerId, storageKey }: UseKioskSession
         const resolved = await resolveJukeboxSlug(candidateSlug);
         if (!resolved) {
           alert(`Jukebox "${candidateSlug}" was not found.`);
-          localStorage.removeItem(storageKey);
           return;
         }
 
@@ -61,7 +53,6 @@ export function useKioskSession({ defaultPlayerId, storageKey }: UseKioskSession
           setActiveJukeboxSlug(resolved.jukebox_slug);
         }
 
-        localStorage.setItem(storageKey, resolved.jukebox_slug);
         if (pathSlug !== resolved.jukebox_slug) {
           window.history.replaceState({}, '', `/${resolved.jukebox_slug}`);
         }
@@ -78,7 +69,7 @@ export function useKioskSession({ defaultPlayerId, storageKey }: UseKioskSession
     return () => {
       cancelled = true;
     };
-  }, [storageKey]);
+  }, []);
 
   useEffect(() => {
     if (!identityReady || !activePlayerId) return;
