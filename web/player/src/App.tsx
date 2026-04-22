@@ -60,6 +60,7 @@ function App() {
   const [status, setStatus] = useState<PlayerStatus | null>(null);
   const [settings, setSettings] = useState<PlayerSettings | null>(null);
   const [localVideoUrl, setLocalVideoUrl] = useState<string | null>(null);
+  const [currentQueueId, setCurrentQueueId] = useState<string | null>(null);
 
   // ── Derived ────────────────────────────────────────────────────────────────
   const playerMode = settings?.player_mode ?? 'iframe';
@@ -121,20 +122,20 @@ function App() {
 
   // ── Queue advance — direct RPC call to complete_and_advance ───────────────
   const advanceQueue = useCallback(async () => {
-    if (!currentMedia?.id) {
-      console.warn('[Player] No current media ID to advance');
+    if (!currentQueueId) {
+      console.warn('[Player] No current queue ID to advance');
       return;
     }
 
-    console.log('[Player] Calling complete_and_advance for media:', currentMedia.id);
+    console.log('[Player] Calling complete_and_advance for queue:', currentQueueId);
     try {
       const { data, error } = await supabase.rpc('complete_and_advance', {
-        p_media_id: currentMedia.id,
+        p_queue_id: currentQueueId,
       } as any);
       if (error) throw error;
-      const result = (data?.[0] as any);
-      if (result) {
-        console.log('[Player] Queue advanced to next media:', result.title);
+      const result = (data as any);
+      if (result && result.next_id) {
+        console.log('[Player] Queue advanced to next item:', result.next_id);
       } else {
         console.log('[Player] Queue exhausted');
         dispatch({ type: 'QUEUE_EXHAUSTED' });
@@ -142,7 +143,7 @@ function App() {
     } catch (error) {
       console.error('[Player] Failed to advance queue:', error);
     }
-  }, [PLAYER_ID, currentMedia?.id, dispatch]);
+  }, [PLAYER_ID, currentQueueId, dispatch]);
 
   // Trigger advance when machine enters 'ending'
   useEffect(() => {
@@ -205,6 +206,7 @@ function App() {
 
           // If an item transitions to 'playing', load it
           if (newRecord.status === 'playing' && newRecord.media_item_id) {
+            setCurrentQueueId(newRecord.id);
             // Fetch the full media item
             supabase
               .from('media_items')
