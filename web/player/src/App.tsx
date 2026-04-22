@@ -1,13 +1,13 @@
 /**
  * Obie Player — Server-Authority Refactor
  *
- * Queue progression is now entirely server-controlled via complete_and_advance RPC.
+ * Queue progression is now entirely server-controlled via player-control edge function.
  * No master/slave system - all players can report completion safely.
  * Database enforces atomic transitions and prevents race conditions.
  *
  * Architecture:
  *   useReducer(playbackMachine) — single source of truth for player phase
- *   Direct RPC call              — complete_and_advance for queue progression
+ *   player-control edge function — handles ended/skip actions and calls complete_and_advance RPC
  *   usePlayerRealtime           — Supabase subscriptions for queue/player status
  *   useLoadingGuard             — auto-skip for stuck/failed videos
  *   useFade                     — audio/opacity fade in/out
@@ -158,7 +158,7 @@ function App() {
     currentMediaIdRef: { current: currentMedia?.id ?? null },
   });
 
-  // ── Queue advance — direct RPC call to complete_and_advance ───────────────
+  // ── Queue advance — call player-control edge function ─────────────────────
   const advanceQueue = useCallback(async () => {
     if (!currentQueueId) {
       console.warn('[PLAYER] No current queue ID to advance');
@@ -167,11 +167,13 @@ function App() {
 
     console.log('[PLAYER] Video ended → reporting completion:', currentQueueId);
     try {
-      const { data, error } = await supabase.rpc('complete_and_advance', {
-        p_queue_id: currentQueueId,
-      } as any);
+      const { data, error } = await callPlayerControl({
+        player_id: PLAYER_ID,
+        action: 'ended',
+        queue_id: currentQueueId,
+      });
       if (error) throw error;
-      const result = (data as any);
+      const result = (data as any)?.result;
       if (result && result.next_id) {
         console.log('[PLAYER] Queue advanced to next item:', result.next_id);
       } else {
@@ -181,7 +183,7 @@ function App() {
     } catch (error) {
       console.error('[PLAYER] Failed to advance queue:', error);
     }
-  }, [currentQueueId, dispatch]);
+  }, [currentQueueId, dispatch, PLAYER_ID]);
 
   // Trigger advance when machine enters 'ending'
   useEffect(() => {
@@ -225,9 +227,11 @@ function App() {
       if (now - started > MAX_DURATION) {
         console.warn('[WATCHDOG] Playback stuck → forcing advance:', (data as any).id);
         try {
-          await supabase.rpc('complete_and_advance', {
-            p_queue_id: (data as any).id,
-          } as any);
+          await callPlayerControl({
+            player_id: PLAYER_ID,
+            action: 'skip',
+            queue_id: (data as any).id,
+          });
         } catch (error) {
           console.error('[WATCHDOG] Failed to force advance:', error);
         }
