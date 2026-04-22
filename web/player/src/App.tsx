@@ -1,14 +1,15 @@
 /**
- * Obie Player — Server-Authority Refactor
+ * Obie Player — Server-First Queue Advancement
  *
- * Queue progression is now entirely server-controlled via player-control edge function.
- * No master/slave system - all players can report completion safely.
- * Database enforces atomic transitions and prevents race conditions.
+ * Queue progression is server-controlled via the complete_and_advance RPC.
+ * The player calls the RPC directly and immediately loads the next item from
+ * the result — it does NOT wait for Realtime subscriptions. The RPC is the
+ * single source of truth for queue state transitions.
  *
  * Architecture:
+ *   complete_and_advance RPC   — atomic queue completion + next-item selection
  *   useReducer(playbackMachine) — single source of truth for player phase
- *   player-control edge function — handles ended/skip actions and calls complete_and_advance RPC
- *   usePlayerRealtime           — Supabase subscriptions for queue/player status
+ *   usePlayerRealtime           — Supabase subscriptions for admin commands + status
  *   useLoadingGuard             — auto-skip for stuck/failed videos
  *   useFade                     — audio/opacity fade in/out
  *   YouTubePlayer (ref)         — iframe mode
@@ -158,25 +159,89 @@ function App() {
     currentMediaIdRef: { current: currentMedia?.id ?? null },
   });
 
-  // ── Queue advance — call player-control edge function ─────────────────────
+  // ── Queue advance — server-first via complete_and_advance RPC ────────────
+  // Calls the RPC directly and immediately loads the next item from the result.
+  // Does NOT wait for Realtime — the RPC result IS the source of truth.
   const advanceQueue = useCallback(async () => {
     if (!currentQueueId) {
       console.warn('[PLAYER] No current queue ID to advance');
       return;
     }
 
-    console.log('[PLAYER] Video ended → reporting completion:', currentQueueId);
+    console.log('[PLAYER] Advancing queue, completing:', currentQueueId);
     try {
-      const { data, error } = await callPlayerControl({
-        player_id: PLAYER_ID,
-        action: 'ended',
-        queue_id: currentQueueId,
-      });
+      const { data, error } = await supabase.rpc('complete_and_advance', {
+        p_queue_id: currentQueueId,
+      } as any);
       if (error) throw error;
-      const result = (data as any)?.result;
-      if (result && result.next_id) {
-        console.log('[PLAYER] Queue advanced to next item:', result.next_id);
+
+      const result = data as any;
+
+      if (result?.status === 'success' && result?.next_id) {
+        // Queue advanced — immediately load next item
+        console.log('[PLAYER] Queue advanced to:', result.next_id);
+        setCurrentQueueId(result.next_id);
+
+        const { data: mediaData } = await supabase
+          .from('media_items')
+          .select('*')
+          .eq('id', result.next_media_item_id)
+          .single();
+
+        if (mediaData) {
+          const media: MediaItem = {
+            id: (mediaData as any).id,
+            title: (mediaData as any).title ?? 'Unknown',
+            artist: (mediaData as any).artist ?? 'Unknown',
+            url: (mediaData as any).url,
+            duration: (mediaData as any).duration ?? 0,
+            source_id: (mediaData as any).source_id ?? '',
+            source_type: (mediaData as any).source_type as any,
+            thumbnail: (mediaData as any).thumbnail,
+            fetched_at: (mediaData as any).fetched_at,
+            metadata: (mediaData as any).metadata ?? {},
+          };
+          setCurrentMedia(media);
+          dispatch({ type: 'QUEUE_NEXT_STARTED', mediaId: media.id, isAfterSkip: false });
+        }
+      } else if (result?.status === 'ignored') {
+        // Duplicate call — item already completed. Sync with DB to find what's playing.
+        console.log('[PLAYER] Item already completed, syncing with DB');
+        const { data: playingItem } = await supabase
+          .from('queue')
+          .select('id, media_item_id')
+          .eq('player_id', PLAYER_ID)
+          .eq('status', 'playing')
+          .maybeSingle();
+
+        if (playingItem) {
+          setCurrentQueueId((playingItem as any).id);
+          const { data: mediaData } = await supabase
+            .from('media_items')
+            .select('*')
+            .eq('id', (playingItem as any).media_item_id)
+            .single();
+          if (mediaData) {
+            const media: MediaItem = {
+              id: (mediaData as any).id,
+              title: (mediaData as any).title ?? 'Unknown',
+              artist: (mediaData as any).artist ?? 'Unknown',
+              url: (mediaData as any).url,
+              duration: (mediaData as any).duration ?? 0,
+              source_id: (mediaData as any).source_id ?? '',
+              source_type: (mediaData as any).source_type as any,
+              thumbnail: (mediaData as any).thumbnail,
+              fetched_at: (mediaData as any).fetched_at,
+              metadata: (mediaData as any).metadata ?? {},
+            };
+            setCurrentMedia(media);
+            dispatch({ type: 'QUEUE_NEXT_STARTED', mediaId: media.id, isAfterSkip: false });
+          }
+        } else {
+          dispatch({ type: 'QUEUE_EXHAUSTED' });
+        }
       } else {
+        // Queue genuinely exhausted
         console.log('[PLAYER] Queue exhausted');
         dispatch({ type: 'QUEUE_EXHAUSTED' });
       }
@@ -227,11 +292,9 @@ function App() {
       if (now - started > MAX_DURATION) {
         console.warn('[WATCHDOG] Playback stuck → forcing advance:', (data as any).id);
         try {
-          await callPlayerControl({
-            player_id: PLAYER_ID,
-            action: 'skip',
-            queue_id: (data as any).id,
-          });
+          await supabase.rpc('complete_and_advance', {
+            p_queue_id: (data as any).id,
+          } as any);
         } catch (error) {
           console.error('[WATCHDOG] Failed to force advance:', error);
         }
