@@ -210,16 +210,16 @@ function App() {
               .then(({ data }) => {
                 if (data) {
                   const media: MediaItem = {
-                    id: data.id,
-                    title: data.title ?? 'Unknown',
-                    artist: data.artist ?? 'Unknown',
-                    url: data.url,
-                    duration: data.duration ?? 0,
-                    source_id: data.source_id ?? '',
-                    source_type: data.source_type as any,
-                    thumbnail: data.thumbnail,
-                    fetched_at: data.fetched_at,
-                    metadata: data.metadata ?? {},
+                    id: (data as any).id,
+                    title: (data as any).title ?? 'Unknown',
+                    artist: (data as any).artist ?? 'Unknown',
+                    url: (data as any).url,
+                    duration: (data as any).duration ?? 0,
+                    source_id: (data as any).source_id ?? '',
+                    source_type: (data as any).source_type as any,
+                    thumbnail: (data as any).thumbnail,
+                    fetched_at: (data as any).fetched_at,
+                    metadata: (data as any).metadata ?? {},
                   };
                   setCurrentMedia(media);
                   dispatch({ type: 'QUEUE_NEXT_STARTED', mediaId: media.id, isAfterSkip: false });
