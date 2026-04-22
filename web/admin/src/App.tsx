@@ -308,14 +308,16 @@ function App() {
     // admin consoles. 400ms covers the Supabase Realtime round-trip so the
     // second console's UI updates before it can fire a conflicting write.
     if (playPauseInFlightRef.current) return;
-    // Guard 3: only valid from playing or paused — ignore clicks during
-    // loading/idle/error where toggling makes no sense.
+    // Guard 3: only valid from playing, paused, or idle — ignore clicks during
+    // loading/error where toggling makes no sense. Allow idle to force-play.
     const currentState = status?.state;
-    if (currentState !== 'playing' && currentState !== 'paused') return;
+    if (currentState !== 'playing' && currentState !== 'paused' && currentState !== 'idle') return;
 
     playPauseInFlightRef.current = true;
     try {
-      const newState = currentState === 'playing' ? 'paused' : 'playing';
+      // If idle, force-play by setting to 'playing'
+      // Otherwise toggle between playing and paused
+      const newState = currentState === 'idle' ? 'playing' : currentState === 'playing' ? 'paused' : 'playing';
       await callPlayerControl({
         player_id: activePlayerId ?? PLAYER_ID,
         state: newState,

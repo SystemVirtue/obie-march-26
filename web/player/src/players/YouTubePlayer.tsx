@@ -98,7 +98,9 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
 
     // ── YouTube player event handlers (stable via ref) ──────────────────────
     const onReady = useCallback(() => {
-      // Player is ready — no state change needed; imperative calls can now be made
+      // Player is ready — ensure auto-play by calling playVideo
+      // This ensures videos auto-play when loaded in idle state
+      ytPlayerRef.current?.playVideo?.();
     }, []);
 
     const onStateChange = useCallback((event: { data: number }) => {
@@ -190,6 +192,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
             modestbranding:  1,  // Minimal YouTube branding
             rel:             0,  // No related videos
             iv_load_policy:  3,  // No annotations
+            origin:          window.location.origin,  // Prevent unauthorized log_event requests
           },
           events: {
             onReady,
