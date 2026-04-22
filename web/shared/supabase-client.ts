@@ -414,7 +414,7 @@ export function subscribeToQueue(
       console.log('[subscribeToQueue] 🔄 Fetching queue from database...');
       const { data, error } = await supabase
         .from('queue')
-        .select('id, player_id, type, media_item_id, position, requested_by, requested_at, played_at, expires_at, media_item:media_items(*)')
+        .select('id, player_id, type, media_item_id, position, requested_by, requested_at, played_at, expires_at, status, media_item:media_items(*)')
         .eq('player_id', playerId)
         .is('played_at', null)
         .order('type', { ascending: false })
