@@ -342,17 +342,33 @@ function App() {
     const currentMediaId = status?.current_media_id;
     const currentQueueItem = queue.find(q => q.media_item_id === currentMediaId);
 
+    console.log('[Admin] Skip attempt:', { currentMediaId, currentQueueItem, queueLength: queue.length });
+
     if (!currentQueueItem) {
       console.warn('[Admin] Skip attempted but no queue item found');
       return;
     }
+
+    if (!currentQueueItem.id) {
+      console.warn('[Admin] Skip attempted but queue item has no id', currentQueueItem);
+      return;
+    }
+
+    const skipParams = {
+      player_id: activePlayerId ?? PLAYER_ID,
+      state: 'idle' as const,
+      action: 'skip' as const,
+      queue_id: currentQueueItem.id,
+    };
+
+    console.log('[Admin] Calling player-control skip with:', skipParams);
 
     setIsSkipping(true);
     // Optimistic: remove current item locally so it disappears immediately
     if (currentMediaId) {
       setQueue(prev => prev.filter(q => q.media_item_id !== currentMediaId));
     }
-    try { await callPlayerControl({ player_id: activePlayerId ?? PLAYER_ID, state: 'idle', action: 'skip', queue_id: currentQueueItem.id }); }
+    try { await callPlayerControl(skipParams); }
     catch (e) { console.error(e); setIsSkipping(false); }
     setTimeout(() => setIsSkipping(false), 3000);
   };
