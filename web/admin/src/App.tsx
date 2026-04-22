@@ -338,10 +338,11 @@ function App() {
     setIsSkipping(true);
     // Optimistic: remove current item locally so it disappears immediately
     const currentMediaId = status?.current_media_id;
+    const currentQueueItem = queue.find(q => q.media_item_id === currentMediaId);
     if (currentMediaId) {
       setQueue(prev => prev.filter(q => q.media_item_id !== currentMediaId));
     }
-    try { await callPlayerControl({ player_id: activePlayerId ?? PLAYER_ID, state: 'idle', action: 'skip' }); }
+    try { await callPlayerControl({ player_id: activePlayerId ?? PLAYER_ID, state: 'idle', action: 'skip', queue_id: currentQueueItem?.id }); }
     catch (e) { console.error(e); setIsSkipping(false); }
     setTimeout(() => setIsSkipping(false), 3000);
   };

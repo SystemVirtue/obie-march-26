@@ -160,11 +160,18 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
           }
           ytPlayerRef.current.loadVideoById(videoId);
 
-          // Belt-and-suspenders playVideo call after short delay
-          // (YouTube sometimes fires PAUSED before autoplay kicks in)
+          // Immediate playVideo call to ensure auto-play
+          ytPlayerRef.current?.playVideo?.();
+
+          // Fallback: if still paused after 1s, try again
           setTimeout(() => {
-            ytPlayerRef.current?.playVideo?.();
-          }, 500);
+            const state = ytPlayerRef.current?.getPlayerState?.();
+            if (state === 2) { // YT_PAUSED
+              console.warn('[YouTubePlayer] Video still paused after 1s, retrying playVideo()');
+              ytPlayerRef.current?.playVideo?.();
+            }
+          }, 1000);
+
           return;
         }
 
