@@ -338,38 +338,52 @@ function App() {
   const handleSkip = async () => {
     if (isSkipping) return;
 
-    // Check if there's actually something to skip
+    // Find the current queue item if it exists
     const currentMediaId = status?.current_media_id;
     const currentQueueItem = queue.find(q => q.media_item_id === currentMediaId);
 
     console.log('[Admin] Skip attempt:', { currentMediaId, currentQueueItem, queueLength: queue.length });
 
-    if (!currentQueueItem) {
-      console.warn('[Admin] Skip attempted but no queue item found');
-      return;
-    }
-
-    if (!currentQueueItem.id) {
-      console.warn('[Admin] Skip attempted but queue item has no id', currentQueueItem);
-      return;
-    }
-
-    const skipParams = {
-      player_id: activePlayerId ?? PLAYER_ID,
-      state: 'idle' as const,
-      action: 'skip' as const,
-      queue_id: currentQueueItem.id,
-    };
-
-    console.log('[Admin] Calling player-control skip with:', skipParams);
-
     setIsSkipping(true);
+
     // Optimistic: remove current item locally so it disappears immediately
     if (currentMediaId) {
       setQueue(prev => prev.filter(q => q.media_item_id !== currentMediaId));
     }
-    try { await callPlayerControl(skipParams); }
-    catch (e) { console.error(e); setIsSkipping(false); }
+
+    // If we have a queue item, skip it with queue_id
+    if (currentQueueItem && currentQueueItem.id) {
+      const skipParams = {
+        player_id: activePlayerId ?? PLAYER_ID,
+        state: 'idle' as const,
+        action: 'skip' as const,
+        queue_id: currentQueueItem.id,
+      };
+
+      console.log('[Admin] Calling player-control skip with:', skipParams);
+
+      try { await callPlayerControl(skipParams); }
+      catch (e) { console.error(e); setIsSkipping(false); }
+    } else {
+      // No current queue item - find the next item in queue and skip it
+      const nextItem = queue[0];
+      if (nextItem && nextItem.id) {
+        console.log('[Admin] Skipping next queue item:', nextItem.id);
+        try {
+          await callPlayerControl({
+            player_id: activePlayerId ?? PLAYER_ID,
+            state: 'idle' as const,
+            action: 'skip' as const,
+            queue_id: nextItem.id,
+          });
+        } catch (e) {
+          console.error(e);
+        }
+      } else {
+        console.log('[Admin] No queue items to skip');
+      }
+    }
+
     setTimeout(() => setIsSkipping(false), 3000);
   };
 
