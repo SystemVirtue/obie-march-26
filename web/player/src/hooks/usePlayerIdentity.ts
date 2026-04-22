@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { resolveJukeboxSlug } from '@shared/supabase-client';
+import { supabase, resolveJukeboxSlug } from '@shared/supabase-client';
 import { getPathJukeboxSlug, normalizeJukeboxSlug } from '@shared/jukebox-utils';
 
 type UsePlayerIdentityArgs = {
@@ -23,8 +23,26 @@ export function usePlayerIdentity({ defaultPlayerId, storageKey }: UsePlayerIden
         let candidateSlug = pathSlug || rememberedSlug;
 
         if (!candidateSlug) {
-          const entered = window.prompt('Enter Jukebox Name (e.g. OBIE):');
-          candidateSlug = normalizeJukeboxSlug(entered);
+          // No local Player ID - create a new Player in Supabase
+          const { data: newPlayer, error: createError } = await supabase
+            .from('players')
+            .insert({
+              name: `Player_${Date.now()}`,
+              status: 'online',
+              jukebox_slug: `PLAYER_${Date.now().toString(36).toUpperCase()}`,
+            })
+            .select()
+            .single();
+
+          if (createError || !newPlayer) {
+            console.error('Failed to create new player:', createError);
+            // Fallback to prompt
+            const entered = window.prompt('Enter Jukebox Name (e.g. OBIE):');
+            candidateSlug = normalizeJukeboxSlug(entered);
+          } else {
+            candidateSlug = newPlayer.jukebox_slug;
+            console.log('[PlayerIdentity] Created new player:', newPlayer.id, candidateSlug);
+          }
         }
 
         if (!candidateSlug) {

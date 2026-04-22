@@ -147,6 +147,7 @@ export function PlayerInstances({ jukeboxes }: PlayerInstancesProps) {
   const [players, setPlayers] = useState<Player[]>([]);
   const [statuses, setStatuses] = useState<Record<string, PlayerStatus>>({});
   const [showInactive, setShowInactive] = useState(true);
+  const [autoRefresh, setAutoRefresh] = useState(false);
   const [loading, setLoading] = useState(true);
   const [editingPlayer, setEditingPlayer] = useState<Player | null>(null);
   const [editingName, setEditingName] = useState('');
@@ -223,6 +224,18 @@ export function PlayerInstances({ jukeboxes }: PlayerInstancesProps) {
     );
     return () => subs.forEach(s => s.unsubscribe());
   }, [playerIds, fetchStatuses]);
+
+  // Auto-refresh interval (15 seconds when enabled)
+  useEffect(() => {
+    if (!autoRefresh) return;
+
+    const interval = setInterval(() => {
+      fetchPlayers();
+      fetchStatuses();
+    }, 15000); // 15 seconds
+
+    return () => clearInterval(interval);
+  }, [autoRefresh, fetchPlayers, fetchStatuses]);
 
   // Handle drag end for reordering
   const handleDragEnd = async (event: DragEndEvent) => {
@@ -367,8 +380,11 @@ export function PlayerInstances({ jukeboxes }: PlayerInstancesProps) {
         <Btn variant="danger" onClick={handleDeleteInactive}>
           Delete Inactive
         </Btn>
-        <Btn variant="ghost" onClick={() => { fetchPlayers(); fetchStatuses(); }}>
-          Refresh
+        <Btn
+          variant={autoRefresh ? 'accent' : 'ghost'}
+          onClick={() => setAutoRefresh(!autoRefresh)}
+        >
+          Auto-Refresh: {autoRefresh ? 'ON' : 'OFF'}
         </Btn>
       </div>
 
