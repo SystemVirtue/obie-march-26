@@ -57,6 +57,16 @@ export function usePlayerIdentity({ defaultPlayerId, storageKey }: UsePlayerIden
           return;
         }
 
+        // Update last_refresh timestamp on initialization
+        try {
+          await supabase
+            .from('players')
+            .update({ last_refresh: new Date().toISOString() })
+            .eq('id', resolved.player_id);
+        } catch (error) {
+          console.error('[PlayerIdentity] Failed to update last_refresh:', error);
+        }
+
         // Check if player is already active in another tab
         const { data } = await supabase
           .from('players')

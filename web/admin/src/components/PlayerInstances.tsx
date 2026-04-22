@@ -114,7 +114,7 @@ function SortableRow({ player, status, onIdentify, onDelete, onEditName }: {
 
         {/* Last Refresh Time */}
         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>
-          {formatTimestamp(player.created_at)}
+          {formatTimestamp(player.last_refresh)}
         </div>
 
         {/* Actions */}

@@ -22,6 +22,7 @@ export interface Player {
   priority?: number | null;
   last_seen?: string | null;
   identify_tag?: string | null;
+  last_refresh?: string | null;
 }
 
 export interface JukeboxSummary {
