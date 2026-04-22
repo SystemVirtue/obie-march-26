@@ -23,17 +23,17 @@ export function usePlayerIdentity({ defaultPlayerId, storageKey }: UsePlayerIden
         let candidateSlug = pathSlug || rememberedSlug;
 
         if (!candidateSlug) {
-          // No local Player ID - create a new Player in Supabase
+          // No local Player ID - create a new Player in Supabase using RPC
+          const playerName = `Player_${Date.now()}`;
+          const jukeboxSlug = `PLAYER_${Date.now().toString(36).toUpperCase()}`;
+          
+          const { data, error: createError } = await supabase.rpc('create_player' as any, {
+            p_name: playerName,
+            p_jukebox_slug: jukeboxSlug,
+          } as any);
+
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { data: newPlayer, error: createError } = await (supabase as any)
-            .from('players')
-            .insert({
-              name: `Player_${Date.now()}`,
-              status: 'online',
-              jukebox_slug: `PLAYER_${Date.now().toString(36).toUpperCase()}`,
-            })
-            .select()
-            .single();
+          const newPlayer = data as any;
 
           if (createError || !newPlayer) {
             console.error('Failed to create new player:', createError);
@@ -58,12 +58,14 @@ export function usePlayerIdentity({ defaultPlayerId, storageKey }: UsePlayerIden
         }
 
         // Check if player is already active in another tab
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: playerStatus } = await (supabase as any)
+        const { data } = await supabase
           .from('players')
           .select('last_seen, status')
           .eq('id', resolved.player_id)
           .single();
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const playerStatus = data as any;
 
         const isAlreadyActive = playerStatus && 
           playerStatus.status === 'online' && 
@@ -83,16 +85,16 @@ export function usePlayerIdentity({ defaultPlayerId, storageKey }: UsePlayerIden
 
           // Yes - proceed with creating a new player
           localStorage.removeItem(storageKey);
+          const playerName = `Player_${Date.now()}`;
+          const jukeboxSlug = `PLAYER_${Date.now().toString(36).toUpperCase()}`;
+          
+          const { data, error: createError } = await supabase.rpc('create_player' as any, {
+            p_name: playerName,
+            p_jukebox_slug: jukeboxSlug,
+          } as any);
+
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { data: newPlayer, error: createError } = await (supabase as any)
-            .from('players')
-            .insert({
-              name: `Player_${Date.now()}`,
-              status: 'online',
-              jukebox_slug: `PLAYER_${Date.now().toString(36).toUpperCase()}`,
-            })
-            .select()
-            .single();
+          const newPlayer = data as any;
 
           if (createError || !newPlayer) {
             console.error('Failed to create new player:', createError);
