@@ -30,7 +30,7 @@ function formatHealthStatus(status: HealthStatus): string {
   }
 }
 
-function formatTimestamp(dateStr: string | null): string {
+function formatTimestamp(dateStr: string | null | undefined): string {
   if (!dateStr) return 'N/A';
   const date = new Date(dateStr);
   const day = date.getDate();
@@ -38,7 +38,7 @@ function formatTimestamp(dateStr: string | null): string {
   const hours = String(date.getHours()).padStart(2, '0');
   const minutes = String(date.getMinutes()).padStart(2, '0');
   const seconds = String(date.getSeconds()).padStart(2, '0');
-  return `${day} ${month}   ${hours}:${minutes}:${seconds}`;
+  return `${day} ${month} - ${hours}:${minutes}:${seconds}`;
 }
 
 // Sortable row component
