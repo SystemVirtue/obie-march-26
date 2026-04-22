@@ -23,33 +23,8 @@ export function usePlayerIdentity({ defaultPlayerId, storageKey }: UsePlayerIden
         let candidateSlug = pathSlug || rememberedSlug;
 
         if (!candidateSlug) {
-          // No local Player ID - create a new Player in Supabase using RPC
-          const playerName = `Player_${Date.now()}`;
-          const jukeboxSlug = `PLAYER_${Date.now().toString(36).toUpperCase()}`;
-          
-          const { data, error: createError } = await supabase.rpc('create_player' as any, {
-            p_name: playerName,
-            p_jukebox_slug: jukeboxSlug,
-          } as any);
-
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const newPlayer = data as any;
-
-          if (createError || !newPlayer) {
-            console.error('Failed to create new player:', createError);
-            // Fallback to prompt
-            const entered = window.prompt('Enter Jukebox Name (e.g. OBIE):');
-            candidateSlug = normalizeJukeboxSlug(entered);
-          } else {
-            // Use the new player directly without resolving jukebox slug
-            if (!cancelled) {
-              setActivePlayerId(newPlayer.id);
-            }
-            localStorage.setItem(storageKey, jukeboxSlug);
-            window.history.replaceState({}, '', `/${jukeboxSlug}`);
-            setIdentityReady(true);
-            return;
-          }
+          const entered = window.prompt('Enter Jukebox Name (e.g. OBIE):');
+          candidateSlug = normalizeJukeboxSlug(entered);
         }
 
         if (!candidateSlug) {
