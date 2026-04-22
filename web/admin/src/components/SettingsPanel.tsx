@@ -3,7 +3,6 @@ import {
   supabase,
   getTotalCredits,
   updateAllCredits,
-  callPlayerControl,
   subscribeToTable,
   type PlayerSettings,
 } from '@shared/supabase-client';
