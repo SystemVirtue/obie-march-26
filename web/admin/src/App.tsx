@@ -355,7 +355,6 @@ function App() {
     if (currentQueueItem && currentQueueItem.id) {
       const skipParams = {
         player_id: activePlayerId ?? PLAYER_ID,
-        state: 'idle' as const,
         action: 'skip' as const,
         queue_id: currentQueueItem.id,
       };
@@ -372,7 +371,6 @@ function App() {
         try {
           await callPlayerControl({
             player_id: activePlayerId ?? PLAYER_ID,
-            state: 'idle' as const,
             action: 'skip' as const,
             queue_id: nextItem.id,
           });
