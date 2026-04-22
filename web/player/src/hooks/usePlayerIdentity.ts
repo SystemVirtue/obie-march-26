@@ -41,8 +41,14 @@ export function usePlayerIdentity({ defaultPlayerId, storageKey }: UsePlayerIden
             const entered = window.prompt('Enter Jukebox Name (e.g. OBIE):');
             candidateSlug = normalizeJukeboxSlug(entered);
           } else {
-            candidateSlug = newPlayer.jukebox_slug;
-            console.log('[PlayerIdentity] Created new player:', newPlayer.id, candidateSlug);
+            // Use the new player directly without resolving jukebox slug
+            if (!cancelled) {
+              setActivePlayerId(newPlayer.id);
+            }
+            localStorage.setItem(storageKey, jukeboxSlug);
+            window.history.replaceState({}, '', `/${jukeboxSlug}`);
+            setIdentityReady(true);
+            return;
           }
         }
 
