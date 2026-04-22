@@ -169,7 +169,7 @@ export function PlayerInstances({ jukeboxes }: PlayerInstancesProps) {
     try {
       const { data, error } = await supabase
         .from('players')
-        .select('*')
+        .select('id, name, player_name_tag, priority, status, last_seen, last_refresh, created_at')
         .in('id', playerIds)
         .order('priority', { ascending: true });
 
@@ -189,7 +189,7 @@ export function PlayerInstances({ jukeboxes }: PlayerInstancesProps) {
     try {
       const { data, error } = await supabase
         .from('player_status')
-        .select('*')
+        .select('player_id, state, progress, current_media_id, last_updated')
         .in('player_id', playerIds);
 
       if (error) throw error;
