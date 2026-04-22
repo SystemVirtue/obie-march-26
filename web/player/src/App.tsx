@@ -123,6 +123,33 @@ function App() {
     return () => clearInterval(id);
   }, [PLAYER_ID]);
 
+  // ── Playback position tracking ─────────────────────────────────────────────
+  useEffect(() => {
+    if (!PLAYER_ID || !currentQueueId || playback.phase !== 'playing') return;
+
+    const updatePlaybackPosition = async () => {
+      try {
+        const currentTime = (ytPlayerRef.current as any)?.getCurrentTime ? (ytPlayerRef.current as any).getCurrentTime() : 0;
+        const duration = currentMedia?.duration || 0;
+        
+        if (duration > 0) {
+          const position = Math.min(Math.max(currentTime / duration, 0), 1);
+          
+          await supabase.rpc('update_playback_position', {
+            p_queue_id: currentQueueId,
+            p_position: position
+          } as any);
+        }
+      } catch (error) {
+        console.error('[Player] Failed to update playback position:', error);
+      }
+    };
+
+    // Update position every 5 seconds
+    const id = setInterval(updatePlaybackPosition, 5000);
+    return () => clearInterval(id);
+  }, [PLAYER_ID, currentQueueId, playback.phase, currentMedia?.duration]);
+
   // ── Karaoke ────────────────────────────────────────────────────────────────
   useKaraokeLyrics({
     enabled: !!settings?.karaoke_mode,
@@ -210,15 +237,57 @@ function App() {
     return () => clearInterval(watchdogInterval);
   }, [PLAYER_ID]);
 
+  // ── Offline recovery: periodically call recover_stalled_playback ───────────────
+  useEffect(() => {
+    if (!PLAYER_ID) return;
+
+    const recoveryInterval = setInterval(async () => {
+      try {
+        await supabase.rpc('recover_stalled_playback', {
+          p_player_id: PLAYER_ID,
+        } as any);
+      } catch (error) {
+        console.error('[RECOVERY] Failed to recover stalled playback:', error);
+      }
+    }, 60000); // Check every 60 seconds
+
+    return () => clearInterval(recoveryInterval);
+  }, [PLAYER_ID]);
+
   // ── Realtime subscriptions ─────────────────────────────────────────────────
-  const handleStatusUpdate = useCallback((newStatus: PlayerStatus) => {
+  const handleStatusUpdate = useCallback(async (newStatus: PlayerStatus) => {
     setStatus(newStatus);
 
-    // Media changed externally (admin load, etc.)
+    // Media changed externally (admin load, skip, etc.)
     if (newStatus.current_media_id && newStatus.current_media_id !== currentMedia?.id) {
       if (newStatus.current_media) {
         setCurrentMedia(newStatus.current_media);
         dispatch({ type: 'QUEUE_NEXT_STARTED', mediaId: newStatus.current_media_id, isAfterSkip: false });
+      } else {
+        // Media not included in payload - fetch it immediately to avoid delay
+        console.log('[PLAYER] Fetching media item for:', newStatus.current_media_id);
+        const { data: mediaData } = await supabase
+          .from('media_items')
+          .select('*')
+          .eq('id', newStatus.current_media_id)
+          .single();
+
+        if (mediaData) {
+          const media: MediaItem = {
+            id: (mediaData as any).id,
+            title: (mediaData as any).title ?? 'Unknown',
+            artist: (mediaData as any).artist ?? 'Unknown',
+            url: (mediaData as any).url,
+            duration: (mediaData as any).duration ?? 0,
+            source_id: (mediaData as any).source_id ?? '',
+            source_type: (mediaData as any).source_type as any,
+            thumbnail: (mediaData as any).thumbnail,
+            fetched_at: (mediaData as any).fetched_at,
+            metadata: (mediaData as any).metadata ?? {},
+          };
+          setCurrentMedia(media);
+          dispatch({ type: 'QUEUE_NEXT_STARTED', mediaId: media.id, isAfterSkip: false });
+        }
       }
     }
 
@@ -450,6 +519,19 @@ function App() {
         };
         setCurrentMedia(media);
         dispatch({ type: 'QUEUE_NEXT_STARTED', mediaId: media.id, isAfterSkip: false });
+
+        // Resume from saved position if available
+        const savedPosition = (data as any).playback_position || 0;
+        if (savedPosition > 0 && media.duration && media.duration > 0) {
+          const startTime = savedPosition * media.duration;
+          console.log('[PLAYER] Resuming from saved position:', startTime, 'seconds');
+          // Seek to saved position after video loads
+          setTimeout(() => {
+            if (ytPlayerRef.current) {
+              (ytPlayerRef.current as any).seekTo(startTime);
+            }
+          }, 2000); // Wait for video to load
+        }
       }
     } else {
       console.log('[PLAYER] No active playback on startup');
