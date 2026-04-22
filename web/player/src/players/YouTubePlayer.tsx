@@ -38,12 +38,14 @@ declare global {
 
 export type YouTubePlayerHandle = {
   /** Load a new video by URL. Pass isAfterSkip=true to start at vol=0 for fade-in. */
-  loadVideo: (url: string, isAfterSkip: boolean) => void;
+  loadVideo: (url: string, isAfterSkip: boolean, startTime?: number) => void;
   pause: () => void;
   resume: () => void;
   setVolume: (vol: number) => void;
   getVolume: () => number;
   getPlayerState: () => number | null;
+  getCurrentTime: () => number;
+  seekTo: (seconds: number) => void;
 };
 
 type YouTubePlayerProps = {
@@ -144,7 +146,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
 
     // ── Imperative handle ───────────────────────────────────────────────────
     useImperativeHandle(ref, () => ({
-      loadVideo(url: string, isAfterSkip: boolean) {
+      loadVideo(url: string, isAfterSkip: boolean, startTime?: number) {
         const videoId = extractYouTubeId(url);
         if (!videoId) {
           console.error('[YouTubePlayer] Could not extract YouTube ID from:', url);
@@ -160,7 +162,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
           } else {
             ytPlayerRef.current.setVolume(100);
           }
-          ytPlayerRef.current.loadVideoById(videoId);
+          ytPlayerRef.current.loadVideoById(videoId, startTime || 0);
 
           // Immediate playVideo call to ensure auto-play
           ytPlayerRef.current?.playVideo?.();
@@ -185,6 +187,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
 
         ytPlayerRef.current = new window.YT.Player(containerRef.current, {
           videoId,
+          start: startTime || 0,
           playerVars: {
             autoplay:        0,  // Don't autoplay on creation (browser policy)
             controls:        0,  // Hide controls
@@ -222,6 +225,16 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
       getPlayerState() {
         if (!ytPlayerRef.current?.getPlayerState) return null;
         return ytPlayerRef.current.getPlayerState();
+      },
+
+      getCurrentTime() {
+        if (!ytPlayerRef.current?.getCurrentTime) return 0;
+        return ytPlayerRef.current.getCurrentTime();
+      },
+
+      seekTo(seconds: number) {
+        if (!ytPlayerRef.current?.seekTo) return;
+        ytPlayerRef.current.seekTo(seconds, true);
       },
     }), [onReady, onStateChange, onError]);
 
