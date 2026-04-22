@@ -2,22 +2,27 @@ import { useState } from 'react';
 import type { ViewId, QueueItem, AuthUser, JukeboxSummary } from '../types';
 
 const NAV = [
-  { id: 'search',    icon: '🔍', label: 'Search',    children: [] as { id: ViewId; label: string }[] },
-  { id: 'queue',     icon: '🎵', label: 'Queue',     children: [] as { id: ViewId; label: string }[] },
-  { id: 'playlists', icon: '📋', label: 'Playlists', children: [
-    { id: 'playlists-all'     as ViewId, label: 'All Playlists' },
-    { id: 'playlists-import'  as ViewId, label: 'Import Playlist' },
-    { id: 'playlists-channel' as ViewId, label: 'Sync from Channel' },
-  ]},
-  { id: 'settings',  icon: '⚙️', label: 'Settings',  children: [
-    { id: 'settings-playback' as ViewId, label: 'Playback' },
-    { id: 'settings-kiosk'    as ViewId, label: 'Kiosk' },
-    { id: 'settings-branding' as ViewId, label: 'Branding' },
-    { id: 'settings-scripts'  as ViewId, label: 'Functions & Scripts' },
-    { id: 'settings-prefs'    as ViewId, label: 'Console Preferences' },
-  ]},
-  { id: 'logs',      icon: '📄', label: 'Logs',      children: [] as { id: ViewId; label: string }[] },
-  { id: 'server',    icon: '🖥️', label: 'Server',    children: [] as { id: ViewId; label: string }[] },
+  { id: 'search', icon: '🔍', label: 'Search', children: [] as { id: ViewId; label: string }[] },
+  { id: 'queue', icon: '🎵', label: 'Queue', children: [] as { id: ViewId; label: string }[] },
+  {
+    id: 'playlists', icon: '📋', label: 'Playlists', children: [
+      { id: 'playlists-all' as ViewId, label: 'All Playlists' },
+      { id: 'playlists-import' as ViewId, label: 'Import Playlist' },
+      { id: 'playlists-channel' as ViewId, label: 'Sync from Channel' },
+    ]
+  },
+  {
+    id: 'settings', icon: '⚙️', label: 'Settings', children: [
+      { id: 'settings-player-instances' as ViewId, label: 'Player Instances' },
+      { id: 'settings-playback' as ViewId, label: 'Playback' },
+      { id: 'settings-kiosk' as ViewId, label: 'Kiosk' },
+      { id: 'settings-branding' as ViewId, label: 'Branding' },
+      { id: 'settings-scripts' as ViewId, label: 'Functions & Scripts' },
+      { id: 'settings-prefs' as ViewId, label: 'Console Preferences' },
+    ]
+  },
+  { id: 'logs', icon: '📄', label: 'Logs', children: [] as { id: ViewId; label: string }[] },
+  { id: 'server', icon: '🖥️', label: 'Server', children: [] as { id: ViewId; label: string }[] },
 ];
 
 export function Sidebar({ view, setView, queue, user, onSignOut, jukeboxes, activeJukeboxSlug, onSwitchJukebox, onCreateJukebox }: {
@@ -45,9 +50,11 @@ export function Sidebar({ view, setView, queue, user, onSignOut, jukeboxes, acti
     group.children.some(c => c.id === view) || (group.children.length === 0 && view === group.id as ViewId);
 
   return (
-    <aside style={{ display: 'flex', flexDirection: 'column', flexShrink: 0,
+    <aside style={{
+      display: 'flex', flexDirection: 'column', flexShrink: 0,
       width: expanded ? 220 : 60, height: '100%', background: 'var(--surface)',
-      borderRight: '1px solid var(--border)', transition: 'width 0.25s cubic-bezier(0.4,0,0.2,1)', overflow: 'hidden' }}>
+      borderRight: '1px solid var(--border)', transition: 'width 0.25s cubic-bezier(0.4,0,0.2,1)', overflow: 'hidden'
+    }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '13px 13px', height: 54, flexShrink: 0, borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
         <div style={{ width: 30, height: 30, borderRadius: 9, flexShrink: 0, background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 14px var(--accent-glow)' }}>
@@ -66,13 +73,15 @@ export function Sidebar({ view, setView, queue, user, onSignOut, jukeboxes, acti
       <nav style={{ flex: 1, padding: '8px 0', overflowY: 'auto', overflowX: 'hidden' }}>
         {NAV.map(group => {
           const active = isGroupActive(group);
-          const open   = openGroup === group.id;
+          const open = openGroup === group.id;
           return (
             <div key={group.id}>
-              <button onClick={() => handleGroup(group)} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 9,
+              <button onClick={() => handleGroup(group)} style={{
+                width: '100%', display: 'flex', alignItems: 'center', gap: 9,
                 padding: expanded ? '9px 13px' : '9px 0', justifyContent: expanded ? 'flex-start' : 'center',
                 background: 'transparent', border: 'none', cursor: 'pointer', position: 'relative',
-                color: active ? 'var(--accent)' : 'rgba(255,255,255,0.4)' }}>
+                color: active ? 'var(--accent)' : 'rgba(255,255,255,0.4)'
+              }}>
                 {active && <div style={{ position: 'absolute', left: 0, top: '50%', transform: 'translateY(-50%)', width: 2, height: 18, borderRadius: '0 2px 2px 0', background: 'var(--accent)' }} />}
                 <div style={{ width: 30, height: 30, borderRadius: 8, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, background: active ? 'var(--accent-dim)' : 'transparent' }}>{group.icon}</div>
                 {expanded && <>
@@ -86,9 +95,11 @@ export function Sidebar({ view, setView, queue, user, onSignOut, jukeboxes, acti
               {expanded && open && group.children.length > 0 && (
                 <div style={{ background: 'rgba(255,255,255,0.015)', borderLeft: '1px solid rgba(255,255,255,0.06)', marginLeft: 21 }}>
                   {group.children.map(child => (
-                    <button key={child.id} onClick={() => setView(child.id)} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 7,
+                    <button key={child.id} onClick={() => setView(child.id)} style={{
+                      width: '100%', display: 'flex', alignItems: 'center', gap: 7,
                       padding: '7px 13px', background: 'transparent', border: 'none', cursor: 'pointer',
-                      color: view === child.id ? 'var(--accent)' : 'rgba(255,255,255,0.38)' }}>
+                      color: view === child.id ? 'var(--accent)' : 'rgba(255,255,255,0.38)'
+                    }}>
                       <div style={{ width: 5, height: 5, borderRadius: '50%', flexShrink: 0, background: view === child.id ? 'var(--accent)' : 'rgba(255,255,255,0.15)' }} />
                       <span style={{ fontFamily: 'var(--font-display)', fontSize: 12, flex: 1, textAlign: 'left', whiteSpace: 'nowrap' }}>{child.label}</span>
                     </button>

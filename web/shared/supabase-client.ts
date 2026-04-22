@@ -18,6 +18,10 @@ export interface Player {
   active_playlist_id: string | null;
   created_at: string;
   updated_at: string;
+  player_name_tag?: string | null;
+  priority?: number | null;
+  last_seen?: string | null;
+  identify_tag?: string | null;
 }
 
 export interface JukeboxSummary {

@@ -62,6 +62,7 @@ function App() {
   const [settings, setSettings] = useState<PlayerSettings | null>(null);
   const [localVideoUrl, setLocalVideoUrl] = useState<string | null>(null);
   const [currentQueueId, setCurrentQueueId] = useState<string | null>(null);
+  const [identifyTag, setIdentifyTag] = useState<string | null>(null);
 
   // Debug logging for player state
   useEffect(() => {
@@ -132,10 +133,10 @@ function App() {
       try {
         const currentTime = (ytPlayerRef.current as any)?.getCurrentTime ? (ytPlayerRef.current as any).getCurrentTime() : 0;
         const duration = currentMedia?.duration || 0;
-        
+
         if (duration > 0) {
           const position = Math.min(Math.max(currentTime / duration, 0), 1);
-          
+
           await supabase.rpc('update_playback_position', {
             p_queue_id: currentQueueId,
             p_position: position
@@ -319,6 +320,38 @@ function App() {
     }, 60000); // Check every 60 seconds
 
     return () => clearInterval(recoveryInterval);
+  }, [PLAYER_ID]);
+
+  // ── Player table subscription for identify_tag ───────────────────────────────
+  useEffect(() => {
+    if (!PLAYER_ID) return;
+
+    const channel = supabase
+      .channel('player_identify')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'players',
+          filter: `id=eq.${PLAYER_ID}`,
+        },
+        (payload) => {
+          const newRecord = payload.new as any;
+          console.log('[PLAYER] Player update received:', newRecord);
+
+          if (newRecord.identify_tag) {
+            setIdentifyTag(newRecord.identify_tag);
+            // Clear after 5 seconds
+            setTimeout(() => setIdentifyTag(null), 5000);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [PLAYER_ID]);
 
   // ── Realtime subscriptions ─────────────────────────────────────────────────
@@ -692,6 +725,31 @@ function App() {
         className="absolute bottom-[40px] left-[20px] w-[8vw] h-auto pointer-events-none z-10"
         style={{ maxWidth: '160px', minWidth: '60px' }}
       />
+
+      {/* Identify Tag Overlay */}
+      {identifyTag && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: '60px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            padding: '12px 24px',
+            borderRadius: 12,
+            background: 'rgba(0, 0, 0, 0.5)',
+            opacity: 0.5,
+            color: '#ffffff',
+            fontFamily: 'var(--font-display)',
+            fontSize: 24,
+            fontWeight: 700,
+            textShadow: '2px 2px 0 #000000, -2px -2px 0 #000000, 2px -2px 0 #000000, -2px 2px 0 #000000',
+            pointerEvents: 'none',
+            zIndex: 20,
+          }}
+        >
+          {identifyTag}
+        </div>
+      )}
 
       {/* Click blocker — allow click-to-play when paused, block otherwise */}
       <div

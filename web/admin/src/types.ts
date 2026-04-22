@@ -7,7 +7,7 @@ export type ViewId =
   | 'search'
   | 'queue'
   | 'playlists-all' | 'playlists-import' | 'playlists-channel'
-  | 'settings-playback' | 'settings-kiosk' | 'settings-branding' | 'settings-scripts' | 'settings-prefs'
+  | 'settings-player-instances' | 'settings-playback' | 'settings-kiosk' | 'settings-branding' | 'settings-scripts' | 'settings-prefs'
   | 'logs'
   | 'server';
 

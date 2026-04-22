@@ -47,26 +47,27 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { ScriptsPanel } from './components/ScriptsPanel';
 import { LogsPanel } from './components/LogsPanel';
 import { ServerPanel } from './components/ServerPanel';
+import { PlayerInstances } from './components/PlayerInstances';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ROOT APP
 // ─────────────────────────────────────────────────────────────────────────────
 
 function App() {
-  const [user, setUser]         = useState<AuthUser | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [routeSlug, setRouteSlug] = useState<string>(() => getPathJukeboxSlug());
   const [resolvedPlayerId, setResolvedPlayerId] = useState<string | null>(null);
   const [resolvedJukeboxSlug, setResolvedJukeboxSlug] = useState<string | null>(null);
   const [availableJukeboxes, setAvailableJukeboxes] = useState<JukeboxSummary[]>([]);
   const [resolveError, setResolveError] = useState<string | null>(null);
-  const [view, setView]         = useState<ViewId>('queue');
-  const [queue, setQueue]       = useState<QueueItem[]>([]);
-  const [status, setStatus]     = useState<PlayerStatus | null>(null);
+  const [view, setView] = useState<ViewId>('queue');
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [status, setStatus] = useState<PlayerStatus | null>(null);
   const [settings, setSettings] = useState<PlayerSettings | null>(null);
   const [isShuffling, setIsShuffling] = useState(false);
   const [isGeneratingRadio, setIsGeneratingRadio] = useState(false);
-  const [isSkipping,  setIsSkipping]  = useState(false);
+  const [isSkipping, setIsSkipping] = useState(false);
   const isSkippingRef = useRef(false);
   useEffect(() => { isSkippingRef.current = isSkipping; }, [isSkipping]);
   // Debounce guard: prevents two admin consoles (or a double-click) from
@@ -197,7 +198,7 @@ function App() {
   // Subscriptions — deps intentionally omit isSkipping; use ref to avoid subscription churn
   useEffect(() => {
     if (!user || !activePlayerId) return;
-    const q  = subscribeToQueue(activePlayerId, setQueue);
+    const q = subscribeToQueue(activePlayerId, setQueue);
     // Realtime subscription — payload-direct for state/progress, JOIN refetch only on media change.
     const s = subscribeToPlayerStatus(activePlayerId, (ns) => {
       setStatus(ns);
@@ -265,11 +266,11 @@ function App() {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
     const normalQ = queue.filter(i => i.type === 'normal' && i.media_item_id !== status?.current_media_id && i.id);
-    const oldIdx  = normalQ.findIndex(i => i.id === active.id);
-    const newIdx  = normalQ.findIndex(i => i.id === over.id);
+    const oldIdx = normalQ.findIndex(i => i.id === active.id);
+    const newIdx = normalQ.findIndex(i => i.id === over.id);
     const reordered = arrayMove(normalQ, oldIdx, newIdx);
-    const priority  = queue.filter(i => i.type === 'priority');
-    const current   = queue.filter(i => i.media_item_id === status?.current_media_id);
+    const priority = queue.filter(i => i.type === 'priority');
+    const current = queue.filter(i => i.media_item_id === status?.current_media_id);
     setQueue([...current, ...priority, ...reordered]);
     try {
       const ids = Array.from(new Set(reordered.map((i) => i.id).filter(Boolean))) as string[];
@@ -394,10 +395,10 @@ function App() {
     </div>
   );
 
-  const isQueueView     = view.startsWith('queue');
-  const isPlaylistView  = view.startsWith('playlists');
-  const isSettingsView  = view.startsWith('settings');
-  const isScriptsView   = view === 'settings-scripts';
+  const isQueueView = view.startsWith('queue');
+  const isPlaylistView = view.startsWith('playlists');
+  const isSettingsView = view.startsWith('settings');
+  const isScriptsView = view === 'settings-scripts';
 
   return (
     <div style={{ width: '100%', height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg)' }}>
@@ -423,8 +424,9 @@ function App() {
               hasActivePlaylist={!!activePlayer?.active_playlist_id} />
           )}
           {isPlaylistView && <PlaylistsPanel view={view} playerId={activePlayerId} activePlaylistId={activePlayer?.active_playlist_id ?? undefined} />}
-          {isScriptsView  && <ScriptsPanel playerId={activePlayerId} />}
-          {isSettingsView && !isScriptsView && <SettingsPanel view={view} settings={settings} prefs={prefs} playerId={activePlayerId} />}
+          {isScriptsView && <ScriptsPanel playerId={activePlayerId} />}
+          {isSettingsView && !isScriptsView && view !== 'settings-player-instances' && <SettingsPanel view={view} settings={settings} prefs={prefs} playerId={activePlayerId} />}
+          {view === 'settings-player-instances' && <PlayerInstances jukeboxes={availableJukeboxes} />}
           {view === 'logs' && <LogsPanel />}
           {view === 'server' && <ServerPanel />}
         </main>
