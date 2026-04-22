@@ -24,7 +24,8 @@ export function usePlayerIdentity({ defaultPlayerId, storageKey }: UsePlayerIden
 
         if (!candidateSlug) {
           // No local Player ID - create a new Player in Supabase
-          const { data: newPlayer, error: createError } = await supabase
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: newPlayer, error: createError } = await (supabase as any)
             .from('players')
             .insert({
               name: `Player_${Date.now()}`,
@@ -53,6 +54,68 @@ export function usePlayerIdentity({ defaultPlayerId, storageKey }: UsePlayerIden
         if (!resolved) {
           alert(`Jukebox "${candidateSlug}" was not found.`);
           localStorage.removeItem(storageKey);
+          return;
+        }
+
+        // Check if player is already active in another tab
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: playerStatus } = await (supabase as any)
+          .from('players')
+          .select('last_seen, status')
+          .eq('id', resolved.player_id)
+          .single();
+
+        const isAlreadyActive = playerStatus && 
+          playerStatus.status === 'online' && 
+          playerStatus.last_seen && 
+          new Date(playerStatus.last_seen).getTime() > Date.now() - 60000; // Active within last 60 seconds
+
+        if (isAlreadyActive && !cancelled) {
+          const shouldProceed = window.confirm(
+            'Player is already active in another tab. Are you sure you want to create a new Player?'
+          );
+
+          if (!shouldProceed) {
+            // Cancel - close the tab
+            window.close();
+            return;
+          }
+
+          // Yes - proceed with creating a new player
+          localStorage.removeItem(storageKey);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: newPlayer, error: createError } = await (supabase as any)
+            .from('players')
+            .insert({
+              name: `Player_${Date.now()}`,
+              status: 'online',
+              jukebox_slug: `PLAYER_${Date.now().toString(36).toUpperCase()}`,
+            })
+            .select()
+            .single();
+
+          if (createError || !newPlayer) {
+            console.error('Failed to create new player:', createError);
+            alert('Failed to create new player. Please try again.');
+            return;
+          }
+
+          candidateSlug = newPlayer.jukebox_slug;
+          console.log('[PlayerIdentity] Created new player after confirmation:', newPlayer.id, candidateSlug);
+
+          // Resolve the new player
+          const newResolved = await resolveJukeboxSlug(candidateSlug);
+          if (!newResolved) {
+            alert(`Failed to resolve new player "${candidateSlug}".`);
+            return;
+          }
+
+          if (!cancelled) {
+            setActivePlayerId(newResolved.player_id);
+          }
+
+          localStorage.setItem(storageKey, newResolved.jukebox_slug);
+          window.history.replaceState({}, '', `/${newResolved.jukebox_slug}`);
           return;
         }
 
