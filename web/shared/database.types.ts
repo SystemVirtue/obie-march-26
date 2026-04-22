@@ -267,7 +267,6 @@ export type Database = {
           last_heartbeat: string | null
           name: string
           owner_id: string | null
-          priority_player_id: string | null
           status: string | null
           updated_at: string | null
         }
@@ -280,7 +279,6 @@ export type Database = {
           last_heartbeat?: string | null
           name: string
           owner_id?: string | null
-          priority_player_id?: string | null
           status?: string | null
           updated_at?: string | null
         }
@@ -293,19 +291,10 @@ export type Database = {
           last_heartbeat?: string | null
           name?: string
           owner_id?: string | null
-          priority_player_id?: string | null
           status?: string | null
           updated_at?: string | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "players_priority_player_id_fkey"
-            columns: ["priority_player_id"]
-            isOneToOne: false
-            referencedRelation: "players"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       playlist_items: {
         Row: {

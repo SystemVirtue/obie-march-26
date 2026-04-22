@@ -25,11 +25,11 @@ export function NowPlayingStage({ status, queue, settings, players, activePlayer
 }) {
   const [showPauseConfirm, setShowPauseConfirm] = useState(false);
   const cm = status?.current_media;
-  const thumb  = cm?.thumbnail || '';
-  const title  = cleanDisplayText(cm?.title) || 'Nothing playing';
+  const thumb = cm?.thumbnail || '';
+  const title = cleanDisplayText(cm?.title) || 'Nothing playing';
   const artist = cleanDisplayText(cm?.artist) || '—';
   const isPlaying = status?.state === 'playing';
-  const isPaused  = status?.state === 'paused';
+  const isPaused = status?.state === 'paused';
 
   // Timeline interpolation — smoothly estimate progress between server updates
   const lastServerProgressRef = useRef(0);
@@ -81,7 +81,7 @@ export function NowPlayingStage({ status, queue, settings, players, activePlayer
     if (isPlaying) { setShowPauseConfirm(true); } else { onPlayPause(); }
   };
 
-  const upNext   = queue.filter(q => q.media_item_id !== status?.current_media_id).slice(0, 3);
+  const upNext = queue.filter(q => q.media_item_id !== status?.current_media_id).slice(0, 3);
   const priority = queue.filter(q => q.type === 'priority');
 
   return (
@@ -92,8 +92,10 @@ export function NowPlayingStage({ status, queue, settings, players, activePlayer
         <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(135deg,rgba(5,5,5,0.85) 0%,rgba(5,5,5,0.2) 50%,rgba(5,5,5,0.92) 100%)' }} />
       </>}
       {/* Grain */}
-      <div style={{ position: 'absolute', inset: 0, opacity: 0.12, pointerEvents: 'none', backgroundSize: '128px',
-        backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.4'/%3E%3C/svg%3E")` }} />
+      <div style={{
+        position: 'absolute', inset: 0, opacity: 0.12, pointerEvents: 'none', backgroundSize: '128px',
+        backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.4'/%3E%3C/svg%3E")`
+      }} />
       {/* Bottom line */}
       <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 1, background: 'linear-gradient(90deg,transparent,var(--accent-border),transparent)' }} />
 
@@ -114,25 +116,35 @@ export function NowPlayingStage({ status, queue, settings, players, activePlayer
           {/* Info */}
           <div style={{ flex: 1, minWidth: 0, paddingTop: 2 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-              <div style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+              <div style={{
+                width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
                 background: isSkipping ? '#f59e0b' : isPlaying ? '#22c55e' : '#fbbf24',
                 boxShadow: `0 0 8px ${isSkipping ? '#f59e0b' : isPlaying ? '#22c55e' : '#fbbf24'}`,
-                animation: (isPlaying || isSkipping) ? 'pulse 1.6s ease-in-out infinite' : 'none' }} />
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.14em',
+                animation: (isPlaying || isSkipping) ? 'pulse 1.6s ease-in-out infinite' : 'none'
+              }} />
+              <span style={{
+                fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.14em',
                 color: isSkipping ? '#f59e0b' : isPlaying ? '#4ade80' : 'rgba(255,255,255,0.4)',
-                textTransform: 'uppercase', fontWeight: 600 }}>
+                textTransform: 'uppercase', fontWeight: 600
+              }}>
                 {stateLabel}
               </span>
             </div>
-            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 800, color: '#fff',
+            <h2 style={{
+              fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 800, color: '#fff',
               letterSpacing: '-0.03em', lineHeight: 1.1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-              textShadow: isPlaying ? '0 0 40px rgba(255,255,255,0.15)' : 'none' }}>{title}</h2>
-            <p style={{ fontFamily: 'var(--font-display)', fontSize: 15, color: 'rgba(255,255,255,0.55)', marginTop: 4,
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: '-0.01em' }}>{artist}</p>
+              textShadow: isPlaying ? '0 0 40px rgba(255,255,255,0.15)' : 'none'
+            }}>{title}</h2>
+            <p style={{
+              fontFamily: 'var(--font-display)', fontSize: 15, color: 'rgba(255,255,255,0.55)', marginTop: 4,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: '-0.01em'
+            }}>{artist}</p>
             {activePlaylistName && (
-              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.32)',
+              <div style={{
+                fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.32)',
                 marginTop: 5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                letterSpacing: '0.08em' }}>
+                letterSpacing: '0.08em'
+              }}>
                 ▶ {activePlaylistName}
               </div>
             )}
@@ -140,51 +152,44 @@ export function NowPlayingStage({ status, queue, settings, players, activePlayer
 
           {/* Connected Devices */}
           <div style={{ width: 200, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.1em',
-              color: 'rgba(255,255,255,0.28)', textTransform: 'uppercase', marginBottom: 2 }}>
+            <div style={{
+              fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.1em',
+              color: 'rgba(255,255,255,0.28)', textTransform: 'uppercase', marginBottom: 2
+            }}>
               Connected Devices
             </div>
 
             {/* One row per player device — shown even when offline (status dot changes colour) */}
             {(players ?? []).map(player => {
-              const isActive        = player.id === activePlayerId;
-              const isPriority      = player.priority_player_id === player.id;
-              const isOffline       = isStale(player.last_heartbeat);
-              const selectionPending = (player as any).priority_selection_pending === true;
-              const roleLabel = isPriority
-                ? (isOffline ? 'Priority · Offline' : 'Priority')
-                : 'Slave';
-              const roleColor  = isPriority ? '#a78bfa' : '#f59e0b';
-              const dotColor   = isOffline ? '#6b7280' : '#22c55e';
-              const stateText  = isActive
+              const isActive = player.id === activePlayerId;
+              const isOffline = isStale(player.last_heartbeat);
+              const dotColor = isOffline ? '#6b7280' : '#22c55e';
+              const stateText = isActive
                 ? (status?.state === 'playing' ? 'Playing'
-                  : status?.state === 'paused'  ? 'Paused'
-                  : status?.state === 'idle'    ? 'Idle'
-                  : status?.state ?? '')
+                  : status?.state === 'paused' ? 'Paused'
+                    : status?.state === 'idle' ? 'Idle'
+                      : status?.state ?? '')
                 : '';
               return (
-                <div key={player.id} style={{ padding: '5px 8px', borderRadius: 8,
+                <div key={player.id} style={{
+                  padding: '5px 8px', borderRadius: 8,
                   background: isActive ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.04)',
-                  marginBottom: 2, opacity: isOffline ? 0.65 : 1 }}>
+                  marginBottom: 2, opacity: isOffline ? 0.65 : 1
+                }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 2 }}>
                     <div style={{ width: 6, height: 6, borderRadius: '50%', background: dotColor, flexShrink: 0 }} />
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.5)',
-                      textTransform: 'uppercase', letterSpacing: '0.06em', flex: 1 }}>
+                    <span style={{
+                      fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.5)',
+                      textTransform: 'uppercase', letterSpacing: '0.06em', flex: 1
+                    }}>
                       {player.jukebox_slug || player.name}
                     </span>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: roleColor,
-                      letterSpacing: '0.04em' }}>{roleLabel}</span>
                   </div>
-                  {/* Pending-selection badge */}
-                  {isPriority && selectionPending && (
-                    <div style={{ paddingLeft: 11, fontFamily: 'var(--font-mono)', fontSize: 9,
-                      color: '#f59e0b', letterSpacing: '0.04em' }}>
-                      ⏳ Re-assignment pending
-                    </div>
-                  )}
                   {stateText && (
-                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9,
-                      color: 'rgba(255,255,255,0.32)', paddingLeft: 11 }}>
+                    <div style={{
+                      fontFamily: 'var(--font-mono)', fontSize: 9,
+                      color: 'rgba(255,255,255,0.32)', paddingLeft: 11
+                    }}>
                       {stateText}
                     </div>
                   )}
@@ -200,14 +205,18 @@ export function NowPlayingStage({ status, queue, settings, players, activePlayer
                 <div style={{ padding: '5px 8px', borderRadius: 8, background: 'rgba(255,255,255,0.05)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
                     <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#3b82f6', flexShrink: 0 }} />
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.5)',
-                      textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                    <span style={{
+                      fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.5)',
+                      textTransform: 'uppercase', letterSpacing: '0.06em'
+                    }}>
                       Kiosk{liveSessions.length > 1 ? ` ×${liveSessions.length}` : ''}
                     </span>
                   </div>
                   {liveSessions.slice(0, 3).map(session => (
-                    <div key={session.session_id} style={{ display: 'flex', alignItems: 'center', gap: 4,
-                      paddingLeft: 11, marginBottom: 2 }}>
+                    <div key={session.session_id} style={{
+                      display: 'flex', alignItems: 'center', gap: 4,
+                      paddingLeft: 11, marginBottom: 2
+                    }}>
                       <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#22c55e', flexShrink: 0 }} />
                       <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.28)' }}>
                         {session.session_id.slice(0, 8)}
@@ -218,12 +227,16 @@ export function NowPlayingStage({ status, queue, settings, players, activePlayer
                     </div>
                   ))}
                   {(settings?.kiosk_coin_acceptor_connected != null) && (
-                    <div style={{ paddingLeft: 11, marginTop: 3, fontFamily: 'var(--font-mono)', fontSize: 9,
-                      color: 'rgba(255,255,255,0.28)' }}>
+                    <div style={{
+                      paddingLeft: 11, marginTop: 3, fontFamily: 'var(--font-mono)', fontSize: 9,
+                      color: 'rgba(255,255,255,0.28)'
+                    }}>
                       Coin:{' '}
-                      <span style={{ color: settings?.kiosk_coin_acceptor_connected
-                        ? (settings?.kiosk_coin_acceptor_enabled ? '#22c55e' : '#fbbf24')
-                        : '#6b7280' }}>
+                      <span style={{
+                        color: settings?.kiosk_coin_acceptor_connected
+                          ? (settings?.kiosk_coin_acceptor_enabled ? '#22c55e' : '#fbbf24')
+                          : '#6b7280'
+                      }}>
                         {settings?.kiosk_coin_acceptor_connected
                           ? (settings?.kiosk_coin_acceptor_enabled ? 'Connected' : 'Disabled')
                           : 'Disconnected'}
@@ -236,11 +249,11 @@ export function NowPlayingStage({ status, queue, settings, players, activePlayer
 
             {/* No-devices fallback */}
             {!(players ?? []).length &&
-             !(kioskSessions ?? []).filter(s => !isStale(s.last_active)).length && (
-              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.18)' }}>
-                No devices
-              </div>
-            )}
+              !(kioskSessions ?? []).filter(s => !isStale(s.last_active)).length && (
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.18)' }}>
+                  No devices
+                </div>
+              )}
           </div>
 
           {/* Up Next */}
@@ -248,18 +261,20 @@ export function NowPlayingStage({ status, queue, settings, players, activePlayer
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.1em', color: 'rgba(255,255,255,0.28)', textTransform: 'uppercase', marginBottom: 2 }}>Up Next</div>
             {upNext.length === 0
               ? <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.2)' }}>Queue empty</div>
-              : upNext.map((item, i) => { const m = item.media_item; return (
-                <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 8, borderRadius: 9, padding: '5px 9px', background: 'rgba(255,255,255,0.06)' }}>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.22)', width: 12 }}>{i + 1}</span>
-                  {m?.thumbnail && <img src={m.thumbnail} alt="" style={{ width: 28, height: 28, borderRadius: 5, objectFit: 'cover', flexShrink: 0 }} />}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontFamily: 'var(--font-display)', fontSize: 11, fontWeight: 500, color: 'rgba(255,255,255,0.85)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cleanDisplayText(m?.title) || 'Unknown'}</div>
-                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)' }}>{cleanDisplayText(m?.artist) || ''}</div>
+              : upNext.map((item, i) => {
+                const m = item.media_item; return (
+                  <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 8, borderRadius: 9, padding: '5px 9px', background: 'rgba(255,255,255,0.06)' }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.22)', width: 12 }}>{i + 1}</span>
+                    {m?.thumbnail && <img src={m.thumbnail} alt="" style={{ width: 28, height: 28, borderRadius: 5, objectFit: 'cover', flexShrink: 0 }} />}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontFamily: 'var(--font-display)', fontSize: 11, fontWeight: 500, color: 'rgba(255,255,255,0.85)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cleanDisplayText(m?.title) || 'Unknown'}</div>
+                      <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)' }}>{cleanDisplayText(m?.artist) || ''}</div>
+                    </div>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.28)', flexShrink: 0 }}>{fmtDuration(m?.duration)}</span>
+                    <button onClick={() => onRemove(item.id)} style={{ width: 20, height: 20, borderRadius: 5, background: 'rgba(239,68,68,0.12)', border: 'none', cursor: 'pointer', color: '#f87171', fontSize: 10, flexShrink: 0 }}>✕</button>
                   </div>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.28)', flexShrink: 0 }}>{fmtDuration(m?.duration)}</span>
-                  <button onClick={() => onRemove(item.id)} style={{ width: 20, height: 20, borderRadius: 5, background: 'rgba(239,68,68,0.12)', border: 'none', cursor: 'pointer', color: '#f87171', fontSize: 10, flexShrink: 0 }}>✕</button>
-                </div>
-              );})}
+                );
+              })}
           </div>
         </div>
 
@@ -277,18 +292,22 @@ export function NowPlayingStage({ status, queue, settings, players, activePlayer
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <button onClick={handlePlayPauseClick} disabled={isSkipping}
               title={isSkipping ? 'Skipping…' : isPlaying ? 'Pause playback' : 'Resume playback'}
-              style={{ width: 44, height: 44, borderRadius: '50%', border: 'none',
+              style={{
+                width: 44, height: 44, borderRadius: '50%', border: 'none',
                 cursor: isSkipping ? 'default' : 'pointer', flexShrink: 0,
                 display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18,
                 background: isSkipping ? 'rgba(255,255,255,0.08)' : isPlaying ? '#dc2626' : '#16a34a',
                 color: isSkipping ? 'rgba(255,255,255,0.25)' : isPlaying ? '#facc15' : '#fff',
                 boxShadow: isSkipping ? 'none' : isPlaying ? '0 4px 18px rgba(220,38,38,0.45)' : '0 4px 18px rgba(22,163,74,0.45)',
                 transition: 'background 0.2s, box-shadow 0.2s, color 0.2s',
-                opacity: isSkipping ? 0.45 : 1 }}>
+                opacity: isSkipping ? 0.45 : 1
+              }}>
               {isPlaying ? '⏸' : '▶'}
             </button>
-            <button onClick={onSkip} disabled={isSkipping} style={{ width: 34, height: 34, borderRadius: 9, border: 'none', cursor: isSkipping ? 'default' : 'pointer',
-              background: 'rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, opacity: isSkipping ? 0.45 : 1 }}>
+            <button onClick={onSkip} disabled={isSkipping} style={{
+              width: 34, height: 34, borderRadius: 9, border: 'none', cursor: isSkipping ? 'default' : 'pointer',
+              background: 'rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, opacity: isSkipping ? 0.45 : 1
+            }}>
               {isSkipping ? <Spinner size={14} /> : '⏭'}
             </button>
             <div style={{ width: 1, height: 20, background: 'rgba(255,255,255,0.1)', margin: '0 4px' }} />
@@ -296,12 +315,16 @@ export function NowPlayingStage({ status, queue, settings, players, activePlayer
             <div style={{ width: 72 }}><input type="range" min={0} max={100} value={settings?.volume ?? 75} readOnly /></div>
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.28)', width: 22 }}>{settings?.volume ?? 75}</span>
             <div style={{ flex: 1 }} />
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 99,
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 99,
               background: isSkipping ? 'rgba(245,158,11,0.12)' : isPlaying ? 'rgba(34,197,94,0.12)' : 'rgba(255,255,255,0.07)',
-              border: `1px solid ${isSkipping ? 'rgba(245,158,11,0.3)' : isPlaying ? 'rgba(34,197,94,0.25)' : 'rgba(255,255,255,0.1)'}` }}>
+              border: `1px solid ${isSkipping ? 'rgba(245,158,11,0.3)' : isPlaying ? 'rgba(34,197,94,0.25)' : 'rgba(255,255,255,0.1)'}`
+            }}>
               <div style={{ width: 5, height: 5, borderRadius: '50%', background: isSkipping ? '#f59e0b' : isPlaying ? '#22c55e' : '#fbbf24' }} />
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.06em', textTransform: 'uppercase',
-                color: isSkipping ? '#fbbf24' : isPlaying ? '#4ade80' : '#fbbf24' }}>{stateLabel}</span>
+              <span style={{
+                fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.06em', textTransform: 'uppercase',
+                color: isSkipping ? '#fbbf24' : isPlaying ? '#4ade80' : '#fbbf24'
+              }}>{stateLabel}</span>
             </div>
             {priority.length > 0 && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 99, background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.25)' }}>
@@ -314,26 +337,34 @@ export function NowPlayingStage({ status, queue, settings, players, activePlayer
 
       {/* Pause confirmation modal */}
       {showPauseConfirm && (
-        <div style={{ position: 'absolute', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(4px)' }}
+        <div style={{
+          position: 'absolute', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(4px)'
+        }}
           onClick={() => setShowPauseConfirm(false)}>
-          <div style={{ background: '#111', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 18, padding: '28px 32px',
+          <div style={{
+            background: '#111', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 18, padding: '28px 32px',
             display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20, minWidth: 280,
-            boxShadow: '0 24px 80px rgba(0,0,0,0.9)' }}
+            boxShadow: '0 24px 80px rgba(0,0,0,0.9)'
+          }}
             onClick={e => e.stopPropagation()}>
             <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, color: '#fff', letterSpacing: '-0.02em' }}>Pause Playback?</div>
             <div style={{ display: 'flex', gap: 12 }}>
               <button onClick={() => setShowPauseConfirm(false)}
-                style={{ padding: '9px 24px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.12)',
+                style={{
+                  padding: '9px 24px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.12)',
                   background: 'transparent', color: 'rgba(255,255,255,0.55)', cursor: 'pointer',
-                  fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 500 }}>
+                  fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 500
+                }}>
                 Cancel
               </button>
               <button onClick={() => { setShowPauseConfirm(false); onPlayPause(); }}
-                style={{ padding: '9px 24px', borderRadius: 10, border: 'none',
+                style={{
+                  padding: '9px 24px', borderRadius: 10, border: 'none',
                   background: '#dc2626', color: '#fff', cursor: 'pointer',
                   fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 700,
-                  boxShadow: '0 4px 18px rgba(220,38,38,0.4)' }}>
+                  boxShadow: '0 4px 18px rgba(220,38,38,0.4)'
+                }}>
                 Confirm
               </button>
             </div>

@@ -1,13 +1,14 @@
 /**
- * Obie Player — Refactored App.tsx
+ * Obie Player — Server-Authority Refactor
  *
- * Before: 1,637 lines, 17 useRef guards, 13 useEffect, 3 advance paths.
- * After:  ~350 lines. Single useReducer state machine. One advance path.
+ * Queue progression is now entirely server-controlled via complete_and_advance RPC.
+ * No master/slave system - all players can report completion safely.
+ * Database enforces atomic transitions and prevents race conditions.
  *
  * Architecture:
  *   useReducer(playbackMachine) — single source of truth for player phase
- *   useQueueAdvance             — only queue_next caller
- *   usePlayerRealtime           — Supabase subscriptions + 30s poll fallback
+ *   Direct RPC call              — complete_and_advance for queue progression
+ *   usePlayerRealtime           — Supabase subscriptions for queue/player status
  *   useLoadingGuard             — auto-skip for stuck/failed videos
  *   useFade                     — audio/opacity fade in/out
  *   YouTubePlayer (ref)         — iframe mode
@@ -29,15 +30,12 @@ import {
 } from '@shared/supabase-client';
 
 import { ResolvingScreen, JukeboxNamePrompt, StatusOverlays } from './components/IdentityScreens';
-import { PriorityClaimModal } from './components/PriorityClaimModal';
 import { YouTubePlayer, type YouTubePlayerHandle } from './players/YouTubePlayer';
 import { LocalVideoPlayer, type LocalVideoPlayerHandle } from './players/LocalVideoPlayer';
 import { YTMDesktopPlayer } from './players/YTMDesktopPlayer';
 import { usePlayerIdentity } from './hooks/usePlayerIdentity';
-import { usePlayerHeartbeat } from './hooks/usePlayerHeartbeat';
 import { useKaraokeLyrics } from './hooks/useKaraokeLyrics';
 import { usePlayerRealtime } from './hooks/usePlayerRealtime';
-import { useQueueAdvance } from './hooks/useQueueAdvance';
 import { useLoadingGuard } from './hooks/useLoadingGuard';
 import { useFade } from './hooks/useFade';
 import {
@@ -61,16 +59,8 @@ function App() {
   const [currentMedia, setCurrentMedia] = useState<MediaItem | null>(null);
   const [status, setStatus] = useState<PlayerStatus | null>(null);
   const [settings, setSettings] = useState<PlayerSettings | null>(null);
-  const [isSlavePlayer, setIsSlavePlayer] = useState(false);
-  const [showPriorityModal, setShowPriorityModal] = useState(false);
-  const [isMasterOffline, setIsMasterOffline] = useState(false);
   const [localVideoUrl, setLocalVideoUrl] = useState<string | null>(null);
-  // Tracks which master player ID the user last declined to claim.
-  // Prevents the claim modal from re-appearing on subsequent heartbeats
-  // for the same master. Cleared when the master changes.
-  const declinedClaimForRef = useRef<string | null>(null);
-  // Current master ID when the pending-selection modal was triggered.
-  const pendingMasterIdRef = useRef<string | null>(null);
+  const [currentQueueId, setCurrentQueueId] = useState<string | null>(null);
 
   // ── Derived ────────────────────────────────────────────────────────────────
   const playerMode = settings?.player_mode ?? 'iframe';
@@ -83,11 +73,6 @@ function App() {
   const containerRef = useRef<HTMLDivElement>(null);
   const hasInitRef = useRef(false);
   const autoRadioRef = useRef(false);
-  // Stable session ID for this browser tab — generated once on mount, shared
-  // between register_session (init) and usePlayerHeartbeat (self-demotion check).
-  // Previously each generated its own UUID, causing a mismatch that made the
-  // heartbeat demote master to slave after the first cycle (~30 s).
-  const sessionIdRef = useRef<string>(crypto.randomUUID());
 
   // ── Fade ───────────────────────────────────────────────────────────────────
   const { fadeOut, fadeIn, snapSilent } = useFade({
@@ -95,32 +80,37 @@ function App() {
     containerRef,
   });
 
-  // ── Heartbeat / status reporting ───────────────────────────────────────────
-  const { reportStatus, isMasterOffline: heartbeatMasterOffline } = usePlayerHeartbeat({
-    isSlavePlayer,
-    playerId: PLAYER_ID,
-    declinedClaimForRef,
-    onPriorityLost: useCallback(() => {
-      // Another player has claimed master (or admin force-assigned it).
-      // Demote this player to slave immediately — no page reload needed.
-      console.log('[App] Lost priority — demoting to slave');
-      setIsSlavePlayer(true);
-      localStorage.removeItem('obie_priority_player_id');
-    }, []),
-    onPrioritySelectionPending: useCallback((masterId: string) => {
-      // Admin triggered "Reset Priority Player".
-      // Clear the decline guard so the modal can be shown again for this reset.
-      declinedClaimForRef.current = null;
-      pendingMasterIdRef.current = masterId;
-      console.log('[App] Priority selection pending — showing claim modal');
-      setShowPriorityModal(true);
-    }, []),
-  });
+  // ── Status reporting ────────────────────────────────────────────────────────
+  const reportStatus = useCallback(async (state: PlayerStatus['state'], progress?: number) => {
+    console.log('[Player] Reporting status:', { state, progress });
+    try {
+      await callPlayerControl({
+        player_id: PLAYER_ID,
+        state,
+        progress,
+        action: 'update',
+      });
+    } catch (error) {
+      console.error('[Player] Failed to report status:', error);
+    }
+  }, [PLAYER_ID]);
 
-  // Keep isMasterOffline state in sync with what the heartbeat reports
+  // ── Heartbeat ──────────────────────────────────────────────────────────────
   useEffect(() => {
-    setIsMasterOffline(heartbeatMasterOffline);
-  }, [heartbeatMasterOffline]);
+    if (!PLAYER_ID) return;
+
+    const sendHeartbeat = async () => {
+      try {
+        await callPlayerControl({ player_id: PLAYER_ID, action: 'heartbeat' });
+      } catch (e) {
+        console.warn('[Player] Heartbeat failed:', e);
+      }
+    };
+
+    sendHeartbeat(); // immediate on mount
+    const id = setInterval(sendHeartbeat, 30000); // 30s interval
+    return () => clearInterval(id);
+  }, [PLAYER_ID]);
 
   // ── Karaoke ────────────────────────────────────────────────────────────────
   useKaraokeLyrics({
@@ -130,31 +120,45 @@ function App() {
     currentMediaIdRef: { current: currentMedia?.id ?? null },
   });
 
-  // ── Queue advance — single consolidated path ───────────────────────────────
-  const { advance } = useQueueAdvance({
-    playerId: PLAYER_ID,
-    isSlavePlayer,
-    dispatch,
-    fadeOut,
-    onNextMedia: (media) => setCurrentMedia(media),
-    onQueueEmpty: () => setCurrentMedia(null),
-  });
+  // ── Queue advance — direct RPC call to complete_and_advance ───────────────
+  const advanceQueue = useCallback(async () => {
+    if (!currentQueueId) {
+      console.warn('[Player] No current queue ID to advance');
+      return;
+    }
 
-  // Trigger advance when machine enters 'ending' and no call is in-flight
+    console.log('[Player] Calling complete_and_advance for queue:', currentQueueId);
+    try {
+      await callPlayerControl({
+        player_id: PLAYER_ID,
+        action: 'ended',
+        queue_id: currentQueueId,
+      });
+    } catch (error) {
+      console.error('[Player] Failed to advance queue:', error);
+    }
+  }, [PLAYER_ID, currentQueueId]);
+
+  // Trigger advance when machine enters 'ending'
   useEffect(() => {
     if (playback.phase === 'ending' && !playback.inFlight) {
-      advance(playback);
+      dispatch({ type: 'ADVANCE_IN_FLIGHT' });
+      advanceQueue().then(() => {
+        dispatch({ type: 'ADVANCE_COMPLETE' });
+      }).catch(() => {
+        dispatch({ type: 'ADVANCE_COMPLETE' });
+      });
     }
-  }, [playback, advance]);
+  }, [playback, advanceQueue, dispatch]);
 
   // ── Auto-radio: refill queue when empty ───────────────────────────────────
   useEffect(() => {
-    if (playback.phase !== 'idle' || autoRadioRef.current || isSlavePlayer) return;
+    if (playback.phase !== 'idle' || autoRadioRef.current) return;
     autoRadioRef.current = true;
     callRadioGenerator({ player_id: PLAYER_ID, action: 'generate', source: 'history' })
       .catch((e) => console.error('[App] Auto-radio failed:', e))
       .finally(() => { autoRadioRef.current = false; });
-  }, [playback.phase, PLAYER_ID, isSlavePlayer]);
+  }, [playback.phase, PLAYER_ID]);
 
   // ── Realtime subscriptions ─────────────────────────────────────────────────
   const handleStatusUpdate = useCallback((newStatus: PlayerStatus) => {
@@ -174,7 +178,62 @@ function App() {
     } else if (newStatus.source === 'youtube') {
       setLocalVideoUrl(null);
     }
-  }, [currentMedia?.id]);
+  }, [currentMedia?.id, dispatch]);
+
+  // ── Queue subscription for server-controlled progression ───────────────────
+  useEffect(() => {
+    if (!PLAYER_ID) return;
+
+    const channel = supabase
+      .channel('queue_updates')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'queue',
+          filter: `player_id=eq.${PLAYER_ID}`,
+        },
+        (payload) => {
+          const newRecord = payload.new as any;
+          console.log('[Player] Queue update:', newRecord);
+
+          // If an item transitions to 'playing', load it
+          if (newRecord.status === 'playing' && newRecord.media_item_id) {
+            setCurrentQueueId(newRecord.id);
+            // Fetch the full media item
+            supabase
+              .from('media_items')
+              .select('*')
+              .eq('id', newRecord.media_item_id)
+              .single()
+              .then(({ data }) => {
+                if (data) {
+                  const media: MediaItem = {
+                    id: data.id,
+                    title: data.title ?? 'Unknown',
+                    artist: data.artist ?? 'Unknown',
+                    url: data.url,
+                    duration: data.duration ?? 0,
+                    source_id: data.source_id ?? '',
+                    source_type: data.source_type as any,
+                    thumbnail: data.thumbnail,
+                    fetched_at: data.fetched_at,
+                    metadata: data.metadata ?? {},
+                  };
+                  setCurrentMedia(media);
+                  dispatch({ type: 'QUEUE_NEXT_STARTED', mediaId: media.id, isAfterSkip: false });
+                }
+              });
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [PLAYER_ID, dispatch]);
 
   const handleSettingsUpdate = useCallback((s: PlayerSettings) => setSettings(s), []);
 
@@ -254,32 +313,7 @@ function App() {
     (async () => {
       try {
         await initializePlayerPlaylist(PLAYER_ID);
-
-        const storedPlayerId = localStorage.getItem('obie_priority_player_id');
-
-        const result = await callPlayerControl({
-          player_id: PLAYER_ID,
-          action: 'register_session',
-          session_id: sessionIdRef.current,  // same UUID used by heartbeat
-          stored_player_id: storedPlayerId ?? undefined,
-        });
-
-        setIsSlavePlayer(!result.is_priority);
-
-        if (result.is_priority) {
-          localStorage.setItem('obie_priority_player_id', PLAYER_ID);
-        } else {
-          if (storedPlayerId === PLAYER_ID) {
-            localStorage.removeItem('obie_priority_player_id');
-          }
-          // Admin has pending priority reassignment — show the claim modal.
-          // Store the current master's ID so the decline guard can suppress
-          // re-shows for the same master on subsequent heartbeats.
-          if (result.priority_selection_pending) {
-            pendingMasterIdRef.current = (result as any).current_priority_id ?? null;
-            setShowPriorityModal(true);
-          }
-        }
+        console.log('[App] Player initialized');
       } catch (err) {
         console.error('[App] Initialization failed:', err);
       }
@@ -356,29 +390,9 @@ function App() {
         state={status?.state}
         playerReady={playback.phase !== 'idle'}
         currentMedia={currentMedia}
-        isSlavePlayer={isSlavePlayer}
-        isMasterOffline={isMasterOffline}
+        isSlavePlayer={false}
+        isMasterOffline={false}
       />
-
-      {/* Priority claim modal — appears on slaves when admin triggers reset */}
-      {showPriorityModal && (
-        <PriorityClaimModal
-          onClaim={async () => {
-            await callPlayerControl({ player_id: PLAYER_ID, action: 'claim_priority' });
-            setIsSlavePlayer(false);
-            setShowPriorityModal(false);
-            declinedClaimForRef.current = null;
-            localStorage.setItem('obie_priority_player_id', PLAYER_ID);
-            console.log('[App] Claimed master via modal confirmation');
-          }}
-          onDecline={() => {
-            // Record which master ID we declined for so we don't re-show
-            // on the next heartbeat cycle for the same master.
-            declinedClaimForRef.current = pendingMasterIdRef.current;
-            setShowPriorityModal(false);
-          }}
-        />
-      )}
     </div>
   );
 }

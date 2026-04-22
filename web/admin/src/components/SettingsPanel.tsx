@@ -12,12 +12,12 @@ import { Spinner, Toggle, PanelHeader, Btn, SaveBtn, SettingsRow } from './ui';
 import { ConsolePrefsPanel } from './ConsolePrefsPanel';
 
 export function SettingsPanel({ view, settings, prefs, playerId }: { view: ViewId; settings: PlayerSettings | null; prefs: Prefs; playerId: string }) {
-  const [local, setLocal]     = useState<PlayerSettings | null>(null);
+  const [local, setLocal] = useState<PlayerSettings | null>(null);
   const [credits, setCredits] = useState<number | null>(null);
   const [creditsLoading, setCreditsLoading] = useState(false);
-  const [error, setError]     = useState<string | null>(null);
-  const [saving, setSaving]   = useState(false);
-  const [localMediaScanning, setLocalMediaScanning]     = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [localMediaScanning, setLocalMediaScanning] = useState(false);
   const [localMediaScanResult, setLocalMediaScanResult] = useState<{ count: number; path: string } | null>(null);
 
   useEffect(() => { setLocal(settings ? { ...settings } : null); }, [settings]);
@@ -46,7 +46,7 @@ export function SettingsPanel({ view, settings, prefs, playerId }: { view: ViewI
   };
 
   const handleSavePlayback = () => local ? saveFields({ shuffle: local.shuffle, loop: local.loop, volume: local.volume, karaoke_mode: local.karaoke_mode, player_mode: local.player_mode }) : Promise.resolve();
-  const handleSaveKiosk    = () => local ? saveFields({ freeplay: local.freeplay, coin_per_song: local.coin_per_song, search_enabled: local.search_enabled, max_queue_size: local.max_queue_size, priority_queue_limit: local.priority_queue_limit, local_media_path: (local as any).local_media_path ?? null, coin_credits_dollar1: (local as any).coin_credits_dollar1 ?? 1, coin_credits_dollar2: (local as any).coin_credits_dollar2 ?? 3 } as Partial<PlayerSettings>) : Promise.resolve();
+  const handleSaveKiosk = () => local ? saveFields({ freeplay: local.freeplay, coin_per_song: local.coin_per_song, search_enabled: local.search_enabled, max_queue_size: local.max_queue_size, priority_queue_limit: local.priority_queue_limit, local_media_path: (local as any).local_media_path ?? null, coin_credits_dollar1: (local as any).coin_credits_dollar1 ?? 1, coin_credits_dollar2: (local as any).coin_credits_dollar2 ?? 3 } as Partial<PlayerSettings>) : Promise.resolve();
   const handleSaveBranding = () => local ? saveFields({ branding: local.branding }) : Promise.resolve();
 
   const handleToggle = async (field: keyof PlayerSettings) => {
@@ -68,39 +68,6 @@ export function SettingsPanel({ view, settings, prefs, playerId }: { view: ViewI
     setCreditsLoading(true);
     try { await updateAllCredits(playerId, 'clear'); setCredits(0); }
     catch (e) { console.error(e); } finally { setCreditsLoading(false); }
-  };
-  const [priorityResetState, setPriorityResetState] = useState<'idle' | 'confirm' | 'loading' | 'done' | 'error'>('idle');
-  const [priorityLog, setPriorityLog] = useState<Array<{ id: string; event_type: string; player_id: string | null; previous_priority_id: string | null; notes: string | null; created_at: string }>>([]);
-
-  // Fetch recent priority events on mount and after each reset/claim
-  const fetchPriorityLog = async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data } = await (supabase as any)
-      .from('priority_player_events')
-      .select('id, event_type, player_id, previous_priority_id, notes, created_at')
-      .order('created_at', { ascending: false })
-      .limit(8);
-    if (data) setPriorityLog(data);
-  };
-
-  useEffect(() => { fetchPriorityLog(); }, []);
-
-  const handleResetPriorityPlayer = () => {
-    setPriorityResetState('confirm');
-  };
-
-  const handleResetPriorityConfirm = async () => {
-    setPriorityResetState('loading');
-    try {
-      await callPlayerControl({ player_id: playerId, action: 'reset_priority' });
-      setPriorityResetState('done');
-      fetchPriorityLog();
-      setTimeout(() => setPriorityResetState('idle'), 4000);
-    } catch (e) {
-      console.error(e);
-      setPriorityResetState('error');
-      setTimeout(() => setPriorityResetState('idle'), 3000);
-    }
   };
 
   const handleScanLocalMedia = async () => {
@@ -146,8 +113,8 @@ export function SettingsPanel({ view, settings, prefs, playerId }: { view: ViewI
   );
 
   if (view === 'settings-playback') return wrap('Playback Settings', 'Queue and player behaviour', <>
-    <SettingsRow label="Shuffle Playlist when loaded"  desc="Randomly reorder Up Next when a new playlist is loaded (Now Playing is never moved)"><Toggle checked={!!local.shuffle}      onChange={() => handleToggle('shuffle')} /></SettingsRow>
-    <SettingsRow label="Loop Playlist"    desc="Restart from beginning when queue ends"><Toggle checked={!!local.loop}         onChange={() => handleToggle('loop')} /></SettingsRow>
+    <SettingsRow label="Shuffle Playlist when loaded" desc="Randomly reorder Up Next when a new playlist is loaded (Now Playing is never moved)"><Toggle checked={!!local.shuffle} onChange={() => handleToggle('shuffle')} /></SettingsRow>
+    <SettingsRow label="Loop Playlist" desc="Restart from beginning when queue ends"><Toggle checked={!!local.loop} onChange={() => handleToggle('loop')} /></SettingsRow>
     {'karaoke_mode' in local && <SettingsRow label="Karaoke Mode" desc="Enable karaoke UI on kiosk"><Toggle checked={!!local.karaoke_mode} onChange={() => handleToggle('karaoke_mode')} /></SettingsRow>}
     <SettingsRow label={`Volume: ${local.volume ?? 75}`} desc="Default player volume">
       <input type="range" min={0} max={100} value={local.volume ?? 75} onChange={e => set('volume', Number(e.target.value))} style={{ width: 160 }} />
@@ -171,17 +138,17 @@ export function SettingsPanel({ view, settings, prefs, playerId }: { view: ViewI
       <PanelHeader title="Kiosk Settings" subtitle="Request, credits and coin acceptor configuration" />
       <div style={{ flex: 1, overflowY: 'scroll', padding: 24 }}>
         <div style={{ maxWidth: 480 }}>{errBlock}
-          <SettingsRow label="Free Play"              desc="Allow requests without credits"><Toggle checked={!!local.freeplay}        onChange={() => handleToggle('freeplay')} /></SettingsRow>
-          <SettingsRow label="Search Enabled"         desc="Allow kiosk users to search songs"><Toggle checked={!!local.search_enabled}  onChange={() => handleToggle('search_enabled')} /></SettingsRow>
+          <SettingsRow label="Free Play" desc="Allow requests without credits"><Toggle checked={!!local.freeplay} onChange={() => handleToggle('freeplay')} /></SettingsRow>
+          <SettingsRow label="Search Enabled" desc="Allow kiosk users to search songs"><Toggle checked={!!local.search_enabled} onChange={() => handleToggle('search_enabled')} /></SettingsRow>
           {'kiosk_show_virtual_coin_button' in local && (
             <SettingsRow label="Show Virtual Coin Button" desc="Display INSERT COIN button on kiosk">
               <Toggle checked={!!local.kiosk_show_virtual_coin_button} onChange={() => handleToggle('kiosk_show_virtual_coin_button' as keyof PlayerSettings)} />
             </SettingsRow>
           )}
           {[{ label: 'Credits per Song', key: 'coin_per_song', desc: 'credits required per request' },
-            { label: 'Max Queue Size',   key: 'max_queue_size', desc: 'max songs in normal queue' },
-            { label: 'Priority Queue Limit', key: 'priority_queue_limit', desc: 'max priority request slots' }
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          { label: 'Max Queue Size', key: 'max_queue_size', desc: 'max songs in normal queue' },
+          { label: 'Priority Queue Limit', key: 'priority_queue_limit', desc: 'max priority request slots' }
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
           ].map(({ label, key, desc }) => (<SettingsRow key={key} label={label} desc={desc}>
             <input type="number" min={1} value={(local as any)[key] ?? 1} onChange={e => set(key as keyof PlayerSettings, Number(e.target.value))}
               style={{ width: 72, textAlign: 'center', padding: '7px 10px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none' }} />
@@ -213,9 +180,11 @@ export function SettingsPanel({ view, settings, prefs, playerId }: { view: ViewI
                 </Btn>
               </div>
               {localMediaScanResult && (
-                <div style={{ marginTop: 10, padding: '10px 14px', borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                <div style={{
+                  marginTop: 10, padding: '10px 14px', borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   background: localMediaScanResult.count > 0 ? 'rgba(34,197,94,0.1)' : 'rgba(251,191,36,0.1)',
-                  border: `1px solid ${localMediaScanResult.count > 0 ? 'rgba(74,222,128,0.3)' : 'rgba(251,191,36,0.3)'}` }}>
+                  border: `1px solid ${localMediaScanResult.count > 0 ? 'rgba(74,222,128,0.3)' : 'rgba(251,191,36,0.3)'}`
+                }}>
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: localMediaScanResult.count > 0 ? '#4ade80' : '#fbbf24' }}>
                     {localMediaScanResult.count < 0
                       ? `⚠ ${localMediaScanResult.path}`
@@ -259,9 +228,11 @@ export function SettingsPanel({ view, settings, prefs, playerId }: { view: ViewI
                 } else {
                   handleToggle('kiosk_coin_acceptor_enabled' as keyof PlayerSettings);
                 }
-              }} style={{ padding: '9px 18px', borderRadius: 10, border: 'none', cursor: 'pointer', fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 600,
+              }} style={{
+                padding: '9px 18px', borderRadius: 10, border: 'none', cursor: 'pointer', fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 600,
                 background: local.kiosk_coin_acceptor_enabled ? (local.kiosk_coin_acceptor_connected ? 'rgba(34,197,94,0.18)' : 'rgba(251,191,36,0.15)') : 'rgba(59,130,246,0.15)',
-                color:      local.kiosk_coin_acceptor_enabled ? (local.kiosk_coin_acceptor_connected ? '#4ade80'              : '#fbbf24')                  : '#60a5fa' }}>
+                color: local.kiosk_coin_acceptor_enabled ? (local.kiosk_coin_acceptor_connected ? '#4ade80' : '#fbbf24') : '#60a5fa'
+              }}>
                 {local.kiosk_coin_acceptor_enabled ? (local.kiosk_coin_acceptor_connected ? '🟢 Connected (Click to Reset)' : '🟡 Connecting…') : '🔵 Enable Coin Acceptor'}
               </button>
               {local.kiosk_coin_acceptor_device_id && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 8 }}>Device: {local.kiosk_coin_acceptor_device_id}</div>}
@@ -285,105 +256,6 @@ export function SettingsPanel({ view, settings, prefs, playerId }: { view: ViewI
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.3)', marginTop: 8 }}>Save Kiosk Settings above to apply denomination changes.</div>
             </div>
           )}
-
-          {/* Priority player reset */}
-          <div style={{ marginTop: 16, padding: 18, borderRadius: 14, background: 'rgba(255,255,255,0.025)', border: '1px solid var(--border)', position: 'relative' }}>
-            <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, color: '#fff', marginBottom: 6 }}>Priority Player</div>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)', marginBottom: 12, lineHeight: 1.6 }}>
-              The current MASTER player remains active even if offline — priority is sticky.
-              Use this button to trigger a re-assignment: a confirmation pop-over will appear
-              on the next Player screen to connect, letting staff explicitly claim MASTER status.
-              The existing master remains in charge until a new one confirms.
-            </div>
-
-            <Btn variant="ghost" onClick={handleResetPriorityPlayer} disabled={priorityResetState !== 'idle'}>
-              {priorityResetState === 'loading' ? '⏳ Resetting...' : '🔄 Re-Assign Priority Player'}
-            </Btn>
-
-            {/* Confirmation popover */}
-            {priorityResetState === 'confirm' && (
-              <div style={{
-                position: 'absolute', bottom: 'calc(100% + 8px)', left: 0, right: 0,
-                background: '#1a1a2e', border: '1px solid rgba(245,158,11,0.5)',
-                borderRadius: 12, padding: '16px 18px', zIndex: 100,
-                boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
-              }}>
-                <div style={{ fontFamily: 'var(--font-display)', fontSize: 13, color: '#f59e0b', fontWeight: 600, marginBottom: 8 }}>
-                  Re-Assign Priority Player?
-                </div>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'rgba(255,255,255,0.7)', marginBottom: 14, lineHeight: 1.5 }}>
-                  The current MASTER stays active until a player screen confirms the new assignment.
-                  A pop-over will appear on connecting Player screens asking staff to claim MASTER.
-                </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button onClick={handleResetPriorityConfirm} style={{
-                    flex: 1, padding: '8px 0', borderRadius: 8, border: 'none',
-                    background: '#f59e0b', color: '#000', fontFamily: 'var(--font-mono)',
-                    fontSize: 12, fontWeight: 700, cursor: 'pointer',
-                  }}>OK</button>
-                  <button onClick={() => setPriorityResetState('idle')} style={{
-                    flex: 1, padding: '8px 0', borderRadius: 8,
-                    border: '1px solid rgba(255,255,255,0.15)',
-                    background: 'transparent', color: 'rgba(255,255,255,0.6)',
-                    fontFamily: 'var(--font-mono)', fontSize: 12, cursor: 'pointer',
-                  }}>Cancel</button>
-                </div>
-              </div>
-            )}
-
-            {/* Loading banner */}
-            {priorityResetState === 'loading' && (
-              <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.3)', fontFamily: 'var(--font-mono)', fontSize: 11, color: '#60a5fa', display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ animation: 'pulse 1s linear infinite', display: 'inline-block' }}>⟳</span>
-                Pending — Player screens will now be prompted to claim MASTER...
-              </div>
-            )}
-
-            {/* Success banner */}
-            {priorityResetState === 'done' && (
-              <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)', fontFamily: 'var(--font-mono)', fontSize: 11, color: '#4ade80' }}>
-                ✓ Re-assignment pending — Player screens will be prompted to confirm as MASTER.
-              </div>
-            )}
-
-            {/* Error banner */}
-            {priorityResetState === 'error' && (
-              <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', fontFamily: 'var(--font-mono)', fontSize: 11, color: '#f87171' }}>
-                ✗ Reset failed — check console for details.
-              </div>
-            )}
-
-            {/* Priority event log */}
-            {priorityLog.length > 0 && (
-              <div style={{ marginTop: 14 }}>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.1em', color: 'rgba(255,255,255,0.28)', textTransform: 'uppercase', marginBottom: 6 }}>
-                  Priority Event Log
-                </div>
-                {priorityLog.map(ev => {
-                  const label = ev.event_type === 'claimed'
-                    ? '✓ Claimed'
-                    : ev.event_type === 'reset_requested'
-                    ? '🔄 Reset Requested'
-                    : '↩ Confirmed';
-                  const color = ev.event_type === 'claimed'
-                    ? '#4ade80'
-                    : ev.event_type === 'reset_requested'
-                    ? '#f59e0b'
-                    : '#a78bfa';
-                  const ts = new Date(ev.created_at).toLocaleString();
-                  return (
-                    <div key={ev.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '5px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color, flexShrink: 0, minWidth: 110 }}>{label}</span>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        {ev.notes && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.5)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.notes}</div>}
-                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.25)', marginTop: 1 }}>{ts}</div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
         </div>
       </div>
     </div>
@@ -403,10 +275,12 @@ export function SettingsPanel({ view, settings, prefs, playerId }: { view: ViewI
       <div style={{ display: 'flex', gap: 8 }}>
         {['dark', 'light'].map(t => (
           <button key={t} onClick={() => set('branding', { ...local.branding, theme: t })}
-            style={{ flex: 1, padding: '9px', borderRadius: 10, cursor: 'pointer', fontFamily: 'var(--font-display)', fontSize: 13,
+            style={{
+              flex: 1, padding: '9px', borderRadius: 10, cursor: 'pointer', fontFamily: 'var(--font-display)', fontSize: 13,
               border: `1px solid ${local.branding?.theme === t ? 'var(--accent-border)' : 'rgba(255,255,255,0.08)'}`,
               background: local.branding?.theme === t ? 'var(--accent-dim)' : 'rgba(255,255,255,0.04)',
-              color: local.branding?.theme === t ? 'var(--accent)' : 'rgba(255,255,255,0.4)' }}>
+              color: local.branding?.theme === t ? 'var(--accent)' : 'rgba(255,255,255,0.4)'
+            }}>
             {t === 'dark' ? '🌙 Dark' : '☀️ Light'}
           </button>
         ))}
