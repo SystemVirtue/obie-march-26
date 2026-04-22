@@ -289,6 +289,21 @@ function App() {
           dispatch({ type: 'QUEUE_NEXT_STARTED', mediaId: media.id, isAfterSkip: false });
         }
       }
+
+      // Also fetch the queue item to get the queue_id
+      console.log('[PLAYER] Fetching queue item for current media:', newStatus.current_media_id);
+      const { data: queueData } = await supabase
+        .from('queue')
+        .select('id')
+        .eq('player_id', PLAYER_ID)
+        .eq('media_item_id', newStatus.current_media_id)
+        .eq('status', 'playing')
+        .single();
+
+      if (queueData) {
+        console.log('[PLAYER] Setting currentQueueId:', (queueData as any).id);
+        setCurrentQueueId((queueData as any).id);
+      }
     }
 
     // Source mode switching
