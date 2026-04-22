@@ -27,7 +27,7 @@ import {
   type MediaItem,
   type PlayerStatus,
   type PlayerSettings,
-} from '@shared/supabase-client';
+} from '../../shared/supabase-client';
 
 import { ResolvingScreen, JukeboxNamePrompt, StatusOverlays } from './components/IdentityScreens';
 import { YouTubePlayer, type YouTubePlayerHandle } from './players/YouTubePlayer';
@@ -60,7 +60,6 @@ function App() {
   const [status, setStatus] = useState<PlayerStatus | null>(null);
   const [settings, setSettings] = useState<PlayerSettings | null>(null);
   const [localVideoUrl, setLocalVideoUrl] = useState<string | null>(null);
-  const [currentQueueId, setCurrentQueueId] = useState<string | null>(null);
 
   // ── Derived ────────────────────────────────────────────────────────────────
   const playerMode = settings?.player_mode ?? 'iframe';
@@ -122,22 +121,28 @@ function App() {
 
   // ── Queue advance — direct RPC call to complete_and_advance ───────────────
   const advanceQueue = useCallback(async () => {
-    if (!currentQueueId) {
-      console.warn('[Player] No current queue ID to advance');
+    if (!currentMedia?.id) {
+      console.warn('[Player] No current media ID to advance');
       return;
     }
 
-    console.log('[Player] Calling complete_and_advance for queue:', currentQueueId);
+    console.log('[Player] Calling complete_and_advance for media:', currentMedia.id);
     try {
-      await callPlayerControl({
-        player_id: PLAYER_ID,
-        action: 'ended',
-        queue_id: currentQueueId,
-      });
+      const { data, error } = await supabase.rpc('complete_and_advance', {
+        p_media_id: currentMedia.id,
+      } as any);
+      if (error) throw error;
+      const result = (data?.[0] as any);
+      if (result) {
+        console.log('[Player] Queue advanced to next media:', result.title);
+      } else {
+        console.log('[Player] Queue exhausted');
+        dispatch({ type: 'QUEUE_EXHAUSTED' });
+      }
     } catch (error) {
       console.error('[Player] Failed to advance queue:', error);
     }
-  }, [PLAYER_ID, currentQueueId]);
+  }, [PLAYER_ID, currentMedia?.id, dispatch]);
 
   // Trigger advance when machine enters 'ending'
   useEffect(() => {
@@ -200,7 +205,6 @@ function App() {
 
           // If an item transitions to 'playing', load it
           if (newRecord.status === 'playing' && newRecord.media_item_id) {
-            setCurrentQueueId(newRecord.id);
             // Fetch the full media item
             supabase
               .from('media_items')
@@ -276,6 +280,24 @@ function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playback.phase]);
+
+  // ── Auto-resume from 'user' pauses (transient YouTube pauses) ───────────────
+  // YouTube fires PAUSED events transiently during load and sometimes at end of video.
+  // We only persist 'admin' pauses (explicit user action). 'user' pauses auto-resume
+  // after 2 seconds unless the video has actually ended.
+  useEffect(() => {
+    if (playback.phase === 'paused' && playback.pausedBy === 'user') {
+      const timer = setTimeout(() => {
+        // Only resume if still in 'user' paused state (not ended, not admin paused)
+        if (playback.phase === 'paused' && playback.pausedBy === 'user') {
+          console.log('[App] Auto-resuming from transient user pause');
+          dispatch({ type: 'ADMIN_RESUME' });
+          ytPlayerRef.current?.resume();
+        }
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [playback.phase, dispatch]);
 
   // ── Unplayable video removal ───────────────────────────────────────────────
   const handleUnplayableVideo = useCallback(async (mediaId: string) => {

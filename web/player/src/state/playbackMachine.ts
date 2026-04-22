@@ -98,7 +98,9 @@ export function playbackReducer(
       return state;
 
     case 'YOUTUBE_PAUSED':
-      // Only a genuine pause — auto-resume attempts are handled outside the machine.
+      // YouTube fires PAUSED transitorily during load and sometimes at end of video.
+      // We mark it as 'user' pause but the parent component should auto-resume if
+      // this wasn't an explicit user action. Only 'admin' pauses should persist.
       if (state.phase === 'playing' || state.phase === 'buffering') {
         return { phase: 'paused', mediaId: state.mediaId, pausedBy: 'user' };
       }
