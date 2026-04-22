@@ -62,6 +62,16 @@ function App() {
   const [localVideoUrl, setLocalVideoUrl] = useState<string | null>(null);
   const [currentQueueId, setCurrentQueueId] = useState<string | null>(null);
 
+  // Debug logging for player state
+  useEffect(() => {
+    console.log('[PLAYER STATE]', {
+      playbackPhase: playback.phase,
+      currentQueueId,
+      currentMediaId: currentMedia?.id,
+      playerId: PLAYER_ID,
+    });
+  }, [playback.phase, currentQueueId, currentMedia?.id, PLAYER_ID]);
+
   // ── Derived ────────────────────────────────────────────────────────────────
   const playerMode = settings?.player_mode ?? 'iframe';
   const isYTMMode = playerMode === 'ytm_desktop';
@@ -123,11 +133,11 @@ function App() {
   // ── Queue advance — direct RPC call to complete_and_advance ───────────────
   const advanceQueue = useCallback(async () => {
     if (!currentQueueId) {
-      console.warn('[Player] No current queue ID to advance');
+      console.warn('[PLAYER] No current queue ID to advance');
       return;
     }
 
-    console.log('[Player] Calling complete_and_advance for queue:', currentQueueId);
+    console.log('[PLAYER] Video ended → reporting completion:', currentQueueId);
     try {
       const { data, error } = await supabase.rpc('complete_and_advance', {
         p_queue_id: currentQueueId,
@@ -135,15 +145,15 @@ function App() {
       if (error) throw error;
       const result = (data as any);
       if (result && result.next_id) {
-        console.log('[Player] Queue advanced to next item:', result.next_id);
+        console.log('[PLAYER] Queue advanced to next item:', result.next_id);
       } else {
-        console.log('[Player] Queue exhausted');
+        console.log('[PLAYER] Queue exhausted');
         dispatch({ type: 'QUEUE_EXHAUSTED' });
       }
     } catch (error) {
-      console.error('[Player] Failed to advance queue:', error);
+      console.error('[PLAYER] Failed to advance queue:', error);
     }
-  }, [PLAYER_ID, currentQueueId, dispatch]);
+  }, [currentQueueId, dispatch]);
 
   // Trigger advance when machine enters 'ending'
   useEffect(() => {
@@ -165,6 +175,39 @@ function App() {
       .catch((e) => console.error('[App] Auto-radio failed:', e))
       .finally(() => { autoRadioRef.current = false; });
   }, [playback.phase, PLAYER_ID]);
+
+  // ── Failsafe watchdog: detect and recover stuck playback ───────────────────
+  useEffect(() => {
+    if (!PLAYER_ID) return;
+
+    const watchdogInterval = setInterval(async () => {
+      const { data } = await supabase
+        .from('queue')
+        .select('*')
+        .eq('player_id', PLAYER_ID)
+        .eq('status', 'playing')
+        .maybeSingle();
+
+      if (!data) return;
+
+      const started = new Date((data as any).started_at).getTime();
+      const now = Date.now();
+      const MAX_DURATION = 15 * 60 * 1000; // 15 min fallback
+
+      if (now - started > MAX_DURATION) {
+        console.warn('[WATCHDOG] Playback stuck → forcing advance:', (data as any).id);
+        try {
+          await supabase.rpc('complete_and_advance', {
+            p_queue_id: (data as any).id,
+          } as any);
+        } catch (error) {
+          console.error('[WATCHDOG] Failed to force advance:', error);
+        }
+      }
+    }, 30000); // Check every 30 seconds
+
+    return () => clearInterval(watchdogInterval);
+  }, [PLAYER_ID]);
 
   // ── Realtime subscriptions ─────────────────────────────────────────────────
   const handleStatusUpdate = useCallback((newStatus: PlayerStatus) => {
@@ -202,11 +245,19 @@ function App() {
         },
         (payload) => {
           const newRecord = payload.new as any;
-          console.log('[Player] Queue update:', newRecord);
+          console.log('[SYNC] Queue update received:', newRecord);
 
           // If an item transitions to 'playing', load it
           if (newRecord.status === 'playing' && newRecord.media_item_id) {
+            // Prevent duplicate loads: if we're already playing this item, ignore
+            if (currentQueueId === newRecord.id) {
+              console.log('[SYNC] Duplicate load prevented - already playing:', newRecord.id);
+              return;
+            }
+
+            console.log('[SYNC] Switching to new video:', newRecord.id);
             setCurrentQueueId(newRecord.id);
+
             // Fetch the full media item
             supabase
               .from('media_items')
@@ -229,6 +280,7 @@ function App() {
                   };
                   setCurrentMedia(media);
                   dispatch({ type: 'QUEUE_NEXT_STARTED', mediaId: media.id, isAfterSkip: false });
+                  console.log('[SYNC] Media loaded:', media.id);
                 }
               });
           }
@@ -236,10 +288,13 @@ function App() {
       )
       .subscribe();
 
+    console.log('[SYNC] Queue subscription active for player:', PLAYER_ID);
+
     return () => {
       supabase.removeChannel(channel);
+      console.log('[SYNC] Queue subscription removed');
     };
-  }, [PLAYER_ID, dispatch]);
+  }, [PLAYER_ID, dispatch, currentQueueId]);
 
   const handleSettingsUpdate = useCallback((s: PlayerSettings) => setSettings(s), []);
 
@@ -329,6 +384,56 @@ function App() {
     }
   }, [PLAYER_ID]);
 
+  // ── Initial sync: load current playing item on startup ─────────────────────
+  const syncInitialState = useCallback(async () => {
+    if (!PLAYER_ID) return;
+
+    console.log('[PLAYER] Syncing initial state...');
+
+    const { data, error } = await supabase
+      .from('queue')
+      .select('*')
+      .eq('player_id', PLAYER_ID)
+      .eq('status', 'playing')
+      .maybeSingle();
+
+    if (error) {
+      console.error('[PLAYER] Initial sync failed', error);
+      return;
+    }
+
+    if (data && (data as any).id) {
+      console.log('[PLAYER] Found active playback item:', (data as any).id);
+      setCurrentQueueId((data as any).id);
+
+      // Fetch the full media item
+      const { data: mediaData } = await supabase
+        .from('media_items')
+        .select('*')
+        .eq('id', (data as any).media_item_id)
+        .single();
+
+      if (mediaData) {
+        const media: MediaItem = {
+          id: (mediaData as any).id,
+          title: (mediaData as any).title ?? 'Unknown',
+          artist: (mediaData as any).artist ?? 'Unknown',
+          url: (mediaData as any).url,
+          duration: (mediaData as any).duration ?? 0,
+          source_id: (mediaData as any).source_id ?? '',
+          source_type: (mediaData as any).source_type as any,
+          thumbnail: (mediaData as any).thumbnail,
+          fetched_at: (mediaData as any).fetched_at,
+          metadata: (mediaData as any).metadata ?? {},
+        };
+        setCurrentMedia(media);
+        dispatch({ type: 'QUEUE_NEXT_STARTED', mediaId: media.id, isAfterSkip: false });
+      }
+    } else {
+      console.log('[PLAYER] No active playback on startup');
+    }
+  }, [PLAYER_ID, dispatch]);
+
   // ── Initialization ────────────────────────────────────────────────────────
   useEffect(() => {
     if (!identityReady || !activePlayerId || hasInitRef.current) return;
@@ -337,12 +442,13 @@ function App() {
     (async () => {
       try {
         await initializePlayerPlaylist(PLAYER_ID);
+        await syncInitialState();
         console.log('[App] Player initialized');
       } catch (err) {
         console.error('[App] Initialization failed:', err);
       }
     })();
-  }, [identityReady, activePlayerId, PLAYER_ID]);
+  }, [identityReady, activePlayerId, PLAYER_ID, syncInitialState]);
 
   // ── Early returns ──────────────────────────────────────────────────────────
   if (!identityReady) return <ResolvingScreen />;
@@ -414,8 +520,6 @@ function App() {
         state={status?.state}
         playerReady={playback.phase !== 'idle'}
         currentMedia={currentMedia}
-        isSlavePlayer={false}
-        isMasterOffline={false}
       />
     </div>
   );
