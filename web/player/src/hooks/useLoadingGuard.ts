@@ -21,6 +21,8 @@ type UseLoadingGuardArgs = {
   getYTPlayerState: () => number | null;
   /** Report correct state to DB when Realtime dropped the 'playing' event */
   reportPlaying: () => void;
+  /** Disable auto-skip during initial player sync to prevent interrupting other players */
+  initialSyncInProgress: boolean;
 };
 
 /** YouTube player state constants */
@@ -35,6 +37,7 @@ export function useLoadingGuard({
   dispatch,
   getYTPlayerState,
   reportPlaying,
+  initialSyncInProgress,
 }: UseLoadingGuardArgs) {
   const loadingTimerRef   = useRef<number | null>(null);
   const extensionTimerRef = useRef<number | null>(null);
@@ -52,6 +55,12 @@ export function useLoadingGuard({
 
   useEffect(() => {
     clearAll();
+
+    // Skip auto-skip during initial sync to prevent interrupting other players
+    if (initialSyncInProgress) {
+      console.log('[useLoadingGuard] Initial sync in progress, skipping auto-skip');
+      return;
+    }
 
     if (playback.phase !== 'loading' && playback.phase !== 'buffering') return;
 
@@ -91,5 +100,5 @@ export function useLoadingGuard({
     }, LOADING_TIMEOUT_MS);
 
     return clearAll;
-  }, [playback.phase, dispatch, getYTPlayerState, reportPlaying]);
+  }, [playback.phase, dispatch, getYTPlayerState, reportPlaying, initialSyncInProgress]);
 }

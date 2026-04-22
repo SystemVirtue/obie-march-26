@@ -83,6 +83,7 @@ function App() {
   const containerRef = useRef<HTMLDivElement>(null);
   const hasInitRef = useRef(false);
   const autoRadioRef = useRef(false);
+  const [initialSyncInProgress, setInitialSyncInProgress] = useState(false);
 
   // ── Fade ───────────────────────────────────────────────────────────────────
   const { fadeOut, fadeIn, snapSilent } = useFade({
@@ -313,6 +314,7 @@ function App() {
     dispatch,
     getYTPlayerState: useCallback(() => ytPlayerRef.current?.getPlayerState() ?? null, []),
     reportPlaying: useCallback(() => reportStatus('playing'), [reportStatus]),
+    initialSyncInProgress,
   });
 
   // ── Load video when media changes ─────────────────────────────────────────
@@ -389,6 +391,20 @@ function App() {
     if (!PLAYER_ID) return;
 
     console.log('[PLAYER] Syncing initial state...');
+    setInitialSyncInProgress(true);
+
+    // Wait for YouTube API to be ready before attempting to load
+    const maxWaitTime = 10000; // 10 seconds max wait
+    const startTime = Date.now();
+    while (!window.YT && Date.now() - startTime < maxWaitTime) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    if (!window.YT) {
+      console.warn('[PLAYER] YouTube API not ready after 10s, skipping initial sync');
+      setInitialSyncInProgress(false);
+      return;
+    }
 
     const { data, error } = await supabase
       .from('queue')
@@ -399,6 +415,7 @@ function App() {
 
     if (error) {
       console.error('[PLAYER] Initial sync failed', error);
+      setInitialSyncInProgress(false);
       return;
     }
 
@@ -432,6 +449,11 @@ function App() {
     } else {
       console.log('[PLAYER] No active playback on startup');
     }
+
+    // Clear the flag after sync completes
+    setTimeout(() => {
+      setInitialSyncInProgress(false);
+    }, 2000); // Give 2s buffer for video to actually start
   }, [PLAYER_ID, dispatch]);
 
   // ── Initialization ────────────────────────────────────────────────────────
