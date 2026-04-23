@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: obie-admin
+    buildCommand: npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /assets/(.*)
+        destination: /assets/$1
+      - type: rewrite
+        source: /(.*)\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot)
+        destination: /$1.$2
+      - type: rewrite
+        source: /(.*)$
+        destination: /index.html
