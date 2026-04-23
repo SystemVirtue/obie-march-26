@@ -265,8 +265,11 @@ export type Database = {
           id: string
           jukebox_slug: string
           last_heartbeat: string | null
+          last_seen: string | null
           name: string
           owner_id: string | null
+          player_name_tag: string | null
+          priority: number
           status: string | null
           updated_at: string | null
         }
@@ -277,8 +280,11 @@ export type Database = {
           id?: string
           jukebox_slug?: string
           last_heartbeat?: string | null
+          last_seen?: string | null
           name: string
           owner_id?: string | null
+          player_name_tag?: string | null
+          priority?: number
           status?: string | null
           updated_at?: string | null
         }
@@ -289,8 +295,11 @@ export type Database = {
           id?: string
           jukebox_slug?: string
           last_heartbeat?: string | null
+          last_seen?: string | null
           name?: string
           owner_id?: string | null
+          player_name_tag?: string | null
+          priority?: number
           status?: string | null
           updated_at?: string | null
         }

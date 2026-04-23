@@ -44,10 +44,10 @@ import { QueuePanel } from './components/QueuePanel';
 import { PlaylistsPanel } from './components/PlaylistsPanel';
 import { SearchPanel } from './components/SearchPanel';
 import { SettingsPanel } from './components/SettingsPanel';
+import { PlayerInstances } from './components/PlayerInstances';
 import { ScriptsPanel } from './components/ScriptsPanel';
 import { LogsPanel } from './components/LogsPanel';
 import { ServerPanel } from './components/ServerPanel';
-import { PlayerInstances } from './components/PlayerInstances';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ROOT APP
@@ -113,13 +113,18 @@ function App() {
     const resolve = async () => {
       try {
         const pathSlug = routeSlug;
+        console.log('[Auth] Resolving player. pathSlug:', pathSlug);
         const myJukeboxes = await getMyJukeboxes();
+        console.log('[Auth] My jukeboxes:', myJukeboxes);
         if (!cancelled) setAvailableJukeboxes(myJukeboxes);
 
         if (pathSlug) {
+          console.log('[Auth] Resolving slug:', pathSlug);
           const resolved = await resolveJukeboxSlug(pathSlug);
+          console.log('[Auth] Resolved jukebox:', resolved);
           if (!resolved) throw new Error(`Jukebox "${pathSlug}" was not found.`);
           const hasAccess = myJukeboxes.some((j) => j.player_id === resolved.player_id);
+          console.log('[Auth] Has access:', hasAccess);
           if (!hasAccess) throw new Error(`You do not have access to jukebox "${resolved.jukebox_slug}".`);
           if (!cancelled) {
             setResolvedPlayerId(resolved.player_id);
@@ -213,7 +218,8 @@ function App() {
   }, [user, activePlayerId]);
 
   // Subscribe to ALL of the admin's player records so Connected Devices shows every
-  // device (priority + slaves). Re-subscribes whenever the available jukebox list changes.
+  // device. Queue progression is server-controlled via complete_and_advance RPC.
+  // Re-subscribes whenever the available jukebox list changes.
   useEffect(() => {
     if (!user || !availableJukeboxes.length) return;
     const playerIds = availableJukeboxes.map(j => j.player_id);
@@ -424,9 +430,9 @@ function App() {
               hasActivePlaylist={!!activePlayer?.active_playlist_id} />
           )}
           {isPlaylistView && <PlaylistsPanel view={view} playerId={activePlayerId} activePlaylistId={activePlayer?.active_playlist_id ?? undefined} />}
+          {view === 'settings-player-instances' && <PlayerInstances />}
           {isScriptsView && <ScriptsPanel playerId={activePlayerId} />}
           {isSettingsView && !isScriptsView && view !== 'settings-player-instances' && <SettingsPanel view={view} settings={settings} prefs={prefs} playerId={activePlayerId} />}
-          {view === 'settings-player-instances' && <PlayerInstances jukeboxes={availableJukeboxes} />}
           {view === 'logs' && <LogsPanel />}
           {view === 'server' && <ServerPanel />}
         </main>

@@ -162,7 +162,7 @@ export function NowPlayingStage({ status, queue, settings, players, activePlayer
             {/* One row per player device — shown even when offline (status dot changes colour) */}
             {(players ?? []).map(player => {
               const isActive = player.id === activePlayerId;
-              const isOffline = isStale(player.last_heartbeat);
+              const isOffline = player.last_heartbeat ? isStale(player.last_heartbeat) : true;
               const dotColor = isOffline ? '#6b7280' : '#22c55e';
               const stateText = isActive
                 ? (status?.state === 'playing' ? 'Playing'

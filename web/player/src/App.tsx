@@ -109,20 +109,30 @@ function App() {
 
   // ── Heartbeat ──────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!PLAYER_ID) return;
+    if (!PLAYER_ID || !currentQueueId) return;
 
     const sendHeartbeat = async () => {
       try {
-        await callPlayerControl({ player_id: PLAYER_ID, action: 'heartbeat' });
+        // Determine playback state
+        let state = 'idle';
+        if (playback.phase === 'playing') state = 'playing';
+        else if (playback.phase === 'paused') state = 'paused';
+        else if (playback.phase === 'ending') state = 'ended';
+        else if (playback.phase === 'loading') state = 'buffering';
+
+        await supabase.rpc('player_heartbeat', {
+          p_queue_id: currentQueueId,
+          p_state: state,
+        } as any);
       } catch (e) {
         console.warn('[Player] Heartbeat failed:', e);
       }
     };
 
     sendHeartbeat(); // immediate on mount
-    const id = setInterval(sendHeartbeat, 30000); // 30s interval
+    const id = setInterval(sendHeartbeat, 10000); // 10s interval as per spec
     return () => clearInterval(id);
-  }, [PLAYER_ID]);
+  }, [PLAYER_ID, currentQueueId, playback.phase]);
 
   // ── Playback position tracking ─────────────────────────────────────────────
   useEffect(() => {

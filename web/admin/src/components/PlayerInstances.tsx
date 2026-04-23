@@ -1,483 +1,363 @@
 import { useState, useEffect, useCallback } from 'react';
-import { supabase, subscribeToTable, type Player, type PlayerStatus } from '@shared/supabase-client';
-import { PanelHeader, Btn, Spinner } from './ui';
-import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
-import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
+import { supabase, type Player, type PlayerStatus } from '@shared/supabase-client';
+import { PanelHeader, Btn } from './ui';
 
-interface PlayerInstancesProps {
-  jukeboxes: { player_id: string; jukebox_slug: string }[];
+interface PlayerWithStatus extends Player {
+  player_status?: PlayerStatus | null;
+  healthStatus: 'online' | 'waiting' | 'offline';
 }
 
-type HealthStatus = 'online' | 'waiting' | 'offline';
-
-function getHealthStatus(lastSeen: string | null): HealthStatus {
-  if (!lastSeen) return 'offline';
-  const now = new Date().getTime();
-  const lastSeenTime = new Date(lastSeen).getTime();
-  const diff = (now - lastSeenTime) / 1000; // seconds
-
-  if (diff <= 30) return 'online';
-  if (diff <= 60) return 'waiting';
-  return 'offline';
-}
-
-function formatHealthStatus(status: HealthStatus): string {
-  switch (status) {
-    case 'online': return '❤️ Online';
-    case 'waiting': return '🤍 Waiting...';
-    case 'offline': return '💀 Offline';
-  }
-}
-
-function formatTimestamp(dateStr: string | null | undefined): string {
-  if (!dateStr) return 'N/A';
-  const date = new Date(dateStr);
-  const day = date.getDate();
-  const month = date.toLocaleString('en-US', { month: 'short' });
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  const seconds = String(date.getSeconds()).padStart(2, '0');
-  return `${day} ${month} - ${hours}:${minutes}:${seconds}`;
-}
-
-// Sortable row component
-function SortableRow({ player, status, onIdentify, onDelete, onEditName }: {
-  player: Player;
-  status: PlayerStatus | null;
-  onIdentify: (player: Player) => void;
-  onDelete: (player: Player) => void;
-  onEditName: (player: Player) => void;
-}) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: player.id });
-  const healthStatus = getHealthStatus(player.last_seen || player.last_heartbeat);
-  const [hovered, setHovered] = useState(false);
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-  };
-
-  const displayName = player.player_name_tag || `Player_${player.priority || '?'}`;
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      className="sortable-row"
-    >
-      <div style={{
-        display: 'grid', gridTemplateColumns: '50px 1fr 1fr 1fr 1fr 1fr 120px', gap: 8, padding: '10px 12px',
-        background: hovered ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.03)',
-        borderBottom: '1px solid rgba(255,255,255,0.05)', alignItems: 'center'
-      }}>
-
-        {/* Priority / Drag Handle */}
-        <div {...attributes} {...listeners} style={{ cursor: 'grab', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <span style={{ fontSize: 16, opacity: 0.6 }}>⋮⋮</span>
-        </div>
-
-        {/* Player Name Tag */}
-        <div style={{ position: 'relative' }}>
-          <span style={{ fontFamily: 'var(--font-display)', fontSize: 13, color: '#fff' }}>{displayName}</span>
-          {hovered && (
-            <button
-              onClick={() => onEditName(player)}
-              style={{
-                position: 'absolute', left: '100%', top: '50%', transform: 'translateY(-50%) translateX(8px)',
-                padding: '2px 8px', fontSize: 10, background: 'rgba(59,130,246,0.2)', border: '1px solid rgba(59,130,246,0.3)',
-                color: '#60a5fa', borderRadius: 4, cursor: 'pointer', whiteSpace: 'nowrap'
-              }}
-            >
-              Edit Name
-            </button>
-          )}
-        </div>
-
-        {/* Player ID */}
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>
-          {player.id.slice(0, 8)}...
-        </div>
-
-        {/* Health Status */}
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: healthStatus === 'online' ? '#4ade80' : healthStatus === 'waiting' ? '#fbbf24' : '#6b7280' }}>
-          {formatHealthStatus(healthStatus)}
-        </div>
-
-        {/* Player State */}
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'rgba(255,255,255,0.7)' }}>
-          {status?.state || 'Unknown'}
-        </div>
-
-        {/* Last Refresh Time */}
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>
-          {formatTimestamp(player.last_refresh)}
-        </div>
-
-        {/* Actions */}
-        <div style={{ display: 'flex', gap: 6 }}>
-          <button
-            onClick={() => onIdentify(player)}
-            style={{
-              padding: '4px 10px', fontSize: 11, background: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.3)',
-              color: '#4ade80', borderRadius: 6, cursor: 'pointer', fontFamily: 'var(--font-display)'
-            }}
-          >
-            Identify
-          </button>
-          <button
-            onClick={() => onDelete(player)}
-            style={{
-              padding: '4px 10px', fontSize: 11, background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)',
-              color: '#f87171', borderRadius: 6, cursor: 'pointer', fontFamily: 'var(--font-display)'
-            }}
-          >
-            Delete
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-export function PlayerInstances({ jukeboxes }: PlayerInstancesProps) {
-  const [players, setPlayers] = useState<Player[]>([]);
-  const [statuses, setStatuses] = useState<Record<string, PlayerStatus>>({});
-  const [showInactive, setShowInactive] = useState(true);
-  const [autoRefresh, setAutoRefresh] = useState(false);
+export function PlayerInstances() {
+  const [players, setPlayers] = useState<PlayerWithStatus[]>([]);
   const [loading, setLoading] = useState(true);
-  const [editingPlayer, setEditingPlayer] = useState<Player | null>(null);
-  const [editingName, setEditingName] = useState('');
+  const [showInactive, setShowInactive] = useState(true);
+  const [editingName, setEditingName] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
+  const [deleting, setDeleting] = useState<string | null>(null);
 
-  const playerIds = jukeboxes.map(j => j.player_id);
-  const sensors = useSensors(
-    useSensor(PointerSensor),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
-  );
-
-  // Fetch players
   const fetchPlayers = useCallback(async () => {
-    if (!playerIds.length) {
-      setPlayers([]);
-      setLoading(false);
-      return;
-    }
-
+    setLoading(true);
     try {
-      const { data, error } = await supabase
+      const { data: playersData, error: playersError } = await supabase
         .from('players')
-        .select('id, name, player_name_tag, priority, status, last_seen, last_refresh, created_at')
-        .in('id', playerIds)
+        .select('*')
         .order('priority', { ascending: true });
 
-      if (error) throw error;
-      setPlayers(data || []);
+      if (playersError) throw playersError;
+
+      const { data: statusData } = await supabase
+        .from('player_status')
+        .select('*');
+
+      const statusMap = new Map(statusData?.map((s: any) => [s.player_id, s]) || []);
+
+      const now = Date.now();
+      const playersWithStatus = (playersData || []).map((player: any) => {
+        const lastHeartbeat = player.last_seen || player.last_heartbeat;
+        const lastSeenTime = lastHeartbeat ? new Date(lastHeartbeat).getTime() : 0;
+        const timeSinceHeartbeat = now - lastSeenTime;
+
+        let healthStatus: 'online' | 'waiting' | 'offline';
+        if (timeSinceHeartbeat < 30000) {
+          healthStatus = 'online';
+        } else if (timeSinceHeartbeat < 60000) {
+          healthStatus = 'waiting';
+        } else {
+          healthStatus = 'offline';
+        }
+
+        return {
+          ...player,
+          player_status: statusMap.get(player.id) || null,
+          healthStatus,
+        };
+      });
+
+      setPlayers(playersWithStatus);
     } catch (error) {
       console.error('[PlayerInstances] Failed to fetch players:', error);
     } finally {
       setLoading(false);
     }
-  }, [playerIds]);
+  }, []);
 
-  // Fetch player statuses
-  const fetchStatuses = useCallback(async () => {
-    if (!playerIds.length) return;
-
-    try {
-      const { data, error } = await supabase
-        .from('player_status')
-        .select('player_id, state, progress, current_media_id, last_updated')
-        .in('player_id', playerIds);
-
-      if (error) throw error;
-
-      const statusMap: Record<string, PlayerStatus> = {};
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (data || []).forEach((s: any) => {
-        statusMap[s.player_id] = s as PlayerStatus;
-      });
-      setStatuses(statusMap);
-    } catch (error) {
-      console.error('[PlayerInstances] Failed to fetch statuses:', error);
-    }
-  }, [playerIds]);
-
-  // Subscribe to players table
   useEffect(() => {
     fetchPlayers();
-    fetchStatuses();
+  }, [fetchPlayers]);
 
-    const sub = subscribeToTable('players', { column: 'id', value: playerIds[0] }, () => {
-      fetchPlayers();
-    });
-
-    return () => sub.unsubscribe();
-  }, [playerIds, fetchPlayers, fetchStatuses]);
-
-  // Subscribe to player_status table
-  useEffect(() => {
-    const subs = playerIds.map(pid =>
-      subscribeToTable('player_status', { column: 'player_id', value: pid }, fetchStatuses)
-    );
-    return () => subs.forEach(s => s.unsubscribe());
-  }, [playerIds, fetchStatuses]);
-
-  // Auto-refresh interval (15 seconds when enabled)
-  useEffect(() => {
-    if (!autoRefresh) return;
-
-    const interval = setInterval(() => {
-      fetchPlayers();
-      fetchStatuses();
-    }, 15000); // 15 seconds
-
-    return () => clearInterval(interval);
-  }, [autoRefresh, fetchPlayers, fetchStatuses]);
-
-  // Handle drag end for reordering
-  const handleDragEnd = async (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-
-    const oldIndex = players.findIndex(p => p.id === active.id);
-    const newIndex = players.findIndex(p => p.id === over.id);
-
-    const reordered = arrayMove(players, oldIndex, newIndex);
-    setPlayers(reordered);
-
-    // Update priorities in database
+  const handleIdentify = async (player: PlayerWithStatus) => {
+    const displayName = player.player_name_tag || `Player_${player.priority}`;
     try {
-      for (let i = 0; i < reordered.length; i++) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (supabase as any)
-          .from('players')
-          .update({ priority: i + 1 })
-          .eq('id', reordered[i].id);
-      }
+      await supabase.rpc('identify_player', {
+        p_player_id: player.id,
+        p_display_name: displayName,
+      } as any);
     } catch (error) {
-      console.error('[PlayerInstances] Failed to update priorities:', error);
-      fetchPlayers(); // Revert on error
+      console.error('[PlayerInstances] Failed to identify player:', error);
     }
   };
 
-  // Handle identify
-  const handleIdentify = async (player: Player) => {
-    const displayName = player.player_name_tag || `Player_${player.priority || '?'}`;
+  const handleDelete = async (playerId: string) => {
+    if (!confirm('Are you sure you want to delete this player instance?')) return;
+
+    setDeleting(playerId);
     try {
-      // Set identify_tag to trigger overlay on player screen
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (supabase as any)
-        .from('players')
-        .update({ identify_tag: displayName })
-        .eq('id', player.id);
-
-      console.log('[PlayerInstances] Identify player:', displayName);
-
-      // Clear identify_tag after 5 seconds
-      setTimeout(async () => {
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await (supabase as any)
-            .from('players')
-            .update({ identify_tag: null })
-            .eq('id', player.id);
-        } catch (error) {
-          console.error('[PlayerInstances] Failed to clear identify_tag:', error);
-        }
-      }, 5000);
-    } catch (error) {
-      console.error('[PlayerInstances] Failed to set identify_tag:', error);
-    }
-  };
-
-  // Handle delete
-  const handleDelete = async (player: Player) => {
-    if (!confirm(`Are you sure you want to delete player "${player.player_name_tag || player.name}"?`)) return;
-
-    try {
-      await supabase.from('players').delete().eq('id', player.id);
-      setPlayers(prev => prev.filter(p => p.id !== player.id));
+      await supabase.rpc('delete_player_instance', {
+        p_player_id: playerId,
+      } as any);
+      await fetchPlayers();
     } catch (error) {
       console.error('[PlayerInstances] Failed to delete player:', error);
+    } finally {
+      setDeleting(null);
     }
   };
 
-  // Handle edit name
-  const handleEditName = (player: Player) => {
-    setEditingPlayer(player);
-    setEditingName(player.player_name_tag || `Player_${player.priority || '?'}`);
-  };
-
-  // Save name
-  const handleSaveName = async () => {
-    if (!editingPlayer) return;
-
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (supabase as any)
-        .from('players')
-        .update({ player_name_tag: editingName })
-        .eq('id', editingPlayer.id);
-
-      setPlayers(prev => prev.map(p =>
-        p.id === editingPlayer.id ? { ...p, player_name_tag: editingName as string } : p
-      ));
-      setEditingPlayer(null);
-      setEditingName('');
-    } catch (error) {
-      console.error('[PlayerInstances] Failed to update name:', error);
-    }
-  };
-
-  // Delete inactive
   const handleDeleteInactive = async () => {
-    const inactivePlayers = players.filter(p => getHealthStatus(p.last_seen || p.last_heartbeat) === 'offline');
-    if (!inactivePlayers.length) {
-      alert('No inactive players to delete.');
-      return;
-    }
-
-    if (!confirm(`Are you sure you want to delete ${inactivePlayers.length} inactive player(s)?`)) return;
+    if (!confirm('Are you sure you want to delete all inactive players (offline > 60s)?')) return;
 
     try {
-      for (const player of inactivePlayers) {
-        await supabase.from('players').delete().eq('id', player.id);
-      }
-      setPlayers(prev => prev.filter(p => getHealthStatus(p.last_seen || p.last_heartbeat) !== 'offline'));
+      await supabase.rpc('delete_inactive_players', {
+        p_offline_threshold_seconds: 60,
+      } as any);
+      await fetchPlayers();
     } catch (error) {
       console.error('[PlayerInstances] Failed to delete inactive players:', error);
     }
   };
 
-  // Filter players based on showInactive
+  const handleSaveName = async (playerId: string) => {
+    try {
+      await (supabase as any)
+        .from('players')
+        .update({ player_name_tag: editValue || null })
+        .eq('id', playerId);
+      await fetchPlayers();
+      setEditingName(null);
+      setEditValue('');
+    } catch (error) {
+      console.error('[PlayerInstances] Failed to update player name:', error);
+    }
+  };
+
+  const handleReorder = async (dragIndex: number, dropIndex: number) => {
+    const newPlayers = [...players];
+    const [draggedPlayer] = newPlayers.splice(dragIndex, 1);
+    newPlayers.splice(dropIndex, 0, draggedPlayer);
+
+    const playerIds = newPlayers.map(p => p.id);
+    const newPriorities = newPlayers.map((_, i) => i + 1);
+
+    try {
+      await supabase.rpc('reorder_players', {
+        p_player_ids: playerIds,
+        p_priorities: newPriorities,
+      } as any);
+      await fetchPlayers();
+    } catch (error) {
+      console.error('[PlayerInstances] Failed to reorder players:', error);
+    }
+  };
+
   const filteredPlayers = showInactive
     ? players
-    : players.filter(p => getHealthStatus(p.last_seen || p.last_heartbeat) !== 'offline');
+    : players.filter(p => p.healthStatus === 'online' || p.healthStatus === 'waiting');
 
-  if (loading) {
-    return (
-      <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <Spinner />
-      </div>
-    );
-  }
+  const formatDate = (dateString: string | null) => {
+    if (!dateString) return 'N/A';
+    const date = new Date(dateString);
+    const day = date.getDate();
+    const month = date.toLocaleString('en-US', { month: 'short' });
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    const seconds = date.getSeconds().toString().padStart(2, '0');
+    return `${day} ${month} - ${hours}:${minutes}:${seconds}`;
+  };
+
+  const getHealthDisplay = (health: 'online' | 'waiting' | 'offline') => {
+    switch (health) {
+      case 'online':
+        return <span>❤️ ONLINE</span>;
+      case 'waiting':
+        return <span>♡ Waiting...</span>;
+      case 'offline':
+        return <span>💀 OFFLINE</span>;
+    }
+  };
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <PanelHeader title="Player Instances" subtitle="Manage connected player devices" />
+      <PanelHeader title="PLAYER INSTANCES" subtitle="Manage connected player instances" />
 
-      {/* Action Buttons */}
-      <div style={{ padding: '16px 24px', display: 'flex', gap: 12, borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+      {/* Action buttons */}
+      <div style={{ padding: '16px 24px', display: 'flex', gap: 8, borderBottom: '1px solid var(--border)' }}>
         <Btn
-          variant={showInactive ? 'accent' : 'ghost'}
+          variant="ghost"
           onClick={() => setShowInactive(!showInactive)}
         >
-          {showInactive ? 'Hide Inactive' : 'Show Inactive'}
-        </Btn>
-        <Btn variant="danger" onClick={handleDeleteInactive}>
-          Delete Inactive
+          {showInactive ? 'HIDE INACTIVE' : 'SHOW INACTIVE'}
         </Btn>
         <Btn
-          variant={autoRefresh ? 'accent' : 'ghost'}
-          onClick={() => setAutoRefresh(!autoRefresh)}
+          variant="danger"
+          onClick={handleDeleteInactive}
         >
-          Auto-Refresh: {autoRefresh ? 'ON' : 'OFF'}
+          DELETE INACTIVE
+        </Btn>
+        <Btn
+          variant="accent"
+          onClick={fetchPlayers}
+          disabled={loading}
+        >
+          REFRESH
         </Btn>
       </div>
 
       {/* Table */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '0 24px 24px 24px' }}>
-        {/* Headers */}
-        <div style={{
-          display: 'grid', gridTemplateColumns: '50px 1fr 1fr 1fr 1fr 1fr 120px', gap: 8,
-          padding: '12px 12px', borderBottom: '1px solid rgba(255,255,255,0.1)',
-          background: 'rgba(255,255,255,0.02)', alignItems: 'center'
-        }}>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-            Priority
+      <div style={{ flex: 1, overflowY: 'auto', padding: '24px' }}>
+        {loading ? (
+          <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.5)', padding: 40 }}>Loading...</div>
+        ) : filteredPlayers.length === 0 ? (
+          <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.5)', padding: 40 }}>
+            {showInactive ? 'No player instances found' : 'No active players found'}
           </div>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-            Player Name
-          </div>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-            Player ID
-          </div>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-            Health Status
-          </div>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-            Player State
-          </div>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-            Last Refresh
-          </div>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-            Actions
-          </div>
-        </div>
-
-        {/* Rows */}
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          <SortableContext items={players.map(p => p.id)} strategy={verticalListSortingStrategy}>
-            {filteredPlayers.map(player => (
-              <SortableRow
-                key={player.id}
-                player={player}
-                status={statuses[player.id] || null}
-                onIdentify={handleIdentify}
-                onDelete={handleDelete}
-                onEditName={handleEditName}
-              />
-            ))}
-          </SortableContext>
-        </DndContext>
-
-        {filteredPlayers.length === 0 && (
-          <div style={{ padding: '40px', textAlign: 'center', color: 'rgba(255,255,255,0.3)', fontFamily: 'var(--font-display)' }}>
-            {showInactive ? 'No players found' : 'No active players found'}
-          </div>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--border)', textAlign: 'left' }}>
+                <th style={{ padding: '12px 8px', color: 'rgba(255,255,255,0.5)', fontWeight: 500, width: 60 }}>Priority</th>
+                <th style={{ padding: '12px 8px', color: 'rgba(255,255,255,0.5)', fontWeight: 500 }}>Player Name Tag</th>
+                <th style={{ padding: '12px 8px', color: 'rgba(255,255,255,0.5)', fontWeight: 500 }}>Player ID</th>
+                <th style={{ padding: '12px 8px', color: 'rgba(255,255,255,0.5)', fontWeight: 500 }}>Health Status</th>
+                <th style={{ padding: '12px 8px', color: 'rgba(255,255,255,0.5)', fontWeight: 500 }}>Player State</th>
+                <th style={{ padding: '12px 8px', color: 'rgba(255,255,255,0.5)', fontWeight: 500 }}>Created At</th>
+                <th style={{ padding: '12px 8px', color: 'rgba(255,255,255,0.5)', fontWeight: 500 }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredPlayers.map((player, index) => (
+                <tr
+                  key={player.id}
+                  style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}
+                >
+                  <td style={{ padding: '12px 8px', color: '#e5e7eb' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span
+                        style={{ cursor: 'grab', color: 'rgba(255,255,255,0.3)', fontSize: 16 }}
+                        draggable
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData('dragIndex', index.toString());
+                        }}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          const dragIndex = parseInt(e.dataTransfer.getData('dragIndex'));
+                          handleReorder(dragIndex, index);
+                        }}
+                      >
+                        ⋮⋮
+                      </span>
+                      <span>{player.priority}</span>
+                    </div>
+                  </td>
+                  <td style={{ padding: '12px 8px', color: '#e5e7eb' }}>
+                    {editingName === player.id ? (
+                      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                        <input
+                          type="text"
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleSaveName(player.id);
+                            if (e.key === 'Escape') {
+                              setEditingName(null);
+                              setEditValue('');
+                            }
+                          }}
+                          autoFocus
+                          style={{
+                            padding: '4px 8px',
+                            borderRadius: 4,
+                            background: '#111',
+                            border: '1px solid rgba(255,255,255,0.2)',
+                            color: '#fff',
+                            fontSize: 11,
+                            fontFamily: 'var(--font-mono)',
+                          }}
+                        />
+                        <button
+                          onClick={() => handleSaveName(player.id)}
+                          style={{ padding: '4px 8px', background: 'var(--accent)', border: 'none', borderRadius: 4, color: '#000', fontSize: 10, cursor: 'pointer' }}
+                        >
+                          ✓
+                        </button>
+                      </div>
+                    ) : (
+                      <div
+                        style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+                        onMouseEnter={() => {
+                          if (!editingName) {
+                            setEditValue(player.player_name_tag || '');
+                          }
+                        }}
+                      >
+                        <span>{player.player_name_tag || `Player_${player.priority}`}</span>
+                        <button
+                          onClick={() => {
+                            setEditingName(player.id);
+                            setEditValue(player.player_name_tag || '');
+                          }}
+                          style={{
+                            opacity: 0,
+                            padding: '2px 6px',
+                            background: 'rgba(255,255,255,0.1)',
+                            border: 'none',
+                            borderRadius: 3,
+                            color: 'rgba(255,255,255,0.6)',
+                            fontSize: 9,
+                            cursor: 'pointer',
+                          }}
+                          onMouseEnter={(e) => (e.currentTarget.style.opacity = '1')}
+                          onMouseLeave={(e) => (e.currentTarget.style.opacity = '0')}
+                        >
+                          Edit
+                        </button>
+                      </div>
+                    )}
+                  </td>
+                  <td style={{ padding: '12px 8px', color: 'rgba(255,255,255,0.5)', fontFamily: 'var(--font-mono)', fontSize: 10 }}>
+                    {player.id.slice(0, 8)}...
+                  </td>
+                  <td style={{ padding: '12px 8px', color: '#e5e7eb' }}>
+                    {getHealthDisplay(player.healthStatus)}
+                  </td>
+                  <td style={{ padding: '12px 8px', color: '#e5e7eb' }}>
+                    {player.player_status?.state || 'Unknown'}
+                  </td>
+                  <td style={{ padding: '12px 8px', color: 'rgba(255,255,255,0.5)', fontFamily: 'var(--font-mono)', fontSize: 10 }}>
+                    {formatDate(player.created_at)}
+                  </td>
+                  <td style={{ padding: '12px 8px' }}>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      <button
+                        onClick={() => handleIdentify(player)}
+                        style={{
+                          padding: '4px 8px',
+                          background: 'rgba(59,130,246,0.15)',
+                          border: '1px solid rgba(59,130,246,0.3)',
+                          borderRadius: 4,
+                          color: '#60a5fa',
+                          fontSize: 10,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Identify
+                      </button>
+                      <button
+                        onClick={() => handleDelete(player.id)}
+                        disabled={deleting === player.id}
+                        style={{
+                          padding: '4px 8px',
+                          background: 'rgba(239,68,68,0.15)',
+                          border: '1px solid rgba(239,68,68,0.3)',
+                          borderRadius: 4,
+                          color: '#f87171',
+                          fontSize: 10,
+                          cursor: 'pointer',
+                          opacity: deleting === player.id ? 0.5 : 1,
+                        }}
+                      >
+                        {deleting === player.id ? '...' : 'Delete'}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
-
-      {/* Edit Name Modal */}
-      {editingPlayer && (
-        <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex',
-          alignItems: 'center', justifyContent: 'center', zIndex: 1000
-        }}>
-          <div style={{
-            background: '#111', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12,
-            padding: 24, width: 400, maxWidth: '90%'
-          }}>
-            <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 16, color: '#fff', marginBottom: 16 }}>
-              Edit Player Name
-            </h3>
-            <input
-              type="text"
-              value={editingName}
-              onChange={(e) => setEditingName(e.target.value)}
-              style={{
-                width: '100%', padding: '10px 14px', borderRadius: 8, background: '#0d0d0d',
-                border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)',
-                fontSize: 14, marginBottom: 16, outline: 'none'
-              }}
-              placeholder="Enter player name"
-              autoFocus
-            />
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <Btn variant="ghost" onClick={() => { setEditingPlayer(null); setEditingName(''); }}>
-                Cancel
-              </Btn>
-              <Btn variant="accent" onClick={handleSaveName}>
-                Save
-              </Btn>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

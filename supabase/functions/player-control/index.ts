@@ -3,7 +3,8 @@
 // Queue progression is now server-controlled via complete_and_advance RPC
 import { corsHeaders } from '../_shared/cors.ts';
 import { createServiceClient } from '../_shared/supabase-client.ts';
-Deno.serve(async (req)=>{
+// @ts-ignore - Deno global is available in Supabase Edge Functions
+Deno.serve(async (req: Request) => {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response('ok', {
