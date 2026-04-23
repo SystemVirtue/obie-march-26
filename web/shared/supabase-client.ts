@@ -14,15 +14,13 @@ export interface Player {
   display_name?: string | null;
   jukebox_slug?: string | null;
   status: 'offline' | 'online' | 'error';
-  last_heartbeat: string;
+  last_heartbeat: string | null;
+  last_seen: string | null;
+  player_name_tag: string | null;
+  priority: number;
   active_playlist_id: string | null;
   created_at: string;
   updated_at: string;
-  player_name_tag?: string | null;
-  priority?: number | null;
-  last_seen?: string | null;
-  identify_tag?: string | null;
-  last_refresh?: string | null;
 }
 
 export interface JukeboxSummary {
@@ -1128,6 +1126,19 @@ export async function getMyJukeboxes(): Promise<JukeboxSummary[]> {
   const { data, error } = await supabase.rpc('get_my_jukeboxes' as any);
   if (error) throw error;
   return ((data as JukeboxSummary[] | null) ?? []).map((row) => ({
+    ...row,
+    jukebox_slug: String(row.jukebox_slug || '').toUpperCase(),
+    display_name: row.display_name || row.jukebox_slug,
+  }));
+}
+
+/**
+ * Return all jukeboxes (publicly accessible).
+ */
+export async function getAllJukeboxes(): Promise<{ player_id: string; jukebox_slug: string; display_name: string }[]> {
+  const { data, error } = await supabase.rpc('get_all_jukeboxes' as any);
+  if (error) throw error;
+  return ((data as { player_id: string; jukebox_slug: string; display_name: string }[] | null) ?? []).map((row) => ({
     ...row,
     jukebox_slug: String(row.jukebox_slug || '').toUpperCase(),
     display_name: row.display_name || row.jukebox_slug,
