@@ -1,8 +1,9 @@
 services:
   - type: web
     name: obie-admin
-    buildCommand: npm run build
-    staticPublishPath: dist
+    runtime: static
+    buildCommand: cd web/admin && npm install && npm run build
+    staticPublishPath: web/admin/dist
     routes:
       - type: rewrite
         source: /assets/(.*)
