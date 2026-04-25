@@ -11,7 +11,7 @@ import {
   type QueueItem,
   type PlayerStatus,
 } from '../../../shared/supabase-client';
-import { normalizeJukeboxSlug, getPathJukeboxSlug } from '../../../shared/jukebox-utils';
+import { getPathJukeboxSlug } from '../../../shared/jukebox-utils';
 import { HEARTBEAT_INTERVAL_MS, MAX_MARQUEE_ITEMS } from '../../../shared/constants';
 
 type UseKioskSessionArgs = {
