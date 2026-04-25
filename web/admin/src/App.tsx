@@ -358,7 +358,7 @@ function App() {
       )?.id;
     }
 
-    console.log('[Admin] Skip attempt:', { queueIdToSkip, queueLength: queue.length });
+    console.log('[Admin] Skip attempt:', { queueIdToSkip, queueLength: queue.length, currentMediaId: status?.current_media_id });
 
     if (!queueIdToSkip) {
       if (!activePlayerId || !status?.current_media_id) {

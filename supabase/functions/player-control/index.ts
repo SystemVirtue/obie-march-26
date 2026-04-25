@@ -115,7 +115,7 @@ Deno.serve(async (req: Request) => {
           });
         }
 
-        console.log(`[player-control] Calling complete_and_advance for queue item: ${queue_id}`);
+        console.log(`[player-control] Calling complete_and_advance for queue item: ${queue_id}, action: ${action}`);
         const { data: result, error: advanceError } = await supabase.rpc('complete_and_advance', {
           p_queue_id: queue_id
         });
@@ -131,7 +131,7 @@ Deno.serve(async (req: Request) => {
           });
         }
 
-        console.log('[player-control] complete_and_advance result:', result);
+        console.log('[player-control] ✅ complete_and_advance result:', result);
         return new Response(JSON.stringify({
           success: true,
           result,
