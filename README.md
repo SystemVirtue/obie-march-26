@@ -4,6 +4,19 @@
 
 All business logic runs on the server. Clients are thin, stateless UIs that render Realtime data and send events.
 
+
+## 📌 Rebuild Status (Apr 24, 2026)
+
+A non-destructive, production-focused rebuild comparison against Version 1 is documented in:
+
+- [`docs/VERSION1_COMPARISON.md`](docs/VERSION1_COMPARISON.md)
+- [`docs/MULTI_PLAYER_SYNC.md`](docs/MULTI_PLAYER_SYNC.md)
+- [`docs/ROBUSTNESS_ASSESSMENT.md`](docs/ROBUSTNESS_ASSESSMENT.md)
+
+`npm test` is intentionally gated: set `RUN_E2E_INTEGRATION=true` plus required Supabase/auth env vars to execute full Playwright integration tests.
+
+This keeps Version 1 operational context intact while defining a phased modernization path.
+
 ---
 
 ## 🏗️ Architecture Overview
