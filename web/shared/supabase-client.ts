@@ -159,22 +159,33 @@ export interface R2File {
 export interface PlaybackControl {
   id: number;
   current_video_id: string | null;
-  current_status: 'IDLE' | 'LOADING' | 'PLAYING' | 'PAUSED' | 'ENDED' | null;
+  current_status: 'IDLE' | 'LOADING' | 'PLAYING' | 'PAUSED' | 'ENDED' | 'ERROR' | null;
   master_instance_id: string | null;
   master_last_seen: string;
   playback_position: number;
   last_updated: string;
-}
+  video_url: string | null;
+  video_title: string | null;
+  video_artist: string | null;
+  version: number;
+}player_id: string | null;
+  E' | 'STAL
 
 export interface PlayerInstance {
   instance_id: string;
   connection_status: 'ONLINE' | 'OFFLINE';
   is_master: boolean;
-  last_seen: string;
+  last_seartbeet: string | null;
+  tab_id: string | null;
+  viewport_width: number | null;
+  viewpont_heigh:: num sr | null;
+  disconnected_tring;
   user_agent: string | null;
   ip_address: string | null;
+  player_id: string | null;
   connected_at: string;
-  last_heartbeat: string | null;
+  last_heartbeat: string | nul;
+  severity: 'INFO' | 'WARN' | 'ERROR'l;
 }
 
 export interface PlayerLog {

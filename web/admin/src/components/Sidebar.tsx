@@ -21,6 +21,7 @@ const NAV = [
       { id: 'settings-prefs' as ViewId, label: 'Console Preferences' },
     ]
   },
+  { id: 'player-management', icon: '🎬', label: 'Player Management', children: [] as { id: ViewId; label: string }[] },
   { id: 'logs', icon: '📄', label: 'Logs', children: [] as { id: ViewId; label: string }[] },
   { id: 'server', icon: '🖥️', label: 'Server', children: [] as { id: ViewId; label: string }[] },
 ];

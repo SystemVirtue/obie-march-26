@@ -9,7 +9,8 @@ export type ViewId =
   | 'playlists-all' | 'playlists-import' | 'playlists-channel'
   | 'settings-player-instances' | 'settings-playback' | 'settings-kiosk' | 'settings-branding' | 'settings-scripts' | 'settings-prefs'
   | 'logs'
-  | 'server';
+  | 'server'
+  | 'player-management';
 
 export interface Prefs {
   accent: string;

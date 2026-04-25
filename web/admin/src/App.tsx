@@ -49,6 +49,7 @@ import { PlayerInstances } from './components/PlayerInstances';
 import { ScriptsPanel } from './components/ScriptsPanel';
 import { LogsPanel } from './components/LogsPanel';
 import { ServerPanel } from './components/ServerPanel';
+import { PlayerManagement } from './components/PlayerManagement';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ROOT APP
@@ -461,6 +462,7 @@ function App() {
           {isSettingsView && !isScriptsView && view !== 'settings-player-instances' && <SettingsPanel view={view} settings={settings} prefs={prefs} playerId={activePlayerId} />}
           {view === 'logs' && <LogsPanel />}
           {view === 'server' && <ServerPanel />}
+          {view === 'player-management' && <PlayerManagement />}
         </main>
       </div>
     </div>
