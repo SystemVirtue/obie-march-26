@@ -223,6 +223,23 @@ export interface Database {
       playback_control: { Row: PlaybackControl };
       player_instances: { Row: PlayerInstance };
       player_logs: { Row: PlayerLog };
+      app_config: {
+        Row: {
+          key: string;
+          value: string;
+          updated_at: string;
+        };
+      };
+      event_log: {
+        Row: {
+          id: string;
+          event_type: string;
+          queue_id: string | null;
+          player_id: string | null;
+          payload: Record<string, any>;
+          created_at: string;
+        };
+      };
     };
   };
 }
