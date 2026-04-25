@@ -309,20 +309,6 @@ function App() {
         const message = e instanceof Error ? e.message : String(e);
         if (/no play history/i.test(message)) {
           try {
-            const { data: playerRow } = await supabase
-              .from('players')
-              .select('active_playlist_id')
-              .eq('id', PLAYER_ID)
-              .maybeSingle();
-            const activePlaylistId = (playerRow as any)?.active_playlist_id as string | null | undefined;
-            if (activePlaylistId) {
-              await callPlaylistManager({
-                action: 'load_playlist',
-                player_id: PLAYER_ID,
-                playlist_id: activePlaylistId,
-              });
-              return;
-            }
             await callRadioGenerator({ player_id: PLAYER_ID, action: 'generate', source: 'playlist' });
             return;
           } catch (fallbackError) {
