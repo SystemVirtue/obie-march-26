@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
-import { supabase } from '@shared/supabase-client';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { supabase } from '../../../shared/supabase-client';
 
 const HEARTBEAT_INTERVAL = 8000; // 8 seconds
 const MASTER_TIMEOUT = 20000; // 20 seconds

@@ -4,7 +4,8 @@ import { corsHeaders } from '../_shared/cors.ts';
 import { createServiceClient } from '../_shared/supabase-client.ts';
 import { callYouTubeScraperWithFallback } from '../_shared/youtube-scraper-caller.ts';
 
-Deno.serve(async (req)=>{
+// @ts-ignore - Deno global is available in Supabase Edge Functions
+Deno.serve(async (req: Request)=>{
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response('ok', {
@@ -12,8 +13,11 @@ Deno.serve(async (req)=>{
     });
   }
   try {
+    // @ts-ignore - Deno global is available in Supabase Edge Functions
     const serviceRoleToken = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? Deno.env.get('SERVICE_ROLE_JWT');
+    // @ts-ignore - Deno global is available in Supabase Edge Functions
     const anonJwt = Deno.env.get('SUPABASE_ANON_KEY');
+    // @ts-ignore - Deno global is available in Supabase Edge Functions
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
     const supabase = createServiceClient();
     // Parse request body

@@ -271,19 +271,27 @@ async function loadSeedsPlaylist(supabase: any, playerId: string): Promise<SeedT
 
 // ─── Main Handler ───────────────────────────────────────────────────────────
 
-Deno.serve(async (req) => {
+// @ts-ignore - Deno global is available in Supabase Edge Functions
+Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
 
+  let supabase: any;
+  let player_id: string = '';
+
   try {
+    // @ts-ignore - Deno global is available in Supabase Edge Functions
     const openrouterApiKey = Deno.env.get('OPENROUTER_API_KEY') ?? Deno.env.get('DJAMMS_RADIO');
     if (!openrouterApiKey) throw new Error('OPENROUTER_API_KEY (or DJAMMS_RADIO) not configured');
 
+    // @ts-ignore - Deno global is available in Supabase Edge Functions
     const serviceRoleToken = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? Deno.env.get('SERVICE_ROLE_JWT');
+    // @ts-ignore - Deno global is available in Supabase Edge Functions
     const anonJwt = Deno.env.get('SUPABASE_ANON_KEY');
+    // @ts-ignore - Deno global is available in Supabase Edge Functions
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
-    const supabase = createServiceClient();
+    supabase = createServiceClient();
 
     const raw = await req.text();
     if (!raw) {
@@ -359,14 +367,69 @@ Deno.serve(async (req) => {
     // 1. Load seed tracks
     console.log(`[Radio] Loading seeds from ${source} for player ${player_id}`);
     let seeds: SeedTrack[];
-    if (source === 'now_playing') {
-      seeds = await loadSeedsNowPlaying(supabase, player_id);
-    } else if (source === 'history') {
-      seeds = await loadSeedsHistory(supabase, player_id);
-    } else {
-      seeds = await loadSeedsPlaylist(supabase, player_id);
+    try {
+      if (source === 'now_playing') {
+        seeds = await loadSeedsNowPlaying(supabase, player_id);
+      } else if (source === 'history') {
+        seeds = await loadSeedsHistory(supabase, player_id);
+      } else {
+        seeds = await loadSeedsPlaylist(supabase, player_id);
+      }
+      console.log(`[Radio] Loaded ${seeds.length} seed tracks`);
+    } catch (seedError) {
+      console.error(`[Radio] Failed to load seeds from ${source}:`, seedError);
+      console.log('[Radio] Falling back to DJAMMS Default Playlist');
+      
+      // Fallback: Load DJAMMS Default Playlist
+      const { data: defaultPlaylist } = await supabase
+        .from('playlists')
+        .select('id, name')
+        .eq('player_id', player_id)
+        .ilike('name', '%DJAMMS%Default%Playlist%')
+        .maybeSingle();
+      
+      if (!defaultPlaylist) {
+        throw new Error('No DJAMMS Default Playlist found for this player');
+      }
+      
+      // Shuffle and load the default playlist
+      const { error: shuffleError } = await supabase.rpc('queue_shuffle', {
+        p_player_id: player_id,
+        p_type: 'normal',
+      });
+      
+      if (shuffleError) {
+        console.error('[Radio] Failed to shuffle default playlist:', shuffleError);
+        // Try loading without shuffle
+        const { error: loadError } = await supabase.rpc('load_playlist', {
+          p_player_id: player_id,
+          p_playlist_id: defaultPlaylist.id,
+          p_start_index: 0,
+        });
+        if (loadError) throw loadError;
+      } else {
+        // Load after shuffle
+        const { error: loadError } = await supabase.rpc('load_playlist', {
+          p_player_id: player_id,
+          p_playlist_id: defaultPlaylist.id,
+          p_start_index: 0,
+        });
+        if (loadError) throw loadError;
+      }
+      
+      console.log(`[Radio] Loaded fallback playlist "${defaultPlaylist.name}"`);
+      
+      return new Response(JSON.stringify({
+        playlist_id: defaultPlaylist.id,
+        playlist_name: defaultPlaylist.name,
+        track_count: 0, // Unknown count
+        fallback: true,
+        message: 'Radio generation failed, loaded DJAMMS Default Playlist instead',
+      }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
-    console.log(`[Radio] Loaded ${seeds.length} seed tracks`);
 
     // 2. Calculate target and request counts
     const targetCount = calculateTargetCount(seeds.length);
@@ -505,10 +568,80 @@ Deno.serve(async (req) => {
     });
 
   } catch (error) {
-    console.error('[Radio] Error:', error);
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error('[Radio] Error:', errorMessage);
+    
+    // Fallback: Load DJAMMS Default Playlist on any error
+    // Only attempt fallback if we have a player_id and supabase client
+    if (!player_id || !supabase) {
+      return new Response(JSON.stringify({ error: errorMessage }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    
+    console.log('[Radio] Falling back to DJAMMS Default Playlist due to error');
+    
+    try {
+      const { data: defaultPlaylist } = await supabase
+        .from('playlists')
+        .select('id, name')
+        .eq('player_id', player_id)
+        .ilike('name', '%DJAMMS%Default%Playlist%')
+        .maybeSingle();
+      
+      if (!defaultPlaylist) {
+        console.error('[Radio] No DJAMMS Default Playlist found for this player');
+        return new Response(JSON.stringify({ error: errorMessage }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      
+      // Shuffle and load the default playlist
+      const { error: shuffleError } = await supabase.rpc('queue_shuffle', {
+        p_player_id: player_id,
+        p_type: 'normal',
+      });
+      
+      if (shuffleError) {
+        console.error('[Radio] Failed to shuffle default playlist:', shuffleError);
+        // Try loading without shuffle
+        const { error: loadError } = await supabase.rpc('load_playlist', {
+          p_player_id: player_id,
+          p_playlist_id: defaultPlaylist.id,
+          p_start_index: 0,
+        });
+        if (loadError) throw loadError;
+      } else {
+        // Load after shuffle
+        const { error: loadError } = await supabase.rpc('load_playlist', {
+          p_player_id: player_id,
+          p_playlist_id: defaultPlaylist.id,
+          p_start_index: 0,
+        });
+        if (loadError) throw loadError;
+      }
+      
+      console.log(`[Radio] Loaded fallback playlist "${defaultPlaylist.name}"`);
+      
+      return new Response(JSON.stringify({
+        playlist_id: defaultPlaylist.id,
+        playlist_name: defaultPlaylist.name,
+        track_count: 0, // Unknown count
+        fallback: true,
+        message: `Radio generation failed (${errorMessage}), loaded DJAMMS Default Playlist instead`,
+      }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    } catch (fallbackError) {
+      const fallbackErrorMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+      console.error('[Radio] Fallback also failed:', fallbackErrorMessage);
+      return new Response(JSON.stringify({ error: errorMessage }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
   }
 });

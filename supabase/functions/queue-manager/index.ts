@@ -12,7 +12,8 @@ function sleep(ms: number) {
 // Actions that require the player to be online (playback control)
 const REQUIRES_ONLINE = new Set(["add", "next"]);
 
-Deno.serve(async (req) => {
+// @ts-ignore - Deno global is available in Supabase Edge Functions
+Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
