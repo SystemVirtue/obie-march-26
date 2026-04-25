@@ -21,14 +21,16 @@
     "supabase:stop": "supabase stop",
     "supabase:reset": "supabase db reset",
     "supabase:deploy": "supabase functions deploy",
-    "test": "playwright test",
+    "test": "node scripts/run-playwright-if-enabled.mjs",
     "test:ui": "playwright test --ui",
     "test:headed": "playwright test --headed",
     "test:admin": "playwright test --project=admin",
     "test:kiosk": "playwright test --project=kiosk",
     "test:player": "playwright test --project=player",
     "test:queue": "playwright test tests/admin/queue.spec.ts",
-    "test:report": "playwright show-report"
+    "test:report": "playwright show-report",
+    "quality": "npm run build",
+    "quality:full": "npm run quality && npm test"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",

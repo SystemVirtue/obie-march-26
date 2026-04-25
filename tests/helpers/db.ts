@@ -5,14 +5,17 @@
  * NOTE: These run with the anon key, so they are limited to what RLS allows.
  * RPCs tagged SECURITY DEFINER will work; direct table writes may be restricted.
  */
-import * as dotenv from 'dotenv';
-import * as path from 'path';
+import { canRunIntegrationTests, integrationSkipMessage, SUPABASE_URL, SUPABASE_ANON_KEY } from './testEnv';
 
-dotenv.config({ path: path.resolve(__dirname, '../../.env') });
-
-export const SUPABASE_URL   = process.env.VITE_SUPABASE_URL   || '';
-export const SUPABASE_ANON  = process.env.VITE_SUPABASE_ANON_KEY || '';
+export const SUPABASE_ANON  = SUPABASE_ANON_KEY;
 export const PLAYER_ID      = '00000000-0000-0000-0000-000000000001';
+
+
+function ensureSupabaseEnvConfigured(): boolean {
+  if (canRunIntegrationTests()) return true;
+  console.warn(`[db] ${integrationSkipMessage()}`);
+  return false;
+}
 
 // ── HTTP helpers ─────────────────────────────────────────────────────────────
 
@@ -22,6 +25,10 @@ async function sbFetch(
   body?: unknown,
   authToken?: string
 ): Promise<{ ok: boolean; status: number; data: unknown }> {
+  if (!ensureSupabaseEnvConfigured()) {
+    return { ok: false, status: 400, data: { error: integrationSkipMessage() } };
+  }
+
   const token = authToken || SUPABASE_ANON;
   const res = await fetch(`${SUPABASE_URL}${path}`, {
     method,

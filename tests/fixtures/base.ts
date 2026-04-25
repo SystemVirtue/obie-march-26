@@ -7,6 +7,7 @@
 import { test as base, expect, Page } from '@playwright/test';
 import * as fs from 'fs';
 import * as path from 'path';
+import { canRunIntegrationTests, integrationSkipMessage } from '../helpers/testEnv';
 
 type ConsoleEntry = { type: string; text: string; location: string };
 
@@ -103,3 +104,9 @@ export const test = base.extend<TestFixtures>({
 });
 
 export { expect };
+
+
+// Skip integration-heavy UI tests when required Supabase env is not configured.
+test.beforeEach(async () => {
+  test.skip(!canRunIntegrationTests(), integrationSkipMessage());
+});
