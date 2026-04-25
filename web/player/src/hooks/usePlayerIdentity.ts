@@ -1,16 +1,17 @@
 import { useEffect, useState } from 'react';
 import { resolveJukeboxSlug } from '@shared/supabase-client';
-import { getPathJukeboxSlug } from '@shared/jukebox-utils';
+import { getPathJukeboxSlug, normalizeJukeboxSlug } from '@shared/jukebox-utils';
 
 type UsePlayerIdentityArgs = {
   defaultPlayerId: string;
 };
 
-export function usePlayerIdentity({ defaultPlayerId }: UsePlayerIdentityArgs) {
+export function usePlayerIdentity({ defaultPlayerId: _defaultPlayerId }: UsePlayerIdentityArgs) {
   const [activePlayerId, setActivePlayerId] = useState<string | null>(null);
+  const [activeJukeboxSlug, setActiveJukeboxSlug] = useState<string | null>(null);
   const [identityReady, setIdentityReady] = useState(false);
 
-  const playerId = activePlayerId || defaultPlayerId;
+  const playerId = activePlayerId || null;
 
   useEffect(() => {
     let cancelled = false;
@@ -18,20 +19,27 @@ export function usePlayerIdentity({ defaultPlayerId }: UsePlayerIdentityArgs) {
     const resolveIdentity = async () => {
       try {
         const pathSlug = getPathJukeboxSlug();
-        let candidateSlug = pathSlug;
-
-        if (!candidateSlug) {
+        if (!pathSlug) {
+          if (!cancelled) {
+            setActivePlayerId(null);
+            setActiveJukeboxSlug(null);
+          }
           return;
         }
 
-        const resolved = await resolveJukeboxSlug(candidateSlug);
+        const resolved = await resolveJukeboxSlug(pathSlug);
         if (!resolved) {
-          alert(`Jukebox "${candidateSlug}" was not found.`);
+          alert(`Jukebox "${pathSlug}" was not found.`);
+          if (!cancelled) {
+            setActivePlayerId(null);
+            setActiveJukeboxSlug(null);
+          }
           return;
         }
 
         if (!cancelled) {
           setActivePlayerId(resolved.player_id);
+          setActiveJukeboxSlug(resolved.jukebox_slug);
         }
 
         if (pathSlug !== resolved.jukebox_slug) {
@@ -47,14 +55,33 @@ export function usePlayerIdentity({ defaultPlayerId }: UsePlayerIdentityArgs) {
     };
 
     resolveIdentity();
+    const handlePopState = () => {
+      resolveIdentity();
+    };
+    window.addEventListener('popstate', handlePopState);
     return () => {
       cancelled = true;
+      window.removeEventListener('popstate', handlePopState);
     };
   }, []);
 
+  const navigateToJukebox = (rawSlug: string) => {
+    const slug = normalizeJukeboxSlug(rawSlug);
+    if (!slug) return;
+    if (slug === activeJukeboxSlug) return;
+    window.history.pushState({}, '', `/${slug}`);
+    setIdentityReady(false);
+    setActivePlayerId(null);
+    setActiveJukeboxSlug(null);
+    // Trigger resolver via popstate-compatible path.
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  };
+
   return {
     activePlayerId,
+    activeJukeboxSlug,
     identityReady,
     playerId,
+    navigateToJukebox,
   };
 }

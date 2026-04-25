@@ -156,6 +156,36 @@ export interface R2File {
   created_at: string;
 }
 
+export interface PlaybackControl {
+  id: number;
+  current_video_id: string | null;
+  current_status: 'IDLE' | 'LOADING' | 'PLAYING' | 'PAUSED' | 'ENDED' | null;
+  master_instance_id: string | null;
+  master_last_seen: string;
+  playback_position: number;
+  last_updated: string;
+}
+
+export interface PlayerInstance {
+  instance_id: string;
+  connection_status: 'ONLINE' | 'OFFLINE';
+  is_master: boolean;
+  last_seen: string;
+  user_agent: string | null;
+  ip_address: string | null;
+  connected_at: string;
+  last_heartbeat: string | null;
+}
+
+export interface PlayerLog {
+  id: number;
+  timestamp: string;
+  event_type: string;
+  instance_id: string | null;
+  message: string;
+  details: Record<string, any>;
+}
+
 export interface Database {
   public: {
     Tables: {
@@ -178,6 +208,9 @@ export interface Database {
       kiosk_sessions: { Row: KioskSession };
       system_logs: { Row: SystemLog };
       r2_files: { Row: R2File };
+      playback_control: { Row: PlaybackControl };
+      player_instances: { Row: PlayerInstance };
+      player_logs: { Row: PlayerLog };
     };
   };
 }
