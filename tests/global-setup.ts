@@ -5,8 +5,11 @@
 import { test as setup, expect } from '@playwright/test';
 import * as path from 'path';
 import * as fs from 'fs';
+import { canRunIntegrationTests, integrationSkipMessage } from './helpers/testEnv';
 
 const AUTH_FILE = path.join(__dirname, '.auth/admin.json');
+
+setup.skip(!canRunIntegrationTests(), integrationSkipMessage());
 
 setup('authenticate as admin', async ({ page }) => {
   const email    = process.env.TEST_EMAIL    || '';
@@ -15,6 +18,12 @@ setup('authenticate as admin', async ({ page }) => {
   // Ensure the .auth directory exists
   const authDir = path.dirname(AUTH_FILE);
   if (!fs.existsSync(authDir)) fs.mkdirSync(authDir, { recursive: true });
+
+  if (!canRunIntegrationTests()) {
+    console.warn(`\n⚠️  ${integrationSkipMessage()}\n   Writing empty auth state and skipping authenticated setup.\n`);
+    fs.writeFileSync(AUTH_FILE, JSON.stringify({ cookies: [], origins: [] }));
+    return;
+  }
 
   if (!email || !password) {
     console.warn(

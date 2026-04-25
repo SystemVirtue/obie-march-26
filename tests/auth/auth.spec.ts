@@ -2,8 +2,14 @@
  * AUTH TESTS — Admin login / logout
  */
 import { test, expect } from '@playwright/test';
+import { canRunIntegrationTests, integrationSkipMessage } from '../helpers/testEnv';
 
 const BASE = 'http://localhost:5173';
+
+const CAN_RUN_INTEGRATION = canRunIntegrationTests();
+
+test.skip(!CAN_RUN_INTEGRATION, integrationSkipMessage());
+
 
 // Auth tests run in a fresh context with NO storageState (see playwright.config.ts 'auth' project)
 test('auth-01: login page renders with email + password fields', async ({ page }) => {
