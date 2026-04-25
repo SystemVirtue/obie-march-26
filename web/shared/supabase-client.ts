@@ -168,24 +168,22 @@ export interface PlaybackControl {
   video_title: string | null;
   video_artist: string | null;
   version: number;
-}player_id: string | null;
-  E' | 'STAL
+}
 
 export interface PlayerInstance {
   instance_id: string;
-  connection_status: 'ONLINE' | 'OFFLINE';
+  player_id: string | null;
+  connection_status: 'ONLINE' | 'OFFLINE' | 'STALE';
   is_master: boolean;
-  last_seartbeet: string | null;
-  tab_id: string | null;
-  viewport_width: number | null;
-  viewpont_heigh:: num sr | null;
-  disconnected_tring;
+  last_seen: string;
   user_agent: string | null;
   ip_address: string | null;
-  player_id: string | null;
   connected_at: string;
-  last_heartbeat: string | nul;
-  severity: 'INFO' | 'WARN' | 'ERROR'l;
+  last_heartbeat: string | null;
+  tab_id: string | null;
+  viewport_width: number | null;
+  viewport_height: number | null;
+  disconnected_at: string | null;
 }
 
 export interface PlayerLog {
@@ -193,8 +191,10 @@ export interface PlayerLog {
   timestamp: string;
   event_type: string;
   instance_id: string | null;
+  player_id: string | null;
   message: string;
   details: Record<string, any>;
+  severity: 'INFO' | 'WARN' | 'ERROR';
 }
 
 export interface Database {
