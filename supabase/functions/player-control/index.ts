@@ -37,6 +37,23 @@ Deno.serve(async (req: Request) => {
         .eq('id', player_id);
       if (updateError) throw updateError;
 
+      // Check for stalled playback and attempt recovery
+      // This handles cases where the player disconnected but DB shows playing state
+      try {
+        const { data: recoveryResult, error: recoveryError } = await supabase.rpc('recover_stalled_playback', {
+          p_player_id: player_id
+        });
+
+        if (recoveryError) {
+          console.warn('[player-control] Stalled playback recovery check failed:', recoveryError);
+        } else if (recoveryResult && (recoveryResult as any).status === 'success') {
+          console.log('[player-control] Stalled playback recovered:', recoveryResult);
+        }
+      } catch (recoveryErr) {
+        // Don't fail heartbeat if recovery fails - it's a best-effort check
+        console.warn('[player-control] Stalled playback recovery error:', recoveryErr);
+      }
+
       return new Response(JSON.stringify({
         success: true
       }), {

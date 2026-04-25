@@ -147,6 +147,35 @@ Deno.serve(async (req) => {
         break;
       }
 
+      case "next": {
+        // Get the currently playing item for this player
+        const { data: playingItem, error: fetchError } = await supabase
+          .from("queue")
+          .select("id")
+          .eq("player_id", player_id)
+          .eq("status", "playing")
+          .maybeSingle();
+
+        if (fetchError) throw fetchError;
+
+        if (!playingItem) {
+          return new Response(
+            JSON.stringify({ error: "No currently playing item to skip" }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        // Call complete_and_advance RPC to skip the current item
+        const { data: advanceResult, error: advanceError } = await supabase.rpc("complete_and_advance", {
+          p_queue_id: playingItem.id,
+        });
+
+        if (advanceError) throw advanceError;
+
+        result = { success: true, result: advanceResult };
+        break;
+      }
+
       default:
         return new Response(JSON.stringify({ error: `Unknown action: ${action}` }), {
           status: 400,
