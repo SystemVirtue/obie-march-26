@@ -4,6 +4,7 @@ import type { PlayerStatus, QueueItem, PlayerSettings } from '../types';
 import { fmtDuration } from '../types';
 import { Spinner } from './ui';
 import type { Player, KioskSession } from '@shared/supabase-client';
+import { supabase } from '../../../shared/supabase-client';
 
 const HEARTBEAT_TTL = 90_000; // 90 s — 3 missed heartbeats @ 30 s interval
 
@@ -24,12 +25,66 @@ export function NowPlayingStage({ status, queue, settings, players, activePlayer
   onPlayPause: () => void; onSkip: () => void; isSkipping: boolean; onRemove: (id: string) => void;
 }) {
   const [showPauseConfirm, setShowPauseConfirm] = useState(false);
+  const [connectionMessage, setConnectionMessage] = useState<{ type: 'none' | 'connected', playerId?: string }>({ type: 'none' });
   const cm = status?.current_media;
   const thumb = cm?.thumbnail || '';
   const title = cleanDisplayText(cm?.title) || 'Nothing playing';
   const artist = cleanDisplayText(cm?.artist) || '—';
   const isPlaying = status?.state === 'playing';
   const isPaused = status?.state === 'paused';
+
+  // Track player connections and handle priority assignment
+  useEffect(() => {
+    const connectedPlayers = (players ?? []).filter(p => p.status === 'online');
+    const hasConnectedPlayers = connectedPlayers.length > 0 || (kioskSessions ?? []).filter(s => !isStale(s.last_active)).length > 0;
+
+    if (!hasConnectedPlayers) {
+      setConnectionMessage({ type: 'none' });
+    } else if (connectionMessage.type === 'none' && connectedPlayers.length === 1) {
+      // First player connected - assign priority
+      const firstPlayer = connectedPlayers[0];
+      setConnectionMessage({ type: 'connected', playerId: firstPlayer.id });
+
+      // Assign priority to this player
+      (async () => {
+        try {
+          // Check if there's already a priority player
+          const { data: activePlayer } = await supabase
+            .from('players')
+            .select('priority_player_id')
+            .eq('id', activePlayerId || firstPlayer.id)
+            .single() as any;
+
+          const hasPriority = activePlayer?.priority_player_id;
+
+          if (!hasPriority) {
+            console.log('[NowPlayingStage] Assigning priority to first connected player:', firstPlayer.id);
+            // Call RPC to assign priority
+            const { error } = await supabase.rpc('claim_priority_player', {
+              p_player_id: firstPlayer.id
+            } as any);
+
+            if (error) {
+              console.error('[NowPlayingStage] Failed to assign priority:', error);
+            } else {
+              // Force auto-play if player state is paused
+              if (status?.state === 'paused' && activePlayerId) {
+                console.log('[NowPlayingStage] Forcing auto-play for paused player');
+                await supabase.rpc('update_playback_position', {
+                  p_queue_id: status?.current_media_id,
+                  p_position: status?.progress || 0
+                } as any);
+                // Resume playback
+                await (supabase.from('player_status') as any).update({ state: 'playing' }).eq('player_id', activePlayerId);
+              }
+            }
+          }
+        } catch (err) {
+          console.error('[NowPlayingStage] Error assigning priority:', err);
+        }
+      })();
+    }
+  }, [players, kioskSessions, connectionMessage.type, activePlayerId, status]);
 
   // Timeline interpolation — smoothly estimate progress between server updates
   const lastServerProgressRef = useRef(0);
@@ -98,6 +153,49 @@ export function NowPlayingStage({ status, queue, settings, players, activePlayer
       }} />
       {/* Bottom line */}
       <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 1, background: 'linear-gradient(90deg,transparent,var(--accent-border),transparent)' }} />
+
+      {/* Connection status message */}
+      {connectionMessage.type === 'none' && (
+        <div style={{
+          position: 'absolute',
+          top: 16,
+          left: 22,
+          right: 22,
+          padding: '12px 16px',
+          borderRadius: 8,
+          background: 'rgba(220, 38, 38, 0.15)',
+          border: '1px solid rgba(220, 38, 38, 0.3)',
+          color: '#f87171',
+          fontFamily: 'var(--font-display)',
+          fontSize: 13,
+          fontWeight: 700,
+          textAlign: 'center',
+          zIndex: 10
+        }}>
+          ⚠️ No Players Online - waiting for Player to connect...
+        </div>
+      )}
+
+      {connectionMessage.type === 'connected' && connectionMessage.playerId && (
+        <div style={{
+          position: 'absolute',
+          top: 16,
+          left: 22,
+          right: 22,
+          padding: '12px 16px',
+          borderRadius: 8,
+          background: 'rgba(34, 197, 94, 0.15)',
+          border: '1px solid rgba(34, 197, 94, 0.3)',
+          color: '#4ade80',
+          fontFamily: 'var(--font-display)',
+          fontSize: 13,
+          fontWeight: 700,
+          textAlign: 'center',
+          zIndex: 10
+        }}>
+          ✓ Player connected - Assigning Priority to {connectionMessage.playerId}
+        </div>
+      )}
 
       <div style={{ position: 'relative', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '16px 22px 0' }}>
         {/* Top */}
