@@ -149,6 +149,7 @@ function App() {
   // ── Status reporting ────────────────────────────────────────────────────────
   const reportStatus = useCallback(async (state: PlayerStatus['state'], progress?: number) => {
     if (!masterPlayback.isMaster) return;
+
     if (!PLAYER_ID) return;
     console.log('[Player] Reporting status:', { state, progress });
     try {
@@ -247,6 +248,7 @@ function App() {
   // Does NOT wait for Realtime — the RPC result IS the source of truth.
   const advanceQueue = useCallback(async () => {
     if (!PLAYER_ID || !currentQueueId || !masterPlayback.isMaster) {
+
       console.warn('[PLAYER] No current queue ID to advance');
       return;
     }
@@ -372,6 +374,7 @@ function App() {
   // ── Auto-radio: refill queue when empty ───────────────────────────────────
   useEffect(() => {
     if (!PLAYER_ID || !masterPlayback.isMaster || playback.phase !== 'idle' || autoRadioRef.current) return;
+
     autoRadioRef.current = true;
     callRadioGenerator({ player_id: PLAYER_ID, action: 'generate', source: 'history' })
       .catch(async (e) => {
@@ -394,6 +397,7 @@ function App() {
               });
               return;
             }
+
             await callRadioGenerator({ player_id: PLAYER_ID, action: 'generate', source: 'playlist' });
             return;
           } catch (fallbackError) {

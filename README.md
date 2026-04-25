@@ -18,6 +18,7 @@ A non-destructive, production-focused rebuild comparison against Version 1 is do
 
 Master/viewer election is also rollout-gated: keep `VITE_ENABLE_MASTER_VIEWER_MODEL=false` until explicit failover and E2E acceptance gates are green in your target environment.
 
+
 This keeps Version 1 operational context intact while defining a phased modernization path.
 
 ---
