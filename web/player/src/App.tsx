@@ -50,7 +50,7 @@ const DEFAULT_PLAYER_ID = import.meta.env.VITE_PLAYER_ID || '00000000-0000-0000-
 
 function App() {
   // ── Identity ───────────────────────────────────────────────────────────────
-  const { activePlayerId, identityReady, playerId: PLAYER_ID } = usePlayerIdentity({
+  const { activePlayerId, identityReady, playerId: PLAYER_ID, navigateToJukebox } = usePlayerIdentity({
     defaultPlayerId: DEFAULT_PLAYER_ID,
   });
 
@@ -94,6 +94,7 @@ function App() {
 
   // ── Status reporting ────────────────────────────────────────────────────────
   const reportStatus = useCallback(async (state: PlayerStatus['state'], progress?: number) => {
+    if (!PLAYER_ID) return;
     console.log('[Player] Reporting status:', { state, progress });
     try {
       await callPlayerControl({
@@ -173,7 +174,7 @@ function App() {
   // Calls the RPC directly and immediately loads the next item from the result.
   // Does NOT wait for Realtime — the RPC result IS the source of truth.
   const advanceQueue = useCallback(async () => {
-    if (!currentQueueId) {
+    if (!PLAYER_ID || !currentQueueId) {
       console.warn('[PLAYER] No current queue ID to advance');
       return;
     }
@@ -274,7 +275,7 @@ function App() {
 
   // ── Auto-radio: refill queue when empty ───────────────────────────────────
   useEffect(() => {
-    if (playback.phase !== 'idle' || autoRadioRef.current) return;
+    if (!PLAYER_ID || playback.phase !== 'idle' || autoRadioRef.current) return;
     autoRadioRef.current = true;
     callRadioGenerator({ player_id: PLAYER_ID, action: 'generate', source: 'history' })
       .catch((e) => console.error('[App] Auto-radio failed:', e))
@@ -333,6 +334,7 @@ function App() {
 
   // ── Realtime subscriptions ─────────────────────────────────────────────────
   const handleStatusUpdate = useCallback(async (newStatus: PlayerStatus) => {
+    if (!PLAYER_ID) return;
     setStatus(newStatus);
 
     // Media changed externally (admin load, skip, etc.)
@@ -562,6 +564,7 @@ function App() {
 
   // ── Unplayable video removal ───────────────────────────────────────────────
   const handleUnplayableVideo = useCallback(async (mediaId: string) => {
+    if (!PLAYER_ID) return;
     try {
       const { data: queueItem } = await supabase
         .from('queue')
@@ -678,18 +681,18 @@ function App() {
 
     (async () => {
       try {
-        await initializePlayerPlaylist(PLAYER_ID);
+        await initializePlayerPlaylist(activePlayerId);
         await syncInitialState();
         console.log('[App] Player initialized');
       } catch (err) {
         console.error('[App] Initialization failed:', err);
       }
     })();
-  }, [identityReady, activePlayerId, PLAYER_ID, syncInitialState]);
+  }, [identityReady, activePlayerId, syncInitialState]);
 
   // ── Early returns ──────────────────────────────────────────────────────────
   if (!identityReady) return <ResolvingScreen />;
-  if (!activePlayerId) return <JukeboxDashboard />;
+  if (!activePlayerId) return <JukeboxDashboard onSelectJukebox={navigateToJukebox} />;
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (

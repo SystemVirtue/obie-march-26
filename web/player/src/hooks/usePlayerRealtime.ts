@@ -28,7 +28,7 @@ import {
 import type { PlaybackAction } from '../state/playbackMachine';
 
 type UsePlayerRealtimeArgs = {
-  playerId: string;
+  playerId: string | null;
   identityReady: boolean;
   activePlayerId: string | null;
   /** Dispatch to the playback state machine */
@@ -54,6 +54,7 @@ export function usePlayerRealtime({
 
   // ── Fetch helper used by both subscription and poll ─────────────────────
   const fetchStatus = useCallback(async (): Promise<PlayerStatus | null> => {
+    if (!playerId) return null;
     const { data, error } = await supabase
       .from('player_status')
       .select('*, current_media:media_items(*)')
@@ -101,7 +102,7 @@ export function usePlayerRealtime({
   // just confirms what we already know (no harm). If Realtime has silently
   // dropped events, the poll self-heals within 30 seconds.
   useEffect(() => {
-    if (!identityReady || !activePlayerId) return;
+    if (!identityReady || !activePlayerId || !playerId) return;
 
     const poll = async () => {
       const status = await fetchStatus();
@@ -119,11 +120,11 @@ export function usePlayerRealtime({
         pollTimerRef.current = null;
       }
     };
-  }, [identityReady, activePlayerId, fetchStatus, applyStatus]);
+  }, [identityReady, activePlayerId, playerId, fetchStatus, applyStatus]);
 
   // ── Realtime subscription ────────────────────────────────────────────────
   useEffect(() => {
-    if (!identityReady || !activePlayerId) return;
+    if (!identityReady || !activePlayerId || !playerId) return;
 
     const subscription = subscribeToPlayerStatus(playerId, applyStatus);
 
@@ -134,7 +135,7 @@ export function usePlayerRealtime({
 
   // ── Settings subscription ────────────────────────────────────────────────
   useEffect(() => {
-    if (!identityReady || !activePlayerId) return;
+    if (!identityReady || !activePlayerId || !playerId) return;
 
     const subscription = subscribeToPlayerSettings(playerId, onSettingsUpdate);
 
