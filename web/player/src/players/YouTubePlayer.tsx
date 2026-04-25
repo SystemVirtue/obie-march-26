@@ -19,12 +19,12 @@ import { extractYouTubeId } from '../utils/youtube';
 import type { PlaybackAction } from '../state/playbackMachine';
 
 // YouTube IFrame API state constants
-export const YT_UNSTARTED  = -1;
-export const YT_ENDED      =  0;
-export const YT_PLAYING    =  1;
-export const YT_PAUSED     =  2;
-export const YT_BUFFERING  =  3;
-export const YT_CUED       =  5;
+export const YT_UNSTARTED = -1;
+export const YT_ENDED = 0;
+export const YT_PLAYING = 1;
+export const YT_PAUSED = 2;
+export const YT_BUFFERING = 3;
+export const YT_CUED = 5;
 
 // Error codes that mean the video can never be embedded — remove from library
 const UNPLAYABLE_CODES = new Set([100, 101, 150]);
@@ -66,9 +66,9 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
     { dispatch, onPlaying, onUnplayableVideo, currentMediaId, visible },
     ref
   ) {
-    const containerRef  = useRef<HTMLDivElement>(null);
-    const ytPlayerRef   = useRef<any>(null);
-    const apiReadyRef   = useRef(false);
+    const containerRef = useRef<HTMLDivElement>(null);
+    const ytPlayerRef = useRef<any>(null);
+    const apiReadyRef = useRef(false);
     const apiCallbacksRef = useRef({ dispatch, onPlaying, onUnplayableVideo, currentMediaId });
 
     // Keep callbacks stable across renders without recreating handlers
@@ -106,7 +106,7 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
     }, []);
 
     const onStateChange = useCallback((event: { data: number }) => {
-      const { dispatch, onPlaying } = apiCallbacksRef.current;
+      const { dispatch, onPlaying, currentMediaId } = apiCallbacksRef.current;
       const ytState = event.data;
 
       if (ytState === YT_PLAYING) {
@@ -117,6 +117,23 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
         // The state machine handles this — YOUTUBE_PAUSED from LOADING state is ignored,
         // so auto-play attempts (handled by the parent's loading guard) won't be blocked.
         dispatch({ type: 'YOUTUBE_PAUSED' });
+
+        // Auto-play fix: if we're in loading state and get paused, try to resume
+        // This handles cases where YouTube doesn't auto-play after load
+        const player = ytPlayerRef.current;
+        if (player && currentMediaId) {
+          const msSinceLoad = Date.now() - lastLoadTimeRef.current;
+          if (msSinceLoad < 3000) { // Within 3 seconds of load
+            console.log('[YouTubePlayer] Auto-play: detected paused during load, resuming');
+            setTimeout(() => {
+              const state = player.getPlayerState?.();
+              if (state === 2) { // YT_PAUSED
+                console.log('[YouTubePlayer] Auto-play: calling playVideo()');
+                player.playVideo?.();
+              }
+            }, 100);
+          }
+        }
       } else if (ytState === YT_BUFFERING) {
         dispatch({ type: 'YOUTUBE_BUFFERING' });
       } else if (ytState === YT_ENDED) {
@@ -189,13 +206,13 @@ export const YouTubePlayer = forwardRef<YouTubePlayerHandle, YouTubePlayerProps>
           videoId,
           start: startTime || 0,
           playerVars: {
-            autoplay:        0,  // Don't autoplay on creation (browser policy)
-            controls:        0,  // Hide controls
-            disablekb:       1,  // No keyboard shortcuts
-            modestbranding:  1,  // Minimal YouTube branding
-            rel:             0,  // No related videos
-            iv_load_policy:  3,  // No annotations
-            origin:          window.location.origin,  // Prevent unauthorized log_event requests
+            autoplay: 0,  // Don't autoplay on creation (browser policy)
+            controls: 0,  // Hide controls
+            disablekb: 1,  // No keyboard shortcuts
+            modestbranding: 1,  // Minimal YouTube branding
+            rel: 0,  // No related videos
+            iv_load_policy: 3,  // No annotations
+            origin: window.location.origin,  // Prevent unauthorized log_event requests
           },
           events: {
             onReady,

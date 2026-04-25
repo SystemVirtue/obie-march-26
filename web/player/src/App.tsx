@@ -279,12 +279,17 @@ function App() {
         return;
       }
 
-      const { data, error } = await supabase.rpc('complete_and_advance', {
-        p_queue_id: currentQueueId,
-      } as any);
-      if (error) throw error;
+      // Use player-control Edge Function for consistent state synchronization
+      // This ensures Admin and Player see the same state via Realtime
+      const { data: controlResult, error: controlError } = await callPlayerControl({
+        player_id: PLAYER_ID,
+        action: 'ended',
+        queue_id: currentQueueId,
+      });
 
-      const result = data as any;
+      if (controlError) throw controlError;
+
+      const result = controlResult as any;
 
       if (result?.status === 'success' && result?.next_id) {
         // Queue advanced — immediately load next item
@@ -430,9 +435,11 @@ function App() {
       if (now - started > MAX_DURATION) {
         console.warn('[WATCHDOG] Playback stuck → forcing advance:', (data as any).id);
         try {
-          await supabase.rpc('complete_and_advance', {
-            p_queue_id: (data as any).id,
-          } as any);
+          await callPlayerControl({
+            player_id: PLAYER_ID,
+            action: 'skip',
+            queue_id: (data as any).id,
+          });
         } catch (error) {
           console.error('[WATCHDOG] Failed to force advance:', error);
         }
