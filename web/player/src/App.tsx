@@ -278,7 +278,20 @@ function App() {
     if (!PLAYER_ID || playback.phase !== 'idle' || autoRadioRef.current) return;
     autoRadioRef.current = true;
     callRadioGenerator({ player_id: PLAYER_ID, action: 'generate', source: 'history' })
-      .catch((e) => console.error('[App] Auto-radio failed:', e))
+      .catch(async (e) => {
+        // First-run jukeboxes may have no play history yet.
+        // Fallback to playlist-based radio generation before giving up.
+        const message = e instanceof Error ? e.message : String(e);
+        if (/no play history/i.test(message)) {
+          try {
+            await callRadioGenerator({ player_id: PLAYER_ID, action: 'generate', source: 'playlist' });
+            return;
+          } catch (fallbackError) {
+            console.error('[App] Auto-radio playlist fallback failed:', fallbackError);
+          }
+        }
+        console.error('[App] Auto-radio failed:', e);
+      })
       .finally(() => { autoRadioRef.current = false; });
   }, [playback.phase, PLAYER_ID]);
 
@@ -369,19 +382,22 @@ function App() {
         }
       }
 
-      // Also fetch the queue item to get the queue_id
+      // Also fetch the queue item to get queue_id.
+      // Use a bounded list query (not .single()) to avoid 406 noise when a
+      // row temporarily doesn't exist in 'playing' state yet.
       console.log('[PLAYER] Fetching queue item for current media:', newStatus.current_media_id);
-      const { data: queueData } = await supabase
+      const { data: queueRows } = await supabase
         .from('queue')
-        .select('id')
+        .select('id,status,requested_at')
         .eq('player_id', PLAYER_ID)
         .eq('media_item_id', newStatus.current_media_id)
-        .eq('status', 'playing')
-        .single();
+        .is('played_at', null)
+        .order('requested_at', { ascending: false })
+        .limit(1);
 
-      if (queueData) {
-        console.log('[PLAYER] Setting currentQueueId:', (queueData as any).id);
-        setCurrentQueueId((queueData as any).id);
+      if (queueRows && queueRows.length > 0) {
+        console.log('[PLAYER] Setting currentQueueId:', (queueRows[0] as any).id);
+        setCurrentQueueId((queueRows[0] as any).id);
       }
     }
 
