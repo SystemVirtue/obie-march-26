@@ -47,6 +47,7 @@ import {
 } from './state/playbackMachine';
 
 const DEFAULT_PLAYER_ID = import.meta.env.VITE_PLAYER_ID || '00000000-0000-0000-0000-000000000001';
+const DIRECT_VIDEO_EXT_RE = /\.(mp4|webm|ogg|m3u8)(\?.*)?$/i;
 
 function App() {
   // ── Identity ───────────────────────────────────────────────────────────────
@@ -181,6 +182,30 @@ function App() {
 
     console.log('[PLAYER] Advancing queue, completing:', currentQueueId);
     try {
+      // Guard against stale queue IDs (can happen after recovery/race updates).
+      const { data: existingQueueRow } = await supabase
+        .from('queue')
+        .select('id')
+        .eq('id', currentQueueId)
+        .maybeSingle();
+
+      if (!existingQueueRow) {
+        console.warn('[PLAYER] Stale queue_id detected, re-syncing currently playing row');
+        const { data: playingRow } = await supabase
+          .from('queue')
+          .select('id')
+          .eq('player_id', PLAYER_ID)
+          .eq('status', 'playing')
+          .maybeSingle();
+        const playingRowAny = playingRow as any;
+        if (playingRowAny?.id) {
+          setCurrentQueueId(playingRowAny.id);
+        } else {
+          dispatch({ type: 'QUEUE_EXHAUSTED' });
+        }
+        return;
+      }
+
       const { data, error } = await supabase.rpc('complete_and_advance', {
         p_queue_id: currentQueueId,
       } as any);
@@ -461,7 +486,14 @@ function App() {
         },
         (payload) => {
           const newRecord = payload.new as any;
+          const oldRecord = payload.old as any;
           console.log('[SYNC] Queue update received:', newRecord);
+
+          // Ignore no-op updates where the row remained in playing state
+          // (e.g. reorder position updates) to avoid restarting current media.
+          if (newRecord.status === 'playing' && oldRecord?.status === 'playing') {
+            return;
+          }
 
           // If an item transitions to 'playing', load it
           if (newRecord.status === 'playing' && newRecord.media_item_id) {
@@ -536,6 +568,12 @@ function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!currentMedia || isYTMMode || isLocalMode) return;
+    if (DIRECT_VIDEO_EXT_RE.test(currentMedia.url)) {
+      // Some queues provide direct mp4/webm URLs via media_items.url.
+      // Route these through LocalVideoPlayer rather than YouTube iframe mode.
+      setLocalVideoUrl(currentMedia.url);
+      return;
+    }
     const isSkip = isAfterSkipPhase(playback);
     if (isSkip) snapSilent();
     ytPlayerRef.current?.loadVideo(currentMedia.url, isSkip);
@@ -545,6 +583,9 @@ function App() {
   useEffect(() => {
     if (playback.phase === 'playing') {
       reportStatus('playing');
+      if (!isYTMMode && !isLocalMode) {
+        ytPlayerRef.current?.resume();
+      }
       if (ytPlayerRef.current?.getVolume() === 0) fadeIn();
     } else if (playback.phase === 'paused') {
       reportStatus('paused');
