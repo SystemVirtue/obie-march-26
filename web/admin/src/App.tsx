@@ -3,6 +3,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import {
+  supabase,
   subscribeToQueue,
   subscribeToPlayerStatus,
   subscribeToPlayerSettings,
@@ -346,24 +347,49 @@ function App() {
     if (isSkipping) return;
 
     // Find the queue item with status 'playing' for this player
-    const playingQueueItem = queue.find(q => q.status === 'playing');
+    let queueIdToSkip = queue.find(q => q.status === 'playing')?.id;
+    if (!queueIdToSkip && status?.current_media_id) {
+      // Fallback for transitional states where queue row status lags behind
+      // player_status (e.g. loading/recovering) and no explicit 'playing' row
+      // is present in the local queue snapshot yet.
+      queueIdToSkip = queue.find(
+        q => q.media_item_id === status.current_media_id && q.status !== 'completed' && q.status !== 'skipped'
+      )?.id;
+    }
 
-    console.log('[Admin] Skip attempt:', { playingQueueItem, queueLength: queue.length });
+    console.log('[Admin] Skip attempt:', { queueIdToSkip, queueLength: queue.length });
 
-    if (!playingQueueItem || !playingQueueItem.id) {
-      console.warn('[Admin] No playing queue item found to skip');
-      return;
+    if (!queueIdToSkip) {
+      if (!activePlayerId || !status?.current_media_id) {
+        console.warn('[Admin] No queue item found to skip');
+        return;
+      }
+      // Final fallback: direct lookup from DB by current media id.
+      const { data } = await supabase
+        .from('queue')
+        .select('id')
+        .eq('player_id', activePlayerId)
+        .eq('media_item_id', status.current_media_id)
+        .is('played_at', null)
+        .order('requested_at', { ascending: false })
+        .limit(1);
+      const rows = (data ?? []) as Array<{ id: string }>;
+      queueIdToSkip = rows[0]?.id;
+      if (!queueIdToSkip) {
+        console.warn('[Admin] No DB queue row found to skip');
+        return;
+      }
     }
 
     setIsSkipping(true);
 
     // Optimistic: remove current item locally so it disappears immediately
-    setQueue(prev => prev.filter(q => q.id !== playingQueueItem.id));
+    setQueue(prev => prev.filter(q => q.id !== queueIdToSkip));
 
     const skipParams = {
       player_id: activePlayerId ?? PLAYER_ID,
       action: 'skip' as const,
-      queue_id: playingQueueItem.id,
+      queue_id: queueIdToSkip,
     };
 
     console.log('[Admin] Calling player-control skip with:', skipParams);

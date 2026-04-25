@@ -1,10 +1,39 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase, type Player, type PlayerStatus } from '@shared/supabase-client';
 import { PanelHeader, Btn } from './ui';
 
 interface PlayerWithStatus extends Player {
   player_status?: PlayerStatus | null;
   healthStatus: 'online' | 'waiting' | 'offline';
+}
+
+interface RealtimePlayerInstance {
+  instance_id: string;
+  connection_status: 'ONLINE' | 'OFFLINE';
+  is_master: boolean;
+  last_seen: string;
+  user_agent: string | null;
+  connected_at: string;
+  last_heartbeat: string | null;
+}
+
+interface PlaybackControl {
+  id: number;
+  current_video_id: string | null;
+  current_status: 'IDLE' | 'LOADING' | 'PLAYING' | 'PAUSED' | 'ENDED' | null;
+  master_instance_id: string | null;
+  master_last_seen: string;
+  playback_position: number;
+  last_updated: string;
+}
+
+interface PlayerLog {
+  id: number;
+  timestamp: string;
+  event_type: string;
+  instance_id: string | null;
+  message: string;
+  details: Record<string, any>;
 }
 
 export function PlayerInstances() {
@@ -14,6 +43,12 @@ export function PlayerInstances() {
   const [editingName, setEditingName] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [realtimePlayers, setRealtimePlayers] = useState<RealtimePlayerInstance[]>([]);
+  const [playbackControl, setPlaybackControl] = useState<PlaybackControl | null>(null);
+  const [refreshResponses, setRefreshResponses] = useState<Record<string, any>>({});
+  const [recentLogs, setRecentLogs] = useState<PlayerLog[]>([]);
+
+  const playbackRoomChannelRef = useRef<any>(null);
 
   const fetchPlayers = useCallback(async () => {
     setLoading(true);
@@ -64,6 +99,74 @@ export function PlayerInstances() {
   useEffect(() => {
     fetchPlayers();
   }, [fetchPlayers]);
+
+  const fetchRealtimeData = useCallback(async () => {
+    const [{ data: controlData }, { data: instanceData }, { data: logData }] = await Promise.all([
+      supabase.from('playback_control').select('*').eq('id', 1).maybeSingle(),
+      supabase.from('player_instances').select('*').order('last_seen', { ascending: false }),
+      supabase.from('player_logs').select('*').order('timestamp', { ascending: false }).limit(50),
+    ]);
+    setPlaybackControl((controlData ?? null) as any);
+    setRealtimePlayers(((instanceData ?? []) as any[]).map((row) => row as RealtimePlayerInstance));
+    setRecentLogs(((logData ?? []) as any[]).map((row) => row as PlayerLog));
+  }, []);
+
+  useEffect(() => {
+    fetchRealtimeData().catch(console.error);
+
+    const dbChannel = supabase
+      .channel('admin-players-db')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'playback_control', filter: 'id=eq.1' }, () => {
+        fetchRealtimeData().catch(console.error);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'player_instances' }, () => {
+        fetchRealtimeData().catch(console.error);
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'player_logs' }, (payload: any) => {
+        setRecentLogs((prev) => [payload.new as PlayerLog, ...prev].slice(0, 100));
+      })
+      .subscribe();
+
+    const roomChannel = supabase
+      .channel('playback-room-admin', { config: { broadcast: { self: true } } })
+      .on('broadcast', { event: 'player_state_response' }, ({ payload }) => {
+        const instanceId = String(payload?.instance_id ?? '');
+        if (!instanceId) return;
+        setRefreshResponses((prev) => ({ ...prev, [instanceId]: payload }));
+      })
+      .subscribe();
+    playbackRoomChannelRef.current = roomChannel;
+
+    return () => {
+      supabase.removeChannel(dbChannel);
+      supabase.removeChannel(roomChannel);
+    };
+  }, [fetchRealtimeData]);
+
+  const handleRefreshConnections = async () => {
+    const requestId = crypto.randomUUID();
+    setRefreshResponses({});
+    if (playbackRoomChannelRef.current) {
+      await playbackRoomChannelRef.current.send({
+        type: 'broadcast',
+        event: 'refresh_connections',
+        payload: { requestId, requested_at: new Date().toISOString() },
+      });
+    }
+    setTimeout(() => fetchRealtimeData().catch(console.error), 1000);
+  };
+
+  const forceMaster = async (instanceId: string) => {
+    try {
+      await supabase.rpc('force_master_instance', {
+        p_instance_id: instanceId,
+        p_message: 'admin_manual_override',
+      } as any);
+      await fetchRealtimeData();
+    } catch (error) {
+      console.error('[PlayerInstances] Failed to force master:', error);
+    }
+  };
 
   const handleIdentify = async (player: PlayerWithStatus) => {
     const displayName = player.player_name_tag || `Player_${player.priority}`;
@@ -169,6 +272,16 @@ export function PlayerInstances() {
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <PanelHeader title="PLAYER INSTANCES" subtitle="Manage connected player instances" />
 
+      <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--border)', display: 'grid', gap: 8 }}>
+        <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.75)' }}>
+          <strong>Master:</strong> {playbackControl?.master_instance_id ?? 'none'} · <strong>Status:</strong> {playbackControl?.current_status ?? 'IDLE'}
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Btn variant="accent" onClick={handleRefreshConnections}>REFRESH ALL CONNECTIONS</Btn>
+          <Btn variant="ghost" onClick={() => fetchRealtimeData().catch(console.error)}>RELOAD MASTER DATA</Btn>
+        </div>
+      </div>
+
       {/* Action buttons */}
       <div style={{ padding: '16px 24px', display: 'flex', gap: 8, borderBottom: '1px solid var(--border)' }}>
         <Btn
@@ -194,6 +307,36 @@ export function PlayerInstances() {
 
       {/* Table */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '24px' }}>
+        <div style={{ marginBottom: 24 }}>
+          <h3 style={{ margin: '0 0 8px', fontSize: 13, color: 'rgba(255,255,255,0.85)' }}>Realtime Instances</h3>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--border)', textAlign: 'left' }}>
+                <th style={{ padding: '8px' }}>Instance ID</th>
+                <th style={{ padding: '8px' }}>Master</th>
+                <th style={{ padding: '8px' }}>Connection</th>
+                <th style={{ padding: '8px' }}>Last Seen</th>
+                <th style={{ padding: '8px' }}>State Response</th>
+                <th style={{ padding: '8px' }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {realtimePlayers.map((row) => (
+                <tr key={row.instance_id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                  <td style={{ padding: '8px' }}>{row.instance_id}</td>
+                  <td style={{ padding: '8px' }}>{row.is_master ? '✅' : '—'}</td>
+                  <td style={{ padding: '8px' }}>{row.connection_status}</td>
+                  <td style={{ padding: '8px' }}>{formatDate(row.last_seen)}</td>
+                  <td style={{ padding: '8px' }}>{refreshResponses[row.instance_id]?.status ?? '-'}</td>
+                  <td style={{ padding: '8px' }}>
+                    <Btn variant="ghost" onClick={() => forceMaster(row.instance_id)}>FORCE MASTER</Btn>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
         {loading ? (
           <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.5)', padding: 40 }}>Loading...</div>
         ) : filteredPlayers.length === 0 ? (
@@ -357,6 +500,19 @@ export function PlayerInstances() {
             </tbody>
           </table>
         )}
+
+        <div style={{ marginTop: 24 }}>
+          <h3 style={{ margin: '0 0 8px', fontSize: 13, color: 'rgba(255,255,255,0.85)' }}>Master Election Logs</h3>
+          <div style={{ maxHeight: 240, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
+            {recentLogs.map((log) => (
+              <div key={log.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', padding: '8px 10px', fontSize: 12 }}>
+                <div><strong>{new Date(log.timestamp).toLocaleTimeString()}</strong> · {log.event_type} · {log.instance_id ?? 'n/a'}</div>
+                <div style={{ opacity: 0.85 }}>{log.message}</div>
+              </div>
+            ))}
+            {!recentLogs.length && <div style={{ padding: 10, opacity: 0.7 }}>No player logs yet.</div>}
+          </div>
+        </div>
       </div>
     </div>
   );

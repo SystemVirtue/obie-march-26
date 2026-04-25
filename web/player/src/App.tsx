@@ -40,6 +40,7 @@ import { useKaraokeLyrics } from './hooks/useKaraokeLyrics';
 import { usePlayerRealtime } from './hooks/usePlayerRealtime';
 import { useLoadingGuard } from './hooks/useLoadingGuard';
 import { useFade } from './hooks/useFade';
+import { useMasterPlayback, type PlaybackControlRow } from './hooks/useMasterPlayback';
 import {
   playbackReducer,
   isAfterSkip as isAfterSkipPhase,
@@ -47,6 +48,8 @@ import {
 } from './state/playbackMachine';
 
 const DEFAULT_PLAYER_ID = import.meta.env.VITE_PLAYER_ID || '00000000-0000-0000-0000-000000000001';
+const DIRECT_VIDEO_EXT_RE = /\.(mp4|webm|ogg|m3u8)(\?.*)?$/i;
+const ENABLE_MASTER_VIEWER_MODEL = import.meta.env.VITE_ENABLE_MASTER_VIEWER_MODEL === 'true';
 
 function App() {
   // ── Identity ───────────────────────────────────────────────────────────────
@@ -86,6 +89,57 @@ function App() {
   const autoRadioRef = useRef(false);
   const [initialSyncInProgress, setInitialSyncInProgress] = useState(false);
 
+  const handleRemotePlaybackControl = useCallback((remote: PlaybackControlRow) => {
+    if (!ENABLE_MASTER_VIEWER_MODEL) return;
+    if (!remote.current_status) return;
+    if (remote.current_status === 'PAUSED') dispatch({ type: 'ADMIN_PAUSE' });
+    if (remote.current_status === 'PLAYING') dispatch({ type: 'ADMIN_RESUME' });
+
+    if (remote.current_video_id && remote.current_video_id !== currentMedia?.id) {
+      supabase
+        .from('media_items')
+        .select('*')
+        .eq('id', remote.current_video_id)
+        .maybeSingle()
+        .then(({ data }) => {
+          if (!data) return;
+          const media: MediaItem = {
+            id: (data as any).id,
+            title: (data as any).title ?? 'Unknown',
+            artist: (data as any).artist ?? 'Unknown',
+            url: (data as any).url,
+            duration: (data as any).duration ?? 0,
+            source_id: (data as any).source_id ?? '',
+            source_type: (data as any).source_type as any,
+            thumbnail: (data as any).thumbnail,
+            fetched_at: (data as any).fetched_at,
+            metadata: (data as any).metadata ?? {},
+          };
+          setCurrentMedia(media);
+          dispatch({ type: 'QUEUE_NEXT_STARTED', mediaId: media.id });
+        });
+    }
+  }, [currentMedia?.id]);
+
+  const masterPlayback = useMasterPlayback({
+    enabled: ENABLE_MASTER_VIEWER_MODEL,
+    getSnapshot: () => {
+      const statusUpper = (() => {
+        if (playback.phase === 'loading' || playback.phase === 'buffering') return 'LOADING';
+        if (playback.phase === 'playing') return 'PLAYING';
+        if (playback.phase === 'paused') return 'PAUSED';
+        if (playback.phase === 'ending') return 'ENDED';
+        return 'IDLE';
+      })() as 'IDLE' | 'LOADING' | 'PLAYING' | 'PAUSED' | 'ENDED';
+      return {
+        status: statusUpper,
+        currentVideoId: currentMedia?.id ?? null,
+        playbackPosition: status?.progress ?? 0,
+      };
+    },
+    onRemoteControl: handleRemotePlaybackControl,
+  });
+
   // ── Fade ───────────────────────────────────────────────────────────────────
   const { fadeOut, fadeIn, snapSilent } = useFade({
     ytPlayerRef: { current: ytPlayerRef.current } as any,
@@ -94,6 +148,8 @@ function App() {
 
   // ── Status reporting ────────────────────────────────────────────────────────
   const reportStatus = useCallback(async (state: PlayerStatus['state'], progress?: number) => {
+    if (!masterPlayback.isMaster) return;
+
     if (!PLAYER_ID) return;
     console.log('[Player] Reporting status:', { state, progress });
     try {
@@ -106,11 +162,28 @@ function App() {
     } catch (error) {
       console.error('[Player] Failed to report status:', error);
     }
-  }, [PLAYER_ID]);
+  }, [PLAYER_ID, masterPlayback.isMaster]);
+
+  useEffect(() => {
+    if (!masterPlayback.isMaster) return;
+    const statusUpper = (() => {
+      if (playback.phase === 'loading' || playback.phase === 'buffering') return 'LOADING';
+      if (playback.phase === 'playing') return 'PLAYING';
+      if (playback.phase === 'paused') return 'PAUSED';
+      if (playback.phase === 'ending') return 'ENDED';
+      return 'IDLE';
+    })() as 'IDLE' | 'LOADING' | 'PLAYING' | 'PAUSED' | 'ENDED';
+
+    void masterPlayback.publishSnapshot({
+      status: statusUpper,
+      currentVideoId: currentMedia?.id ?? null,
+      playbackPosition: status?.progress ?? 0,
+    });
+  }, [masterPlayback, playback.phase, currentMedia?.id, status?.progress]);
 
   // ── Heartbeat ──────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!PLAYER_ID || !currentQueueId) return;
+    if (!PLAYER_ID || !currentQueueId || !masterPlayback.isMaster) return;
 
     const sendHeartbeat = async () => {
       try {
@@ -133,11 +206,11 @@ function App() {
     sendHeartbeat(); // immediate on mount
     const id = setInterval(sendHeartbeat, 10000); // 10s interval as per spec
     return () => clearInterval(id);
-  }, [PLAYER_ID, currentQueueId, playback.phase]);
+  }, [PLAYER_ID, currentQueueId, playback.phase, masterPlayback.isMaster]);
 
   // ── Playback position tracking ─────────────────────────────────────────────
   useEffect(() => {
-    if (!PLAYER_ID || !currentQueueId || playback.phase !== 'playing') return;
+    if (!PLAYER_ID || !currentQueueId || playback.phase !== 'playing' || !masterPlayback.isMaster) return;
 
     const updatePlaybackPosition = async () => {
       try {
@@ -160,7 +233,7 @@ function App() {
     // Update position every 5 seconds
     const id = setInterval(updatePlaybackPosition, 5000);
     return () => clearInterval(id);
-  }, [PLAYER_ID, currentQueueId, playback.phase, currentMedia?.duration]);
+  }, [PLAYER_ID, currentQueueId, playback.phase, currentMedia?.duration, masterPlayback.isMaster]);
 
   // ── Karaoke ────────────────────────────────────────────────────────────────
   useKaraokeLyrics({
@@ -174,13 +247,38 @@ function App() {
   // Calls the RPC directly and immediately loads the next item from the result.
   // Does NOT wait for Realtime — the RPC result IS the source of truth.
   const advanceQueue = useCallback(async () => {
-    if (!PLAYER_ID || !currentQueueId) {
+    if (!PLAYER_ID || !currentQueueId || !masterPlayback.isMaster) {
+
       console.warn('[PLAYER] No current queue ID to advance');
       return;
     }
 
     console.log('[PLAYER] Advancing queue, completing:', currentQueueId);
     try {
+      // Guard against stale queue IDs (can happen after recovery/race updates).
+      const { data: existingQueueRow } = await supabase
+        .from('queue')
+        .select('id')
+        .eq('id', currentQueueId)
+        .maybeSingle();
+
+      if (!existingQueueRow) {
+        console.warn('[PLAYER] Stale queue_id detected, re-syncing currently playing row');
+        const { data: playingRow } = await supabase
+          .from('queue')
+          .select('id')
+          .eq('player_id', PLAYER_ID)
+          .eq('status', 'playing')
+          .maybeSingle();
+        const playingRowAny = playingRow as any;
+        if (playingRowAny?.id) {
+          setCurrentQueueId(playingRowAny.id);
+        } else {
+          dispatch({ type: 'QUEUE_EXHAUSTED' });
+        }
+        return;
+      }
+
       const { data, error } = await supabase.rpc('complete_and_advance', {
         p_queue_id: currentQueueId,
       } as any);
@@ -259,7 +357,7 @@ function App() {
     } catch (error) {
       console.error('[PLAYER] Failed to advance queue:', error);
     }
-  }, [currentQueueId, dispatch, PLAYER_ID]);
+  }, [currentQueueId, dispatch, PLAYER_ID, masterPlayback.isMaster]);
 
   // Trigger advance when machine enters 'ending'
   useEffect(() => {
@@ -275,7 +373,8 @@ function App() {
 
   // ── Auto-radio: refill queue when empty ───────────────────────────────────
   useEffect(() => {
-    if (!PLAYER_ID || playback.phase !== 'idle' || autoRadioRef.current) return;
+    if (!PLAYER_ID || !masterPlayback.isMaster || playback.phase !== 'idle' || autoRadioRef.current) return;
+
     autoRadioRef.current = true;
     callRadioGenerator({ player_id: PLAYER_ID, action: 'generate', source: 'history' })
       .catch(async (e) => {
@@ -284,6 +383,21 @@ function App() {
         const message = e instanceof Error ? e.message : String(e);
         if (/no play history/i.test(message)) {
           try {
+            const { data: playerRow } = await supabase
+              .from('players')
+              .select('active_playlist_id')
+              .eq('id', PLAYER_ID)
+              .maybeSingle();
+            const activePlaylistId = (playerRow as any)?.active_playlist_id as string | null | undefined;
+            if (activePlaylistId) {
+              await callPlaylistManager({
+                action: 'load_playlist',
+                player_id: PLAYER_ID,
+                playlist_id: activePlaylistId,
+              });
+              return;
+            }
+
             await callRadioGenerator({ player_id: PLAYER_ID, action: 'generate', source: 'playlist' });
             return;
           } catch (fallbackError) {
@@ -293,11 +407,11 @@ function App() {
         console.error('[App] Auto-radio failed:', e);
       })
       .finally(() => { autoRadioRef.current = false; });
-  }, [playback.phase, PLAYER_ID]);
+  }, [playback.phase, PLAYER_ID, masterPlayback.isMaster]);
 
   // ── Failsafe watchdog: detect and recover stuck playback ───────────────────
   useEffect(() => {
-    if (!PLAYER_ID) return;
+    if (!PLAYER_ID || !masterPlayback.isMaster) return;
 
     const watchdogInterval = setInterval(async () => {
       const { data } = await supabase
@@ -326,11 +440,11 @@ function App() {
     }, 30000); // Check every 30 seconds
 
     return () => clearInterval(watchdogInterval);
-  }, [PLAYER_ID]);
+  }, [PLAYER_ID, masterPlayback.isMaster]);
 
   // ── Offline recovery: periodically call recover_stalled_playback ───────────────
   useEffect(() => {
-    if (!PLAYER_ID) return;
+    if (!PLAYER_ID || !masterPlayback.isMaster) return;
 
     const recoveryInterval = setInterval(async () => {
       try {
@@ -343,7 +457,7 @@ function App() {
     }, 60000); // Check every 60 seconds
 
     return () => clearInterval(recoveryInterval);
-  }, [PLAYER_ID]);
+  }, [PLAYER_ID, masterPlayback.isMaster]);
 
   // ── Realtime subscriptions ─────────────────────────────────────────────────
   const handleStatusUpdate = useCallback(async (newStatus: PlayerStatus) => {
@@ -463,6 +577,13 @@ function App() {
           const newRecord = payload.new as any;
           console.log('[SYNC] Queue update received:', newRecord);
 
+          // Ignore no-op updates for the currently active playing row
+          // (e.g. reorder position updates) to avoid restarting current media.
+          // NOTE: payload.old does not include status under REPLICA IDENTITY DEFAULT.
+          if (newRecord.status === 'playing' && newRecord.id === currentQueueId) {
+            return;
+          }
+
           // If an item transitions to 'playing', load it
           if (newRecord.status === 'playing' && newRecord.media_item_id) {
             // Prevent duplicate loads: if we're already playing this item, ignore
@@ -536,6 +657,12 @@ function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!currentMedia || isYTMMode || isLocalMode) return;
+    if (DIRECT_VIDEO_EXT_RE.test(currentMedia.url)) {
+      // Some queues provide direct mp4/webm URLs via media_items.url.
+      // Route these through LocalVideoPlayer rather than YouTube iframe mode.
+      setLocalVideoUrl(currentMedia.url);
+      return;
+    }
     const isSkip = isAfterSkipPhase(playback);
     if (isSkip) snapSilent();
     ytPlayerRef.current?.loadVideo(currentMedia.url, isSkip);
@@ -545,6 +672,9 @@ function App() {
   useEffect(() => {
     if (playback.phase === 'playing') {
       reportStatus('playing');
+      if (!isYTMMode && !isLocalMode) {
+        ytPlayerRef.current?.resume();
+      }
       if (ytPlayerRef.current?.getVolume() === 0) fadeIn();
     } else if (playback.phase === 'paused') {
       reportStatus('paused');

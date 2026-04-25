@@ -12,8 +12,12 @@ A non-destructive, production-focused rebuild comparison against Version 1 is do
 - [`docs/VERSION1_COMPARISON.md`](docs/VERSION1_COMPARISON.md)
 - [`docs/MULTI_PLAYER_SYNC.md`](docs/MULTI_PLAYER_SYNC.md)
 - [`docs/ROBUSTNESS_ASSESSMENT.md`](docs/ROBUSTNESS_ASSESSMENT.md)
+- [`docs/MASTER_VIEWER_ACCEPTANCE_GATES.md`](docs/MASTER_VIEWER_ACCEPTANCE_GATES.md)
 
 `npm test` is intentionally gated: set `RUN_E2E_INTEGRATION=true` plus required Supabase/auth env vars to execute full Playwright integration tests.
+
+Master/viewer election is also rollout-gated: keep `VITE_ENABLE_MASTER_VIEWER_MODEL=false` until explicit failover and E2E acceptance gates are green in your target environment.
+
 
 This keeps Version 1 operational context intact while defining a phased modernization path.
 
