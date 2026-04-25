@@ -2,7 +2,11 @@ import { useEffect, useState } from 'react';
 import { getAllJukeboxes } from '@shared/supabase-client';
 import { normalizeJukeboxSlug } from '@shared/jukebox-utils';
 
-export function JukeboxDashboard() {
+type JukeboxDashboardProps = {
+  onSelectJukebox: (slug: string) => void;
+};
+
+export function JukeboxDashboard({ onSelectJukebox }: JukeboxDashboardProps) {
   const [jukeboxes, setJukeboxes] = useState<{ player_id: string; jukebox_slug: string; display_name: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -31,11 +35,11 @@ export function JukeboxDashboard() {
     const entered = window.prompt('Enter Jukebox Name (e.g. OBIE):');
     const slug = normalizeJukeboxSlug(entered);
     if (!slug) return;
-    window.location.assign(`/${slug}`);
+    onSelectJukebox(slug);
   };
 
   const handleSelectJukebox = (slug: string) => {
-    window.location.assign(`/${slug}`);
+    onSelectJukebox(slug);
   };
 
   if (loading) {
