@@ -1,5 +1,6 @@
 // Shared Supabase Client and Types
 // Used by all three frontend apps
+// Master/Player architecture implementation
 
 import { createClient, RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
 import { QUEUE_DEBOUNCE_MS, PLAYER_STATUS_DEBOUNCE_MS } from './constants';
